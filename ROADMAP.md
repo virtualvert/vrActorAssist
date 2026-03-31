@@ -12,28 +12,21 @@
 
 ## 🚀 Features (Planned)
 
-### Priority 1: Director Control Improvements
+### v0.2.0 (In Progress)
 
-- [ ] **Selective actor triggering** — Toggle to select which actors receive commands:
-  - Checkboxes per actor in a list
-  - "Select All" / "Select None" buttons
-  - Commands only go to checked actors
-  
+- [ ] **Multi-director warning** — Show warning if another director is already connected
+- [ ] **Bigger buttons for VR** — 3x size buttons for easier desktop overlay clicking
+- [ ] **"Play in 3s" countdown** — New button with 3-second delay before sending Go
+- [ ] **Selective actor triggering** — Checkboxes to select which actors receive commands
+- [ ] **Actor status indicators** — Green/yellow/red connection quality dots
+- [ ] **File transfer** — Director can send files to actors
+
+### Priority 2: Future Improvements
+
 - [ ] **Ping compensation / delay** — Add millisecond delay per actor:
   - Director can set delay per actor (e.g., Actor A: +50ms, Actor B: +100ms)
   - Helps compensate for network latency differences
   - Stored in actor config, applied server-side
-
-- [ ] **Actor status indicators** — Show connection quality:
-  - Green/yellow/red indicator per actor
-  - Based on ping time or message ACK latency
-
-### Priority 2: File Transfer (Lost in WebSocket Migration)
-
-- [ ] **Send files to actors** — Director can send files (audio files, config, etc.):
-  - Progress bar for transfer
-  - Files saved to configurable directory on actor machine
-  - Support for small files (< 10MB typical)
 
 ### Priority 3: Soundpad Integration
 
@@ -103,3 +96,5 @@
 - [x] Soundpad CLI integration
 - [x] Basic command system (`*go`, `*stop`, `*play:N`)
 - [x] Private messaging to specific actors
+- [x] UI improvements (timestamps, error logging, window sizing)
+- [x] v0.1.0 release — initial actor client

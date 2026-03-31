@@ -11,9 +11,14 @@ dist/
 
 # Runtime
 *.log
+logs/
 approved_actors.json
 actor_config.json
 director_config.json
+*.pid
+
+# VPS-specific (not for repo)
+start-server.sh
 
 # IDE
 .vscode/

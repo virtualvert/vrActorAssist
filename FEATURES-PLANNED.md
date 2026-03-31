@@ -19,6 +19,9 @@ Features planned for v0.2.0:
 - [ ] Selective actor triggering (checkboxes)
 - [ ] File transfer (director → actor)
 - [ ] Actor status indicators (ping + hover)
+- [ ] Multi-director warning
+- [ ] "Play in 3s" countdown button
+- [ ] Bigger buttons for VR (3x size)
 
 Window sizing fix (2026-03-31) will be included in v0.2.0 build.
 
@@ -219,9 +222,87 @@ Soundpad has a Remote Control API with:
 
 ---
 
+---
+
+## Feature 4: Multi-Director Warning
+
+**Goal:** Warn if another director is already connected.
+
+### Server Changes
+
+On director registration, check for existing directors:
+
+```python
+if role == "director":
+    existing = get_directors()
+    if existing:
+        await websocket.send_text(format_message("MSG", sender="SERVER",
+            text=f"Warning: {existing[0].name} is already connected"))
+    # ... continue with auth
+```
+
+### Behavior
+
+- Second director connects → gets warning message
+- Both directors have full control (no restrictions)
+- Warning is informational only
+
+---
+
+## Feature 5: "Play in 3s" Countdown Button
+
+**Goal:** New button that sends Go command after 3-second countdown.
+
+### UI — Director Client
+
+**New button alongside Go:**
+```
+[▶ Go]  [⏱ Play in 3s]  [■ Stop]
+```
+
+**Countdown behavior:**
+- Click → button shows `[3...]` → `[2...]` → `[1...]` → sends `*go`
+- Button disabled during countdown
+- Stop button cancels countdown (resets button)
+- Actor receives nothing until countdown completes
+
+**Implementation:**
+- `tkinter.after()` for countdown ticks
+- Flag to track if countdown is active
+- Stop button checks flag and cancels if needed
+
+---
+
+## Feature 6: Bigger Buttons for VR
+
+**Goal:** Buttons 3x current size for easier VR clicking via desktop overlay.
+
+### UI Changes
+
+**Button sizing:**
+- Height: `height=3` (lines)
+- Width: `width=20` (characters)
+- Font: `font=('Arial', 14, 'bold')`
+- Padding: `pady=10` between buttons
+
+**Affected buttons:**
+- Go / Play in 3s / Stop
+- Approve / Deny
+- All action buttons in both clients
+
+**Window sizing:**
+- May need to increase window height to accommodate larger buttons
+- Test minimum sizes after changes
+
+---
+
 ## Implementation Order
 
-1. Selective actor triggering (checkboxes)
-2. File transfer (send/receive)
+1. Multi-director warning (simple)
+2. Bigger buttons for VR
+3. "Play in 3s" countdown
+4. Selective actor triggering (checkboxes)
+5. Actor status indicators
+6. File transfer
 
 Each feature = one commit.

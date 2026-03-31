@@ -63,7 +63,9 @@ class ActorClient:
         tk.Label(status_frame, text="Status:").pack(side=tk.LEFT)
         tk.Label(status_frame, textvariable=self.status_var, fg="blue").pack(side=tk.LEFT, padx=5)
         
-        self.connect_btn = tk.Button(status_frame, text="Connect", command=self.toggle_connection)
+        # Bigger button for VR
+        self.connect_btn = tk.Button(status_frame, text="Connect", command=self.toggle_connection,
+                                      height=2, width=12, font=('Arial', 11, 'bold'))
         self.connect_btn.pack(side=tk.RIGHT)
         
         # Chat area
@@ -74,12 +76,14 @@ class ActorClient:
         input_frame = tk.Frame(self.root)
         input_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        self.entry = tk.Entry(input_frame)
+        self.entry = tk.Entry(input_frame, font=('Arial', 11))
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.entry.bind("<Return>", lambda e: self.send_msg())
         self.entry.config(state=tk.DISABLED)
         
-        self.send_btn = tk.Button(input_frame, text="Send", command=self.send_msg, state=tk.DISABLED)
+        # Bigger button for VR
+        self.send_btn = tk.Button(input_frame, text="Send", command=self.send_msg, state=tk.DISABLED,
+                                   height=2, width=10, font=('Arial', 11, 'bold'))
         self.send_btn.pack(side=tk.RIGHT)
         
         # Window close handler
@@ -135,7 +139,8 @@ class ActorClient:
             dialog.destroy()
             self.connect()
         
-        tk.Button(dialog, text="Connect", command=save_and_close).pack(pady=20)
+        # Bigger button for VR
+        tk.Button(dialog, text="Connect", command=save_and_close, height=2, width=15, font=('Arial', 11, 'bold')).pack(pady=20)
         
         self.root.wait_window(dialog)
     
@@ -174,8 +179,9 @@ class ActorClient:
         
         btn_frame = tk.Frame(dialog)
         btn_frame.pack(pady=20)
-        tk.Button(btn_frame, text="Save", command=save_changes).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+        # Bigger buttons for VR
+        tk.Button(btn_frame, text="Save", command=save_changes, height=2, width=10, font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Cancel", command=dialog.destroy, height=2, width=10, font=('Arial', 11, 'bold')).pack(side=tk.LEFT)
     
     def get_ws_url(self, server_url: str) -> str:
         """Convert HTTP URL to WebSocket URL."""
@@ -297,8 +303,9 @@ class ActorClient:
         
         if msg_type == "APPROVED":
             self.approved = True
+            actor_name = self.config.get("actor_name", "Unknown")
             self.root.after(0, lambda: self.display("✓ Approved by director!"))
-            self.root.after(0, lambda: self.status_var.set("Connected (Approved)"))
+            self.root.after(0, lambda: self.status_var.set(f"Connected (as {actor_name})"))
             self.root.after(0, lambda: self.enable_input(True))
         
         elif msg_type == "DENIED":
