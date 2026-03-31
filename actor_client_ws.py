@@ -299,6 +299,15 @@ class ActorClient:
     
     def handle_message(self, data: str):
         """Handle a message from the server."""
+        # Handle raw PING (latency check)
+        if data == "PING":
+            if self.ws and self.connected:
+                try:
+                    self.ws.send("PONG")
+                except:
+                    pass
+            return
+        
         msg_type, msg_data = parse_message(data)
         
         if msg_type == "APPROVED":
@@ -327,6 +336,21 @@ class ActorClient:
             sender = msg_data.get("sender", "Unknown")
             text = msg_data.get("text", "")
             self.root.after(0, lambda: self.display(f"[Private] {sender}: {text}"))
+            
+            # Execute as command (same as CMD)
+            success, error_msg = execute_command(text, "")
+            if success:
+                ack_msg = format_message("ACK", 
+                    actor=self.config.get("actor_name", "Unknown"),
+                    command=text,
+                    status="OK"
+                )
+                self.ws.send(ack_msg)
+                self.root.after(0, lambda: self.display(f"✓ Executed: {text}"))
+            else:
+                self.root.after(0, lambda: self.display(f"✗ Failed: {text}", error=True))
+                if error_msg:
+                    self.root.after(0, lambda msg=error_msg: self.display(f"   {msg}", error=True))
         
         elif msg_type == "CMD":
             command = msg_data.get("command", "")

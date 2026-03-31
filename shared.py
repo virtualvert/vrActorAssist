@@ -12,6 +12,7 @@ MSG_TYPES = {
     "MSG": "MSG|{sender}|{text}",           # Broadcast message
     "PRIV": "PRIV|{sender}|{target}|{text}", # Private message
     "USERS": "USERS|{user_list}",           # User list update
+    "STATUS": "STATUS|{actors_json}",       # Actor status (latency)
     "REGISTER": "REGISTER|{name}|{machine_id}|{role}|{secret}",  # Client registration (secret optional)
     "APPROVED": "APPROVED",                  # Actor approved
     "DENIED": "DENIED|{reason}",            # Actor denied
@@ -105,6 +106,14 @@ def parse_message(data):
     
     elif msg_type == "DENIED" and len(parts) >= 2:
         return msg_type, {"reason": "|".join(parts[1:])}
+    
+    elif msg_type == "STATUS" and len(parts) >= 2:
+        import json as json_mod
+        try:
+            actors = json_mod.loads(parts[1])
+        except:
+            actors = []
+        return msg_type, {"actors": actors}
     
     elif msg_type == "PENDING" and len(parts) >= 2:
         import json as json_mod
