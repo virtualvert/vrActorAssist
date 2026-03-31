@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Build
+build/
+dist/
+
+# Runtime
+*.log
+approved_actors.json
+actor_config.json
+director_config.json
+
+# IDE
+.vscode/
+.idea/

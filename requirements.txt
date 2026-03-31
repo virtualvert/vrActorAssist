@@ -1,0 +1,13 @@
+# WebSocket server
+fastapi
+uvicorn
+websockets
+
+# WebSocket clients
+websocket-client
+
+# GUI (usually built-in with Python, but included for completeness)
+# tkinter is part of standard library
+
+# Build tools (for creating .exe on Windows)
+pyinstaller
