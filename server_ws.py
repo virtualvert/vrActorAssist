@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -75,6 +76,9 @@ class Client:
     machine_id: str = ""
     role: str = "actor"
     approved: bool = False
+    last_ping_sent: float = 0.0
+    last_ping_received: float = 0.0
+    latency_ms: int = 0  # Rolling average latency
 
 
 # Active connections
@@ -82,6 +86,11 @@ clients: Dict[WebSocket, Client] = {}
 
 
 app = FastAPI(title="vrActorAssist Server")
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on server startup."""
+    asyncio.create_task(status_broadcast_loop())
 
 
 def get_directors() -> list:
@@ -134,6 +143,54 @@ async def send_pending_list():
                 for mid, info in pending_actors.items()]
     msg = format_message("PENDING", actors_json=json.dumps(pending))
     await send_to_directors(msg)
+
+
+async def send_actor_status():
+    """Send actor latency status to directors."""
+    actors = []
+    for c in get_approved_actors():
+        actors.append({
+            "name": c.name,
+            "latency_ms": c.latency_ms,
+            "last_seen": c.last_ping_received
+        })
+    msg = format_message("STATUS", actors_json=json.dumps(actors))
+    await send_to_directors(msg)
+
+
+async def ping_actors():
+    """Send PING to all actors and track latency."""
+    current_time = time.time()
+    for ws, client in clients.items():
+        if client.role == "actor" and client.approved:
+            client.last_ping_sent = current_time
+            try:
+                await ws.send_text("PING")
+            except:
+                pass
+
+
+async def status_broadcast_loop():
+    """Periodically broadcast actor status to directors and ping actors."""
+    while True:
+        await asyncio.sleep(10)  # Every 10 seconds
+        
+        # Ping actors for latency tracking
+        await ping_actors()
+        
+        # Give them 2 seconds to respond
+        await asyncio.sleep(2)
+        
+        # Check for timeout (gray indicators)
+        current_time = time.time()
+        for ws, client in list(clients.items()):
+            if client.role == "actor" and client.approved:
+                # If no pong received in 60s, mark as timed out
+                if client.last_ping_received > 0 and (current_time - client.last_ping_received) > 60:
+                    client.latency_ms = -1  # -1 means timed out
+        
+        # Send status to directors
+        await send_actor_status()
 
 
 @app.websocket("/ws")
@@ -229,6 +286,21 @@ async def websocket_endpoint(
             # Require approval for all other messages
             if not client.approved:
                 await websocket.send_text(format_message("DENIED", reason="Not approved"))
+                continue
+            
+            # Handle PONG response (latency tracking)
+            if msg_type == "PONG" or data == "PONG":
+                current_time = time.time()
+                client.last_ping_received = current_time
+                
+                # Calculate latency if we have a ping sent time
+                if client.last_ping_sent > 0:
+                    latency = int((current_time - client.last_ping_sent) * 1000)  # Convert to ms
+                    # Rolling average (smooth out fluctuations)
+                    if client.latency_ms > 0:
+                        client.latency_ms = int((client.latency_ms + latency) / 2)
+                    else:
+                        client.latency_ms = latency
                 continue
             
             # Handle messages
