@@ -23,7 +23,8 @@ class DirectorClient:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Director Client")
-        self.root.geometry("700x550")
+        self.root.geometry("750x600")
+        self.root.minsize(700, 550)
         
         self.config_path = get_default_config_path("director_config.json")
         self.config = load_config(self.config_path)
@@ -168,7 +169,8 @@ class DirectorClient:
         """Prompt for initial configuration."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Director Setup")
-        dialog.geometry("400x180")
+        dialog.geometry("400x200")
+        dialog.minsize(400, 200)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -207,7 +209,8 @@ class DirectorClient:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Config")
-        dialog.geometry("400x150")
+        dialog.geometry("400x180")
+        dialog.minsize(400, 180)
         dialog.transient(self.root)
         dialog.grab_set()
         
