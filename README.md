@@ -1,33 +1,156 @@
 # vrActorAssist
-This utility simplifies VR filming by coordinating common tasks for distributed multi-actor productions (e.g. synchronized audio playback)
 
-The architecture for this system is as follows:
-   * A headless server runs in a location accessible to all participants.
-   * The director connects via the "director" client (which has the capability to instruct other client types).
-   * The actors connect via the "actor" client.
+A director/actor communication system for VRChat filmmaking. Director sends commands, actors receive and execute Soundpad sounds.
 
-Messages are sent in plaintext, and depending on version may allow standard chat messages (group or private), 
-as well as special commands which are designated by some "escape code" format such as *____. It would be a
-smart idea to convert all messages (including groupchat) into this format as well, to avoid inadvertant commands.
+## Quick Start
 
-Presently the goal is to just get it to work with on-demand push commands (when message is received, go), but
-another concept is to send a timestamp at a point a few seconds in the future, which - if NTP is used -
-should enable synchronization within tens of milliseconds.
+### 1. Install Dependencies
+```bash
+# Server
+pip install fastapi uvicorn websockets
 
-By "go" I mean execute a command along the lines of:
-  subprocess.run(["soundpad -rc DoPlaySelectedSound()"]) 
+# Clients
+pip install websocket-client
+```
 
-This will initiate playback of the highlighted item. It also is possible to use a more sophisticated
-wrapper for the soundpad API, but the command-line based approach is more straightforward and does
-not require users to install supplemental python libraries.
+### 2. Start the Server
+```bash
+python server_ws.py --port 5555 --secret your-secret-here
+```
 
-Initial files in this repo include:
-actor03.py, director03.py, server03.py - as described above, for "03" style architecture (asyncio)
-client03.py - a version of the 03-style architecture client for raw use, which can be used for debugging
-actor04.py, server04.py - headless server and GUI client for "04" style architecture - not yet broken into role-specific clients
+### 3. Run Director Client
+```bash
+python director_client_ws.py
+```
+- Enter server URL: `ws://host:5555/ws` or `wss://your-domain.com/ws`
+- Enter secret (must match server)
+- Approve pending actors
 
-Future ideas:
-* Foremost, see source code comments for some ideas and TODOs specific to each program.
-* Architecturally, there may be a "camera" client to enable remote start/stop/status for OBS, and possibly
-  scene/shot/take metadata.
+### 4. Run Actor Client
+```bash
+python actor_client_ws.py
+```
+- Enter server URL and your name
+- Wait for director approval
 
+## Deployment
+
+| Scenario | Server URL |
+|----------|------------|
+| Local network | `ws://192.168.1.100:5555/ws` |
+| Tailscale tailnet | `ws://100.104.39.106:5555/ws` |
+| Public domain | `wss://actor.yourdomain.com/ws` |
+
+### Public Domain Setup (Optional)
+Use Caddy for auto-HTTPS:
+```bash
+# Caddyfile
+actor.yourdomain.com {
+    reverse_proxy localhost:5555
+}
+```
+
+## Windows Executable
+
+Actors don't need Python! Build a standalone `.exe`:
+
+```powershell
+pip install pyinstaller
+python build_exe.py
+# Output: dist/vrActorClient.exe
+```
+
+Just distribute `vrActorClient.exe` — no dependencies needed.
+
+## Commands
+
+Director can send:
+| Command | Action |
+|---------|--------|
+| `*go` | Play selected sound in Soundpad |
+| `*stop` | Stop playback |
+| `*ready?` | Ask actors to confirm ready |
+| `*play:5` | Play sound at index 5 |
+
+## Architecture
+
+```
+┌─────────────────────────────────────┐
+│         Server (VPS)                │
+│  - WebSocket endpoint: /ws          │
+│  - Director auth via shared secret  │
+│  - Actor approval system            │
+└─────────────────────────────────────┘
+                 │
+     ┌───────────┼───────────┐
+     ▼           ▼           ▼
+┌─────────┐ ┌─────────┐ ┌─────────┐
+│Director │ │ Actor 1 │ │ Actor 2 │
+│(Linux)  │ │(Windows)│ │(Windows)│
+│         │ │Soundpad │ │Soundpad │
+└─────────┘ └─────────┘ └─────────┘
+```
+
+## Project Structure
+
+```
+vrActorAssist/
+├── server_ws.py          # WebSocket server (FastAPI)
+├── director_client_ws.py # Director GUI
+├── actor_client_ws.py    # Actor GUI with Soundpad
+├── shared.py             # Protocol utilities
+├── soundpad.py           # Soundpad CLI integration
+├── build_exe.py          # PyInstaller build script
+├── vrActorClient.spec    # PyInstaller spec
+├── requirements.txt      # Dependencies
+├── ROADMAP.md            # Future features
+│
+├── legacy/               # TCP socket version (kept for reference)
+│   ├── server.py
+│   ├── director_client.py
+│   └── actor_client.py
+│
+└── archive/              # Early prototypes (historical)
+    └── *03.py, *04.py
+```
+
+## Protocol
+
+Text-based, pipe-delimited messages:
+
+| Message | Format |
+|---------|--------|
+| Chat | `MSG\|sender\|text` |
+| Private | `PRIV\|sender\|target\|text` |
+| Command | `CMD\|command` |
+| Register | `REGISTER\|name\|machine_id\|role\|secret` |
+| Approved | `APPROVED` |
+| Denied | `DENIED\|reason` |
+| Users | `USERS\|user1,user2,...` |
+| Pending | `PENDING\|[{"machine_id":"...", "name":"..."}]` |
+
+## Requirements
+
+### Server (VPS)
+- Python 3.8+
+- fastapi, uvicorn, websockets
+
+### Director (Linux/Windows/macOS)
+- Python 3.8+
+- websocket-client
+- tkinter (usually built-in)
+
+### Actor (Windows only)
+- **Windows 10/11** (Soundpad requirement)
+- Soundpad installed
+- For Python: websocket-client, tkinter
+- **OR** just use `vrActorClient.exe` (no Python needed)
+
+## Future
+
+See [ROADMAP.md](ROADMAP.md) for planned features:
+- Selective actor triggering
+- Ping compensation/delay
+- File transfer to actors
+- Actor status indicators
+- Web dashboard for server admin
