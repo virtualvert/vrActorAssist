@@ -4,11 +4,14 @@
 # Usage: python actor_client_ws.py
 
 import tkinter as tk
-from tkinter import messagebox, scrolledtext
+from tkinter import messagebox, scrolledtext, filedialog
 import threading
 import json
 import websocket
 import time
+import base64
+import hashlib
+import os
 from pathlib import Path
 
 from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path
@@ -28,12 +31,30 @@ class ActorClient:
         
         self.config_path = get_default_config_path("actor_config.json")
         self.config = load_config(self.config_path)
+        
+        # Migrate config to add new fields if missing
+        if self.config:
+            changed = False
+            if "receive_dir" not in self.config:
+                self.config["receive_dir"] = str(Path.home() / "Downloads")
+                changed = True
+            if "auto_accept_files" not in self.config:
+                self.config["auto_accept_files"] = False
+                changed = True
+            if changed:
+                save_config(self.config_path, self.config)
+                self.display("Config updated with new fields", "info")
+        
         self.machine_id = get_machine_id()
         
         self.ws = None
         self.connected = False
         self.approved = False
         self.should_reconnect = True
+        
+        # Incoming file transfer state
+        self.incoming_file = None
+        self.file_chunks = {}
         
         self.setup_ui()
         
@@ -89,20 +110,30 @@ class ActorClient:
         # Window close handler
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
     
-    def display(self, message: str, error: bool = False):
+    def display(self, message: str, msg_type: str = "normal"):
         """Display a message in the chat area.
         
         Args:
             message: The message to display
-            error: If True, display in red text
+            msg_type: One of "success", "error", "warning", "info", "normal"
         """
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
         
+        colors = {
+            "success": "#008800",  # Green
+            "error": "#CC0000",    # Red
+            "warning": "#CC9900",  # Yellow/Orange
+            "info": "#0066CC",     # Blue
+            "normal": None         # Default
+        }
+        
         self.chat_area.config(state=tk.NORMAL)
-        if error:
-            self.chat_area.tag_configure("error", foreground="red")
-            self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n", "error")
+        color = colors.get(msg_type)
+        if color:
+            tag_name = f"color_{msg_type}"
+            self.chat_area.tag_configure(tag_name, foreground=color)
+            self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n", tag_name)
         else:
             self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n")
         self.chat_area.see(tk.END)
@@ -112,8 +143,8 @@ class ActorClient:
         """Prompt for initial configuration."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Actor Setup")
-        dialog.geometry("400x200")
-        dialog.minsize(400, 200)
+        dialog.geometry("450x280")
+        dialog.minsize(450, 280)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -127,15 +158,38 @@ class ActorClient:
         
         tk.Label(frame, text="Your Name:").pack(anchor='w')
         name_entry = tk.Entry(frame, width=40)
-        name_entry.pack(fill=tk.X)
+        name_entry.pack(fill=tk.X, pady=(0, 10))
+        
+        # File receive directory
+        tk.Label(frame, text="File Receive Directory:").pack(anchor='w')
+        dir_frame = tk.Frame(frame)
+        dir_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        dir_entry = tk.Entry(dir_frame, width=30)
+        dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        dir_entry.insert(0, str(Path.home() / "Downloads"))
+        
+        def browse_dir():
+            path = filedialog.askdirectory(title="Select directory for received files")
+            if path:
+                dir_entry.delete(0, tk.END)
+                dir_entry.insert(0, path)
+        
+        tk.Button(dir_frame, text="Browse", command=browse_dir).pack(side=tk.LEFT, padx=5)
+        
+        # Auto-accept toggle
+        auto_accept_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(frame, text="Auto-accept incoming files", variable=auto_accept_var).pack(anchor='w')
         
         def save_and_close():
             self.config = {
                 "server_url": server_entry.get().strip(),
-                "actor_name": name_entry.get().strip() or "Actor"
+                "actor_name": name_entry.get().strip() or "Actor",
+                "receive_dir": dir_entry.get().strip(),
+                "auto_accept_files": auto_accept_var.get()
             }
             save_config(self.config_path, self.config)
-            self.display(f"Config saved to {self.config_path}")
+            self.display(f"Config saved to {self.config_path}", "success")
             dialog.destroy()
             self.connect()
         
@@ -152,8 +206,8 @@ class ActorClient:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Config")
-        dialog.geometry("400x180")
-        dialog.minsize(400, 180)
+        dialog.geometry("450x280")
+        dialog.minsize(450, 280)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -168,13 +222,36 @@ class ActorClient:
         tk.Label(frame, text="Your Name:").pack(anchor='w')
         name_entry = tk.Entry(frame, width=40)
         name_entry.insert(0, self.config.get("actor_name", ""))
-        name_entry.pack(fill=tk.X)
+        name_entry.pack(fill=tk.X, pady=(0, 10))
+        
+        # File receive directory
+        tk.Label(frame, text="File Receive Directory:").pack(anchor='w')
+        dir_frame = tk.Frame(frame)
+        dir_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        dir_entry = tk.Entry(dir_frame, width=30)
+        dir_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        dir_entry.insert(0, self.config.get("receive_dir", str(Path.home() / "Downloads")))
+        
+        def browse_dir():
+            path = filedialog.askdirectory(title="Select directory for received files")
+            if path:
+                dir_entry.delete(0, tk.END)
+                dir_entry.insert(0, path)
+        
+        tk.Button(dir_frame, text="Browse", command=browse_dir).pack(side=tk.LEFT, padx=5)
+        
+        # Auto-accept toggle
+        auto_accept_var = tk.BooleanVar(value=self.config.get("auto_accept_files", False))
+        tk.Checkbutton(frame, text="Auto-accept incoming files", variable=auto_accept_var).pack(anchor='w')
         
         def save_changes():
             self.config["server_url"] = server_entry.get().strip()
             self.config["actor_name"] = name_entry.get().strip() or "Actor"
+            self.config["receive_dir"] = dir_entry.get().strip()
+            self.config["auto_accept_files"] = auto_accept_var.get()
             save_config(self.config_path, self.config)
-            self.display("Config updated. Reconnect to apply changes.")
+            self.display("Config updated. Reconnect to apply changes.", "success")
             dialog.destroy()
         
         btn_frame = tk.Frame(dialog)
@@ -230,7 +307,7 @@ class ActorClient:
         self.connect_btn.config(text="Connect")
         self.status_var.set("Disconnected")
         self.enable_input(False)
-        self.display("Disconnected")
+        self.display("Disconnected", "error")
     
     def _connect_thread(self):
         """Connection thread using WebSocketApp for proper ping handling."""
@@ -241,7 +318,7 @@ class ActorClient:
         
         def on_open(ws):
             self.connected = True
-            self.display("Connected! Registering...")
+            self.display("Connected! Registering...", "info")
             
             # Send registration
             register_msg = format_message(
@@ -257,7 +334,7 @@ class ActorClient:
             self.handle_message(message)
         
         def on_error(ws, error):
-            self.display(f"Error: {error}")
+            self.display(f"Error: {error}", "error")
         
         def on_close(ws, close_status_code, close_msg):
             self.connected = False
@@ -265,7 +342,7 @@ class ActorClient:
             self.root.after(0, lambda: self.status_var.set("Disconnected"))
             self.root.after(0, lambda: self.enable_input(False))
             if self.should_reconnect:
-                self.display(f"Disconnected. Reconnecting in {RECONNECT_DELAY}s...")
+                self.display(f"Disconnected. Reconnecting in {RECONNECT_DELAY}s...", "warning")
                 time.sleep(RECONNECT_DELAY)
                 if self.should_reconnect:
                     self._connect_thread()
@@ -313,17 +390,17 @@ class ActorClient:
         if msg_type == "APPROVED":
             self.approved = True
             actor_name = self.config.get("actor_name", "Unknown")
-            self.root.after(0, lambda: self.display("✓ Approved by director!"))
+            self.root.after(0, lambda: self.display("✓ Approved by director!", "success"))
             self.root.after(0, lambda: self.status_var.set(f"Connected (as {actor_name})"))
             self.root.after(0, lambda: self.enable_input(True))
         
         elif msg_type == "DENIED":
             reason = msg_data.get("reason", "Unknown reason")
-            self.root.after(0, lambda: self.display(f"✗ {reason}"))
+            self.root.after(0, lambda: self.display(f"✗ {reason}", "error"))
             self.approved = False
             self.root.after(0, lambda: self.enable_input(False))
             if "Pending" in reason:
-                self.root.after(0, lambda: self.display("Waiting for director approval..."))
+                self.root.after(0, lambda: self.display("Waiting for director approval...", "info"))
         
         elif msg_type == "MSG":
             sender = msg_data.get("sender", "Unknown")
@@ -346,11 +423,11 @@ class ActorClient:
                     status="OK"
                 )
                 self.ws.send(ack_msg)
-                self.root.after(0, lambda: self.display(f"✓ Executed: {text}"))
+                self.root.after(0, lambda: self.display(f"✓ Executed: {text}", "success"))
             else:
-                self.root.after(0, lambda: self.display(f"✗ Failed: {text}", error=True))
+                self.root.after(0, lambda: self.display(f"✗ Failed: {text}", "error"))
                 if error_msg:
-                    self.root.after(0, lambda msg=error_msg: self.display(f"   {msg}", error=True))
+                    self.root.after(0, lambda msg=error_msg: self.display(f"   {msg}", "error"))
         
         elif msg_type == "CMD":
             command = msg_data.get("command", "")
@@ -366,15 +443,156 @@ class ActorClient:
                     status="OK"
                 )
                 self.ws.send(ack_msg)
-                self.root.after(0, lambda: self.display(f"✓ Executed: {command}"))
+                self.root.after(0, lambda: self.display(f"✓ Executed: {command}", "success"))
             else:
-                self.root.after(0, lambda: self.display(f"✗ Failed: {command}", error=True))
+                self.root.after(0, lambda: self.display(f"✗ Failed: {command}", "error"))
                 if error_msg:
-                    self.root.after(0, lambda msg=error_msg: self.display(f"   {msg}", error=True))
+                    self.root.after(0, lambda msg=error_msg: self.display(f"   {msg}", "error"))
         
         elif msg_type == "USERS":
             users = msg_data.get("users", [])
             self.root.after(0, lambda: self.display(f"Actors: {', '.join(users)}"))
+        
+        elif msg_type == "FILEREQ":
+            sender = msg_data.get("sender", "Unknown")
+            filename = msg_data.get("filename", "")
+            size = msg_data.get("size", 0)
+            checksum = msg_data.get("checksum", "")
+            
+            # Store pending file info
+            self.incoming_file = {
+                "sender": sender,
+                "filename": filename,
+                "size": size,
+                "checksum": checksum
+            }
+            
+            # Ask user to accept
+            self.root.after(0, lambda: self.show_file_request(filename, size))
+        
+        elif msg_type == "FILESTART":
+            filename = msg_data.get("filename", "")
+            total_chunks = msg_data.get("total_chunks", 0)
+            chunk_size = msg_data.get("chunk_size", 0)
+            
+            self.file_chunks[filename] = {
+                "data": b"",
+                "total": total_chunks,
+                "received": 0,
+                "chunk_size": chunk_size
+            }
+            self.root.after(0, lambda: self.display(f"Receiving {filename}..."))
+        
+        elif msg_type == "FILECHUNK":
+            filename = msg_data.get("filename", "")
+            chunk_num = msg_data.get("chunk_num", 0)
+            b64_data = msg_data.get("data", "")
+            
+            if filename in self.file_chunks:
+                # Decode and append
+                chunk_data = base64.b64decode(b64_data)
+                self.file_chunks[filename]["data"] += chunk_data
+                self.file_chunks[filename]["received"] += 1
+                
+                # Progress update every 10 chunks
+                total = self.file_chunks[filename]["total"]
+                if self.file_chunks[filename]["received"] % 10 == 0:
+                    progress = self.file_chunks[filename]["received"] / total * 100
+                    self.root.after(0, lambda p=progress, fn=filename: self.display(f"  {fn}: {p:.0f}%"))
+        
+        elif msg_type == "FILEEND":
+            filename = msg_data.get("filename", "")
+            checksum = msg_data.get("checksum", "")
+            
+            if filename in self.file_chunks:
+                # Verify checksum
+                received_checksum = hashlib.md5(self.file_chunks[filename]["data"]).hexdigest()
+                
+                if received_checksum == checksum:
+                    # Save file
+                    save_dir = self.config.get("receive_dir", "")
+                    if not save_dir:
+                        # Prompt for directory
+                        save_dir = filedialog.askdirectory(title="Save file to...")
+                        if not save_dir:
+                            self.root.after(0, lambda: self.display("✗ File save cancelled", "error"))
+                            return
+                        # Save to config
+                        self.config["receive_dir"] = save_dir
+                        save_config(self.config_path, self.config)
+                    
+                    save_path = os.path.join(save_dir, filename)
+                    with open(save_path, 'wb') as f:
+                        f.write(self.file_chunks[filename]["data"])
+                    
+                    self.root.after(0, lambda: self.display(f"✓ Saved: {save_path}", "success"))
+                    
+                    # Send confirmation
+                    ok_msg = format_message("FILEOK", filename=filename, saved_path=save_path)
+                    self.ws.send(ok_msg)
+                else:
+                    self.root.after(0, lambda: self.display("✗ Checksum mismatch", "error"))
+                    err_msg = format_message("FILEERR", filename=filename, error="Checksum mismatch")
+                    self.ws.send(err_msg)
+                
+                # Cleanup
+                del self.file_chunks[filename]
+    
+    def show_file_request(self, filename: str, size: int):
+        """Show file request dialog."""
+        size_kb = size / 1024
+        save_dir = self.config.get("receive_dir", "")
+        auto_accept = self.config.get("auto_accept_files", False)
+        
+        # Auto-accept if enabled
+        if auto_accept and save_dir:
+            ack_msg = format_message("FILEACK",
+                filename=filename,
+                accept="1",
+                save_dir=save_dir
+            )
+            self.ws.send(ack_msg)
+            self.display(f"Auto-accepted {filename} ({size_kb:.1f} KB)", "success")
+            self.display(f"Save location: {save_dir}", "info")
+            return
+        
+        # Prompt for directory if not set
+        if not save_dir:
+            save_dir = filedialog.askdirectory(title="Select directory for received files")
+            if save_dir:
+                self.config["receive_dir"] = save_dir
+                save_config(self.config_path, self.config)
+            else:
+                # Cancelled
+                deny_msg = format_message("FILEDENY", filename=filename, reason="No save directory")
+                self.ws.send(deny_msg)
+                self.display(f"Declined {filename} (no save directory)")
+                return
+        
+        result = messagebox.askyesno(
+            "Incoming File",
+            f"{self.incoming_file['sender']} wants to send:\n\n"
+            f"  {filename}\n"
+            f"  ({size_kb:.1f} KB)\n\n"
+            f"Save to: {save_dir}\n\n"
+            f"Accept?"
+        )
+        
+        if result:
+            # Send accept
+            ack_msg = format_message("FILEACK",
+                filename=filename,
+                accept="1",
+                save_dir=save_dir
+            )
+            self.ws.send(ack_msg)
+            self.display(f"Accepted {filename} ({size_kb:.1f} KB)", "success")
+            self.display(f"Save location: {save_dir}", "info")
+        else:
+            # Send deny
+            deny_msg = format_message("FILEDENY", filename=filename, reason="Declined")
+            self.ws.send(deny_msg)
+            self.display(f"Declined {filename}", "warning")
     
     def send_msg(self):
         """Send a chat message."""
