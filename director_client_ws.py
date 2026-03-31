@@ -9,6 +9,9 @@ import threading
 import json
 import websocket
 import time
+import hashlib
+import base64
+import os
 from pathlib import Path
 
 from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path
@@ -126,6 +129,9 @@ class DirectorClient:
         tk.Button(toggle_frame, text="All On", command=self.enable_all_actors, height=2, width=8, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
         tk.Button(toggle_frame, text="All Off", command=self.disable_all_actors, height=2, width=8, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
         
+        # Send file button
+        tk.Button(left_frame, text="📁 Send File...", command=self.send_file_dialog, height=2, width=15, font=('Arial', 11, 'bold')).pack(pady=5)
+        
         # Right panel - Chat and controls
         right_frame = tk.Frame(main_frame)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -178,20 +184,30 @@ class DirectorClient:
         # Window close handler
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
     
-    def display(self, message: str, warning: bool = False):
+    def display(self, message: str, msg_type: str = "normal"):
         """Display a message in the chat area.
         
         Args:
             message: The message to display
-            warning: If True, display in yellow/orange text
+            msg_type: One of "success", "error", "warning", "info", "normal"
         """
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
         
+        colors = {
+            "success": "#008800",  # Green
+            "error": "#CC0000",    # Red
+            "warning": "#CC9900",  # Yellow/Orange
+            "info": "#0066CC",     # Blue
+            "normal": None         # Default
+        }
+        
         self.chat_area.config(state=tk.NORMAL)
-        if warning:
-            self.chat_area.tag_configure("warning", foreground="#CC9900")
-            self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n", "warning")
+        color = colors.get(msg_type)
+        if color:
+            tag_name = f"color_{msg_type}"
+            self.chat_area.tag_configure(tag_name, foreground=color)
+            self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n", tag_name)
         else:
             self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n")
         self.chat_area.see(tk.END)
@@ -225,7 +241,7 @@ class DirectorClient:
                 "secret": secret_entry.get().strip()
             }
             save_config(self.config_path, self.config)
-            self.display(f"Config saved to {self.config_path}")
+            self.display(f"Config saved to {self.config_path}", "success")
             dialog.destroy()
             self.connect()
         
@@ -264,7 +280,7 @@ class DirectorClient:
             self.config["server_url"] = server_entry.get().strip()
             self.config["secret"] = secret_entry.get().strip()
             save_config(self.config_path, self.config)
-            self.display("Config updated. Reconnect to apply changes.")
+            self.display("Config updated. Reconnect to apply changes.", "success")
             dialog.destroy()
         
         btn_frame = tk.Frame(dialog)
@@ -334,7 +350,7 @@ class DirectorClient:
         
         def on_open(ws):
             self.connected = True
-            self.display("Connected! Authenticating...")
+            self.display("Connected! Authenticating...", "info")
             
             # Send registration with secret
             secret = self.config.get("secret", DEFAULT_SECRET) if self.config else DEFAULT_SECRET
@@ -351,14 +367,14 @@ class DirectorClient:
             self.handle_message(message)
         
         def on_error(ws, error):
-            self.display(f"Error: {error}")
+            self.display(f"Error: {error}", "error")
         
         def on_close(ws, close_status_code, close_msg):
             self.connected = False
             self.approved = False
             self.root.after(0, lambda: self.status_var.set("Disconnected"))
             if self.should_reconnect:
-                self.display(f"Disconnected. Reconnecting in {RECONNECT_DELAY}s...")
+                self.display(f"Disconnected. Reconnecting in {RECONNECT_DELAY}s...", "warning")
                 time.sleep(RECONNECT_DELAY)
                 if self.should_reconnect:
                     self._connect_thread()
@@ -381,9 +397,9 @@ class DirectorClient:
                     break
                     
             except Exception as e:
-                self.display(f"Connection error: {e}")
+                self.display(f"Connection error: {e}", "error")
                 if self.should_reconnect:
-                    self.display(f"Retrying in {RECONNECT_DELAY}s...")
+                    self.display(f"Retrying in {RECONNECT_DELAY}s...", "info")
                     time.sleep(RECONNECT_DELAY)
                 else:
                     break
@@ -396,12 +412,12 @@ class DirectorClient:
         
         if msg_type == "APPROVED":
             self.approved = True
-            self.root.after(0, lambda: self.display("✓ Authenticated as Director"))
+            self.root.after(0, lambda: self.display("✓ Authenticated as Director", "success"))
             self.root.after(0, lambda: self.status_var.set("Connected (Director)"))
         
         elif msg_type == "DENIED":
             reason = msg_data.get("reason", "Unknown reason")
-            self.root.after(0, lambda: self.display(f"✗ Denied: {reason}"))
+            self.root.after(0, lambda: self.display(f"✗ Denied: {reason}", "error"))
             self.approved = False
         
         elif msg_type == "MSG":
@@ -411,7 +427,7 @@ class DirectorClient:
             is_warning = sender == "SERVER" and text.startswith("⚠")
             # Don't show our own messages (we already displayed them locally)
             if sender != "Director":
-                self.root.after(0, lambda: self.display(f"{sender}: {text}", warning=is_warning))
+                self.root.after(0, lambda: self.display(f"{sender}: {text}", msg_type="warning" if is_warning else "normal"))
         
         elif msg_type == "PRIV":
             sender = msg_data.get("sender", "Unknown")
@@ -422,7 +438,7 @@ class DirectorClient:
             actor = msg_data.get("actor", "Unknown")
             command = msg_data.get("command", "")
             status = msg_data.get("status", "")
-            self.root.after(0, lambda: self.display(f"✓ {actor}: {command} ({status})"))
+            self.root.after(0, lambda: self.display(f"✓ {actor}: {command} ({status})", "success"))
         
         elif msg_type == "USERS":
             users = msg_data.get("users", [])
@@ -432,7 +448,7 @@ class DirectorClient:
                 if user not in self.actor_enabled:
                     self.actor_enabled[user] = True
             self.root.after(0, self.update_approved_list)
-            self.root.after(0, lambda: self.display(f"Actors: {', '.join(users)}"))
+            self.root.after(0, lambda: self.display(f"Actors: {', '.join(users)}", "info"))
         
         elif msg_type == "STATUS":
             actors = msg_data.get("actors", [])
@@ -447,7 +463,31 @@ class DirectorClient:
             self.pending_actors = actors
             self.root.after(0, self.update_pending_list)
             if actors:
-                self.root.after(0, lambda: self.display(f"Pending: {len(actors)} actor(s) waiting"))
+                self.root.after(0, lambda: self.display(f"Pending: {len(actors)} actor(s) waiting", "info"))
+        
+        elif msg_type == "FILEACK":
+            filename = msg_data.get("filename", "")
+            accepted = msg_data.get("accept", False)
+            if accepted:
+                self.root.after(0, lambda: self.display(f"Actor accepted {filename}", "success"))
+                self.root.after(0, lambda fn=filename: self.send_file_chunks(fn))
+            else:
+                self.root.after(0, lambda: self.display(f"Actor declined {filename}", "warning"))
+        
+        elif msg_type == "FILEDENY":
+            filename = msg_data.get("filename", "")
+            reason = msg_data.get("reason", "Unknown")
+            self.root.after(0, lambda: self.display(f"File transfer denied: {reason}", "warning"))
+        
+        elif msg_type == "FILEOK":
+            filename = msg_data.get("filename", "")
+            saved_path = msg_data.get("saved_path", "")
+            self.root.after(0, lambda: self.display(f"✓ File saved: {saved_path}", "success"))
+        
+        elif msg_type == "FILEERR":
+            filename = msg_data.get("filename", "")
+            error = msg_data.get("error", "Unknown error")
+            self.root.after(0, lambda: self.display(f"✗ File error: {error}", "error"))
     
     def update_pending_list(self):
         """Update the pending actors listbox."""
@@ -751,6 +791,147 @@ class DirectorClient:
             self.cancel_countdown()
         else:
             self.send_command("*stop")
+    
+    def send_file_dialog(self):
+        """Open file picker and send file to selected actor."""
+        if not self.approved_actors:
+            messagebox.showwarning("No Actors", "No actors connected")
+            return
+        
+        # Actor selection dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Send File")
+        dialog.geometry("300x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        tk.Label(dialog, text="Send file to:", font=('Arial', 12)).pack(pady=10)
+        
+        # Actor listbox with explicit selection mode
+        listbox_frame = tk.Frame(dialog)
+        listbox_frame.pack(fill=tk.X, padx=20)
+        
+        listbox = tk.Listbox(listbox_frame, height=6, selectmode=tk.SINGLE)
+        scrollbar = tk.Scrollbar(listbox_frame, orient=tk.VERTICAL, command=listbox.yview)
+        listbox.config(yscrollcommand=scrollbar.set)
+        
+        for name in self.approved_actors:
+            listbox.insert(tk.END, name)
+        
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Select first actor by default
+        if self.approved_actors:
+            listbox.selection_set(0)
+            listbox.activate(0)
+        
+        def do_send():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning("No Selection", "Please select an actor")
+                return
+            
+            actor_name = listbox.get(sel[0])
+            dialog.destroy()
+            
+            # Open file picker
+            filepath = filedialog.askopenfilename(
+                title=f"Send file to {actor_name}",
+            )
+            
+            if filepath:
+                self.send_file_to_actor(filepath, actor_name)
+        
+        tk.Button(dialog, text="Send", command=do_send, height=2, width=10, font=('Arial', 11, 'bold')).pack(pady=10)
+    
+    def send_file_to_actor(self, filepath: str, actor_name: str):
+        """Send file to specific actor."""
+        if not self.ws or not self.connected:
+            messagebox.showerror("Error", "Not connected")
+            return
+        
+        filename = os.path.basename(filepath)
+        filesize = os.path.getsize(filepath)
+        
+        # Calculate MD5 checksum
+        md5 = hashlib.md5()
+        with open(filepath, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                md5.update(chunk)
+        checksum = md5.hexdigest()
+        
+        # Send file request
+        self.display(f"Sending {filename} ({filesize/1024:.1f} KB) to {actor_name}...")
+        
+        req_msg = format_message("FILEREQ",
+            sender="Director",
+            target=actor_name,
+            filename=filename,
+            size=filesize,
+            checksum=checksum
+        )
+        self.ws.send(req_msg)
+        
+        # Store pending file transfer
+        if not hasattr(self, 'pending_files'):
+            self.pending_files = {}
+        self.pending_files[filename] = {
+            "path": filepath,
+            "target": actor_name,
+            "checksum": checksum,
+            "accepted": False
+        }
+    
+    def send_file_chunks(self, filename: str):
+        """Send file in chunks after accepted."""
+        if filename not in self.pending_files:
+            return
+        
+        pending = self.pending_files[filename]
+        filepath = pending["path"]
+        filesize = os.path.getsize(filepath)
+        checksum = pending["checksum"]
+        
+        # Read file and send in chunks
+        chunk_size = 64 * 1024  # 64KB chunks
+        total_chunks = (filesize + chunk_size - 1) // chunk_size
+        
+        # Send FILESTART
+        start_msg = format_message("FILESTART",
+            filename=filename,
+            total_chunks=total_chunks,
+            chunk_size=chunk_size
+        )
+        self.ws.send(start_msg)
+        
+        # Send chunks
+        with open(filepath, 'rb') as f:
+            for chunk_num in range(total_chunks):
+                chunk_data = f.read(chunk_size)
+                b64_data = base64.b64encode(chunk_data).decode('utf-8')
+                
+                chunk_msg = format_message("FILECHUNK",
+                    filename=filename,
+                    chunk_num=chunk_num,
+                    data=b64_data
+                )
+                self.ws.send(chunk_msg)
+                
+                # Progress update every 10 chunks
+                if chunk_num % 10 == 0:
+                    progress = (chunk_num + 1) / total_chunks * 100
+                    self.display(f"  {filename}: {progress:.0f}%")
+        
+        # Send FILEEND
+        end_msg = format_message("FILEEND",
+            filename=filename,
+            checksum=checksum
+        )
+        self.ws.send(end_msg)
+        
+        self.display(f"✓ Sent {filename}", "success")
+        del self.pending_files[filename]
     
     def quit(self):
         """Quit the application."""

@@ -84,6 +84,9 @@ class Client:
 # Active connections
 clients: Dict[WebSocket, Client] = {}
 
+# Pending file transfers: filename -> {director_ws, actor_ws}
+pending_transfers: Dict[str, dict] = {}
+
 
 app = FastAPI(title="vrActorAssist Server")
 
@@ -330,6 +333,54 @@ async def websocket_endpoint(
                 command = msg_data.get("command", "")
                 # Broadcast command to all actors
                 await broadcast(format_message("CMD", command=command))
+            
+            # File transfer messages - route to target
+            elif msg_type in ("FILEREQ", "FILEACK", "FILEDENY", "FILESTART", "FILECHUNK", "FILEEND", "FILEOK", "FILEERR"):
+                filename = msg_data.get("filename", "")
+                
+                if msg_type == "FILEREQ":
+                    # Director requesting to send to actor
+                    target = msg_data.get("target", "")
+                    sender_ws = websocket
+                    
+                    # Find target actor
+                    for ws, c in clients.items():
+                        if c.name == target and c.approved and c.role == "actor":
+                            # Store the transfer mapping
+                            pending_transfers[filename] = {
+                                "director_ws": websocket,
+                                "actor_ws": ws
+                            }
+                            try:
+                                await ws.send_text(data)
+                            except:
+                                pass
+                            break
+                
+                elif filename in pending_transfers:
+                    transfer = pending_transfers[filename]
+                    
+                    if msg_type in ("FILEACK", "FILEDENY", "FILEOK", "FILEERR"):
+                        # Actor -> Director
+                        try:
+                            await transfer["director_ws"].send_text(data)
+                        except:
+                            pass
+                        
+                        if msg_type in ("FILEOK", "FILEERR", "FILEDENY"):
+                            # Transfer complete, cleanup
+                            del pending_transfers[filename]
+                    
+                    elif msg_type in ("FILESTART", "FILECHUNK", "FILEEND"):
+                        # Director -> Actor
+                        try:
+                            await transfer["actor_ws"].send_text(data)
+                        except:
+                            pass
+                        
+                        if msg_type == "FILEEND":
+                            # Will be cleaned up after FILEOK/FILEERR
+                            pass
             
             elif msg_type == "APPROVE":
                 # Director approves pending actor
