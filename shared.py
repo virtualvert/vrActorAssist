@@ -21,6 +21,15 @@ MSG_TYPES = {
     "ACK": "ACK|{actor}|{command}|{status}", # Command acknowledgment
     "FILE": "FILE|{sender}|{filename}|{size}", # File transfer header
     "FORGET": "FORGET|{machine_id}",        # Remove actor from approved list
+    # File transfer protocol
+    "FILEREQ": "FILEREQ|{sender}|{target}|{filename}|{size}|{checksum}",
+    "FILEACK": "FILEACK|{filename}|{accept}|{save_dir}",
+    "FILEDENY": "FILEDENY|{filename}|{reason}",
+    "FILESTART": "FILESTART|{filename}|{total_chunks}|{chunk_size}",
+    "FILECHUNK": "FILECHUNK|{filename}|{chunk_num}|{data}",
+    "FILEEND": "FILEEND|{filename}|{checksum}",
+    "FILEOK": "FILEOK|{filename}|{saved_path}",
+    "FILEERR": "FILEERR|{filename}|{error}",
 }
 
 
@@ -131,6 +140,48 @@ def parse_message(data):
     
     elif msg_type == "FILE" and len(parts) >= 4:
         return msg_type, {"sender": parts[1], "filename": parts[2], "size": int(parts[3])}
+    
+    elif msg_type == "FILEREQ" and len(parts) >= 6:
+        return msg_type, {
+            "sender": parts[1],
+            "target": parts[2],
+            "filename": parts[3],
+            "size": int(parts[4]),
+            "checksum": parts[5]
+        }
+    
+    elif msg_type == "FILEACK" and len(parts) >= 3:
+        return msg_type, {
+            "filename": parts[1],
+            "accept": parts[2] == "1",
+            "save_dir": parts[3] if len(parts) >= 4 else ""
+        }
+    
+    elif msg_type == "FILEDENY" and len(parts) >= 3:
+        return msg_type, {"filename": parts[1], "reason": "|".join(parts[2:])}
+    
+    elif msg_type == "FILESTART" and len(parts) >= 4:
+        return msg_type, {
+            "filename": parts[1],
+            "total_chunks": int(parts[2]),
+            "chunk_size": int(parts[3])
+        }
+    
+    elif msg_type == "FILECHUNK" and len(parts) >= 4:
+        return msg_type, {
+            "filename": parts[1],
+            "chunk_num": int(parts[2]),
+            "data": parts[3]
+        }
+    
+    elif msg_type == "FILEEND" and len(parts) >= 3:
+        return msg_type, {"filename": parts[1], "checksum": parts[2]}
+    
+    elif msg_type == "FILEOK" and len(parts) >= 3:
+        return msg_type, {"filename": parts[1], "saved_path": "|".join(parts[2:])}
+    
+    elif msg_type == "FILEERR" and len(parts) >= 3:
+        return msg_type, {"filename": parts[1], "error": "|".join(parts[2:])}
     
     elif msg_type == "FORGET" and len(parts) >= 2:
         return msg_type, {"machine_id": parts[1]}
