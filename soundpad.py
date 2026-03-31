@@ -102,17 +102,21 @@ def get_soundpad_path():
 
 
 def run_soundpad_command(command):
-    """Run a Soundpad remote control command."""
+    """Run a Soundpad remote control command.
+    
+    Returns:
+        tuple: (success: bool, message: str or None)
+    """
     if not is_windows():
         print(f"[Soundpad] Not on Windows - simulating: {command}")
-        return True
+        return (True, None)
     
     soundpad_exe = get_soundpad_path()
     if not soundpad_exe:
         print("[Soundpad] Soundpad.exe not found!")
         print("[Soundpad] Install Soundpad or set SOUNDPAD_PATH environment variable")
         print("[Soundpad] Example: set SOUNDPAD_PATH=C:\\Program Files\\Soundpad\\Soundpad.exe")
-        return False
+        return (False, "Soundpad not found. Please install Soundpad or set SOUNDPAD_PATH environment variable.")
     
     try:
         result = subprocess.run(
@@ -125,17 +129,17 @@ def run_soundpad_command(command):
             print(f"[Soundpad] Command failed (code {result.returncode}): {command}")
             if result.stderr:
                 print(f"[Soundpad] Error: {result.stderr}")
-            return False
-        return True
+            return (False, f"Soundpad command failed (code {result.returncode}). Is Soundpad running?")
+        return (True, None)
     except FileNotFoundError:
         print(f"[Soundpad] Could not execute: {soundpad_exe}")
-        return False
+        return (False, "Could not execute Soundpad. Is it installed?")
     except subprocess.TimeoutExpired:
         print("[Soundpad] Command timed out")
-        return False
+        return (False, "Soundpad command timed out. Is Soundpad running?")
     except Exception as e:
         print(f"[Soundpad] Error: {e}")
-        return False
+        return (False, f"Soundpad error: {e}")
 
 
 def play_selected():
@@ -157,12 +161,16 @@ def set_volume(volume):
     """Set Soundpad volume (0.0 to 1.0)."""
     if volume < 0.0 or volume > 1.0:
         print("[Soundpad] Volume must be between 0.0 and 1.0")
-        return False
+        return (False, "Volume must be between 0.0 and 1.0")
     return run_soundpad_command(f"SetVolume({volume})")
 
 
 def execute_command(command, args=""):
-    """Execute a Soundpad command based on protocol command."""
+    """Execute a Soundpad command based on protocol command.
+    
+    Returns:
+        tuple: (success: bool, message: str or None)
+    """
     command = command.lower().strip()
     
     if command == "go" or command == "*go":
@@ -178,7 +186,7 @@ def execute_command(command, args=""):
             return play_by_index(index)
         except (ValueError, IndexError):
             print(f"[Soundpad] Invalid play command: {command}")
-            return False
+            return (False, f"Invalid play command: {command}")
     
     elif command == "volume" and args:
         # Format: volume 0.5
@@ -187,11 +195,11 @@ def execute_command(command, args=""):
             return set_volume(vol)
         except (ValueError, IndexError):
             print(f"[Soundpad] Invalid volume: {args}")
-            return False
+            return (False, f"Invalid volume: {args}")
     
     else:
         print(f"[Soundpad] Unknown command: {command}")
-        return False
+        return (False, f"Unknown command: {command}")
 
 
 # Debug: print found path on import

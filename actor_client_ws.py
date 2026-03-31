@@ -23,8 +23,8 @@ class ActorClient:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Actor Client")
-        self.root.geometry("500x450")
-        self.root.minsize(500, 400)
+        self.root.geometry("550x500")
+        self.root.minsize(500, 450)
         
         self.config_path = get_default_config_path("actor_config.json")
         self.config = load_config(self.config_path)
@@ -55,13 +55,16 @@ class ActorClient:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.quit)
         
-        # Status bar
+        # Status bar with connection button
         self.status_var = tk.StringVar(value="Disconnected")
         status_frame = tk.Frame(self.root)
         status_frame.pack(fill=tk.X, padx=5, pady=5)
         
         tk.Label(status_frame, text="Status:").pack(side=tk.LEFT)
         tk.Label(status_frame, textvariable=self.status_var, fg="blue").pack(side=tk.LEFT, padx=5)
+        
+        self.connect_btn = tk.Button(status_frame, text="Connect", command=self.toggle_connection)
+        self.connect_btn.pack(side=tk.RIGHT)
         
         # Chat area
         self.chat_area = scrolledtext.ScrolledText(self.root, state=tk.DISABLED)
@@ -79,20 +82,25 @@ class ActorClient:
         self.send_btn = tk.Button(input_frame, text="Send", command=self.send_msg, state=tk.DISABLED)
         self.send_btn.pack(side=tk.RIGHT)
         
-        # Connection button
-        btn_frame = tk.Frame(self.root)
-        btn_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        self.connect_btn = tk.Button(btn_frame, text="Connect", command=self.toggle_connection)
-        self.connect_btn.pack(side=tk.LEFT)
-        
         # Window close handler
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
     
-    def display(self, message: str):
-        """Display a message in the chat area."""
+    def display(self, message: str, error: bool = False):
+        """Display a message in the chat area.
+        
+        Args:
+            message: The message to display
+            error: If True, display in red text
+        """
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        
         self.chat_area.config(state=tk.NORMAL)
-        self.chat_area.insert(tk.END, message + "\n")
+        if error:
+            self.chat_area.tag_configure("error", foreground="red")
+            self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n", "error")
+        else:
+            self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n")
         self.chat_area.see(tk.END)
         self.chat_area.config(state=tk.DISABLED)
     
@@ -304,7 +312,9 @@ class ActorClient:
         elif msg_type == "MSG":
             sender = msg_data.get("sender", "Unknown")
             text = msg_data.get("text", "")
-            self.root.after(0, lambda: self.display(f"{sender}: {text}"))
+            # Don't show our own messages (we already displayed them locally)
+            if sender != self.config.get("actor_name", "Unknown"):
+                self.root.after(0, lambda: self.display(f"{sender}: {text}"))
         
         elif msg_type == "PRIV":
             sender = msg_data.get("sender", "Unknown")
@@ -317,7 +327,7 @@ class ActorClient:
             self.root.after(0, lambda: self.display(f">> Command: {command}"))
             
             # Execute Soundpad command
-            success = execute_command(command, args)
+            success, error_msg = execute_command(command, args)
             if success:
                 ack_msg = format_message("ACK", 
                     actor=self.config.get("actor_name", "Unknown"),
@@ -327,7 +337,9 @@ class ActorClient:
                 self.ws.send(ack_msg)
                 self.root.after(0, lambda: self.display(f"✓ Executed: {command}"))
             else:
-                self.root.after(0, lambda: self.display(f"✗ Failed: {command}"))
+                self.root.after(0, lambda: self.display(f"✗ Failed: {command}", error=True))
+                if error_msg:
+                    self.root.after(0, lambda msg=error_msg: self.display(f"   {msg}", error=True))
         
         elif msg_type == "USERS":
             users = msg_data.get("users", [])
