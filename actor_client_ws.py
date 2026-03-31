@@ -23,7 +23,8 @@ class ActorClient:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Actor Client")
-        self.root.geometry("500x400")
+        self.root.geometry("500x450")
+        self.root.minsize(500, 400)
         
         self.config_path = get_default_config_path("actor_config.json")
         self.config = load_config(self.config_path)
@@ -99,7 +100,8 @@ class ActorClient:
         """Prompt for initial configuration."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Actor Setup")
-        dialog.geometry("400x150")
+        dialog.geometry("400x200")
+        dialog.minsize(400, 200)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -137,7 +139,8 @@ class ActorClient:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Config")
-        dialog.geometry("400x120")
+        dialog.geometry("400x180")
+        dialog.minsize(400, 180)
         dialog.transient(self.root)
         dialog.grab_set()
         
