@@ -86,8 +86,8 @@ class DirectorClient:
         tk.Button(pending_btn_frame, text="✓ Approve", command=self.approve_selected, width=8).pack(side=tk.LEFT, padx=2)
         tk.Button(pending_btn_frame, text="✗ Deny", command=self.deny_selected, width=8).pack(side=tk.LEFT, padx=2)
         
-        # Approved actors
-        tk.Label(left_frame, text="Approved:").pack(anchor='w', padx=5, pady=(10, 0))
+        # Active actors
+        tk.Label(left_frame, text="Active:").pack(anchor='w', padx=5, pady=(10, 0))
         
         approved_frame = tk.Frame(left_frame)
         approved_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -160,8 +160,11 @@ class DirectorClient:
     
     def display(self, message: str):
         """Display a message in the chat area."""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        
         self.chat_area.config(state=tk.NORMAL)
-        self.chat_area.insert(tk.END, message + "\n")
+        self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n")
         self.chat_area.see(tk.END)
         self.chat_area.config(state=tk.DISABLED)
     
@@ -373,7 +376,9 @@ class DirectorClient:
         elif msg_type == "MSG":
             sender = msg_data.get("sender", "Unknown")
             text = msg_data.get("text", "")
-            self.root.after(0, lambda: self.display(f"{sender}: {text}"))
+            # Don't show our own messages (we already displayed them locally)
+            if sender != "Director":
+                self.root.after(0, lambda: self.display(f"{sender}: {text}"))
         
         elif msg_type == "PRIV":
             sender = msg_data.get("sender", "Unknown")
