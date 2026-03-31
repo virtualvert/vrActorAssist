@@ -37,6 +37,8 @@ class DirectorClient:
         
         self.pending_actors = []  # List of {machine_id, name}
         self.approved_actors = []  # List of names
+        self.actor_status = {}  # name -> {"latency_ms": int}
+        self.actor_enabled = {}  # name -> bool (checkbox state)
         
         # Countdown state
         self.countdown_active = False
@@ -95,17 +97,34 @@ class DirectorClient:
         # Active actors
         tk.Label(left_frame, text="Active:").pack(anchor='w', padx=5, pady=(10, 0))
         
-        approved_frame = tk.Frame(left_frame)
-        approved_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # Frame for actor list with checkboxes and indicators
+        self.actors_frame = tk.Frame(left_frame)
+        self.actors_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        self.approved_list = tk.Listbox(approved_frame, height=10)
-        self.approved_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # Canvas + Scrollbar for scrollable actor list
+        self.actors_canvas = tk.Canvas(self.actors_frame, highlightthickness=0)
+        self.actors_scrollbar = tk.Scrollbar(self.actors_frame, orient="vertical", command=self.actors_canvas.yview)
+        self.actors_inner_frame = tk.Frame(self.actors_canvas)
         
-        approved_scroll = tk.Scrollbar(approved_frame, command=self.approved_list.yview)
-        approved_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.approved_list.config(yscrollcommand=approved_scroll.set)
+        self.actors_canvas.configure(yscrollcommand=self.actors_scrollbar.set)
+        
+        self.actors_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.actors_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        self.actors_canvas_window = self.actors_canvas.create_window((0, 0), window=self.actors_inner_frame, anchor="nw")
+        self.actors_inner_frame.bind("<Configure>", lambda e: self.actors_canvas.configure(scrollregion=self.actors_canvas.bbox("all")))
+        self.actors_canvas.bind("<Configure>", lambda e: self.actors_canvas.itemconfig(self.actors_canvas_window, width=e.width))
+        
+        # Store actor row widgets
+        self.actor_rows = {}  # name -> {"frame": Frame, "indicator": Label, "checkbox": Checkbutton}
         
         tk.Button(left_frame, text="Forget Actor", command=self.forget_actor, height=2, width=15, font=('Arial', 11, 'bold')).pack(pady=5)
+        
+        # Toggle all buttons
+        toggle_frame = tk.Frame(left_frame)
+        toggle_frame.pack(fill=tk.X, padx=5, pady=5)
+        tk.Button(toggle_frame, text="All On", command=self.enable_all_actors, height=2, width=8, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
+        tk.Button(toggle_frame, text="All Off", command=self.disable_all_actors, height=2, width=8, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
         
         # Right panel - Chat and controls
         right_frame = tk.Frame(main_frame)
@@ -408,8 +427,20 @@ class DirectorClient:
         elif msg_type == "USERS":
             users = msg_data.get("users", [])
             self.approved_actors = users
+            # Initialize enabled state for new actors
+            for user in users:
+                if user not in self.actor_enabled:
+                    self.actor_enabled[user] = True
             self.root.after(0, self.update_approved_list)
             self.root.after(0, lambda: self.display(f"Actors: {', '.join(users)}"))
+        
+        elif msg_type == "STATUS":
+            actors = msg_data.get("actors", [])
+            # Update status dict
+            self.actor_status = {}
+            for actor in actors:
+                self.actor_status[actor["name"]] = actor
+            self.root.after(0, self.update_actor_indicators)
         
         elif msg_type == "PENDING":
             actors = msg_data.get("actors", [])
@@ -425,10 +456,121 @@ class DirectorClient:
             self.pending_list.insert(tk.END, actor["name"])
     
     def update_approved_list(self):
-        """Update the approved actors listbox."""
-        self.approved_list.delete(0, tk.END)
+        """Update the approved actors list with indicators and checkboxes."""
+        # Clear existing rows
+        for widget in self.actors_inner_frame.winfo_children():
+            widget.destroy()
+        self.actor_rows = {}
+        
+        # Create rows for each actor
         for name in self.approved_actors:
-            self.approved_list.insert(tk.END, name)
+            self._create_actor_row(name)
+    
+    def _create_actor_row(self, name: str):
+        """Create a row for an actor with indicator and checkbox."""
+        row_frame = tk.Frame(self.actors_inner_frame)
+        row_frame.pack(fill=tk.X, pady=1)
+        
+        # Status indicator (colored dot)
+        indicator = tk.Label(row_frame, text="⚪", font=('Arial', 12), width=2)
+        indicator.pack(side=tk.LEFT)
+        
+        # Actor name
+        name_label = tk.Label(row_frame, text=name, font=('Arial', 11), anchor='w')
+        name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        
+        # Mic checkbox (enabled/disabled)
+        enabled_var = tk.BooleanVar(value=self.actor_enabled.get(name, True))
+        is_enabled = enabled_var.get()
+        checkbox = tk.Checkbutton(row_frame, text="🔊" if is_enabled else "🔈", variable=enabled_var, 
+                                   font=('Arial', 14), indicatoron=False,
+                                   command=lambda n=name: self._toggle_actor(n))
+        checkbox.pack(side=tk.RIGHT)
+        
+        self.actor_rows[name] = {
+            "frame": row_frame,
+            "indicator": indicator,
+            "name_label": name_label,
+            "checkbox": checkbox,
+            "enabled_var": enabled_var
+        }
+        
+        # Update indicator based on status
+        self._update_actor_indicator(name)
+    
+    def _toggle_actor(self, name: str):
+        """Toggle actor enabled state."""
+        if name in self.actor_rows:
+            enabled = self.actor_rows[name]["enabled_var"].get()
+            self.actor_enabled[name] = enabled
+            # Update checkbox text
+            self.actor_rows[name]["checkbox"].config(text="🔊" if enabled else "🔈")
+    
+    def enable_all_actors(self):
+        """Enable all actors."""
+        for name in self.approved_actors:
+            self.actor_enabled[name] = True
+            if name in self.actor_rows:
+                self.actor_rows[name]["enabled_var"].set(True)
+                self.actor_rows[name]["checkbox"].config(text="🔊")
+    
+    def disable_all_actors(self):
+        """Disable all actors."""
+        for name in self.approved_actors:
+            self.actor_enabled[name] = False
+            if name in self.actor_rows:
+                self.actor_rows[name]["enabled_var"].set(False)
+                self.actor_rows[name]["checkbox"].config(text="🔈")
+    
+    def update_actor_indicators(self):
+        """Update all actor indicators based on status."""
+        for name in self.approved_actors:
+            self._update_actor_indicator(name)
+    
+    def _update_actor_indicator(self, name: str):
+        """Update indicator for a single actor."""
+        if name not in self.actor_rows:
+            # Create row if it doesn't exist
+            self._create_actor_row(name)
+            return
+        
+        indicator = self.actor_rows[name]["indicator"]
+        name_label = self.actor_rows[name]["name_label"]
+        
+        if name not in self.actor_status:
+            indicator.config(text="⚪")
+            name_label.config(text=name)
+            return
+        
+        status = self.actor_status[name]
+        latency = status.get("latency_ms", 0)
+        
+        # Determine color based on latency
+        if latency < 0:
+            # Timed out
+            indicator.config(text="⚪", fg="gray")
+            tooltip = "Timed out"
+        elif latency < 100:
+            indicator.config(text="🟢", fg="green")
+            tooltip = f"{latency}ms"
+        elif latency < 300:
+            indicator.config(text="🟡", fg="#CC9900")
+            tooltip = f"{latency}ms"
+        else:
+            indicator.config(text="🔴", fg="red")
+            tooltip = f"{latency}ms"
+        
+        # Show latency in name label on hover
+        name_label.config(text=f"{name}")
+        
+        # Bind hover events
+        def enter(event, t=tooltip):
+            name_label.config(text=f"{name} ({t})")
+        def leave(event, n=name):
+            name_label.config(text=n)
+        
+        name_label.bind("<Enter>", enter)
+        name_label.bind("<Leave>", leave)
     
     def approve_selected(self):
         """Approve selected pending actor."""
@@ -465,13 +607,53 @@ class DirectorClient:
     
     def forget_actor(self):
         """Remove an actor from the approved list."""
-        selection = self.approved_list.curselection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Please select an actor from the list")
+        # Find selected actor from the rows
+        selected_name = None
+        for name, row in self.actor_rows.items():
+            if row["frame"].winfo_ismapped():
+                # Simple selection: just ask which actor to forget
+                pass
+        
+        # Simple prompt for actor name
+        if not self.approved_actors:
+            messagebox.showwarning("No Actors", "No actors to forget")
             return
         
-        idx = selection[0]
-        name = self.approved_list.get(idx)
+        # Ask which actor to forget
+        names = self.approved_actors
+        name = messagebox.askquestion("Forget Actor", "Forget which actor?\n\n(Click Yes for first actor, No to cancel)")
+        if name != "yes":
+            return
+        
+        name = names[0]
+        if len(names) > 1:
+            # Use a simple selection dialog
+            dialog = tk.Toplevel(self.root)
+            dialog.title("Forget Actor")
+            dialog.geometry("250x200")
+            dialog.transient(self.root)
+            dialog.grab_set()
+            
+            tk.Label(dialog, text="Select actor to forget:").pack(pady=10)
+            
+            listbox = tk.Listbox(dialog, height=6)
+            for n in names:
+                listbox.insert(tk.END, n)
+            listbox.pack(fill=tk.X, padx=20)
+            listbox.selection_set(0)
+            
+            def do_forget():
+                sel = listbox.curselection()
+                if sel:
+                    actor_name = listbox.get(sel[0])
+                    if messagebox.askyesno("Confirm", f"Forget {actor_name}?"):
+                        self.display(f"Forgetting: {actor_name}...")
+                        if self.ws and self.connected:
+                            self.ws.send(f"FORGET_NAME|{actor_name}")
+                dialog.destroy()
+            
+            tk.Button(dialog, text="Forget", command=do_forget, height=2, width=10, font=('Arial', 11, 'bold')).pack(pady=10)
+            return
         
         if messagebox.askyesno("Confirm Forget", f"Forget {name}?"):
             self.display(f"Forgetting: {name}...")
@@ -499,18 +681,31 @@ class DirectorClient:
             self.display(f"Send error: {e}")
     
     def send_command(self, command: str):
-        """Send a command to actors."""
+        """Send a command to enabled actors only."""
         if not self.ws or not self.connected:
             self.display("Not connected")
             return
         
-        msg = format_message("CMD", command=command)
+        # Get list of enabled actors
+        enabled_actors = [name for name in self.approved_actors if self.actor_enabled.get(name, True)]
         
-        try:
-            self.ws.send(msg)
-            self.display(f">> {command}")
-        except Exception as e:
-            self.display(f"Send error: {e}")
+        if not enabled_actors:
+            self.display("No actors enabled")
+            return
+        
+        # Send to each enabled actor via PRIV
+        for actor in enabled_actors:
+            msg = format_message("PRIV", sender="Director", target=actor, text=command)
+            try:
+                self.ws.send(msg)
+            except Exception as e:
+                self.display(f"Send error to {actor}: {e}")
+        
+        # Log what was sent
+        if len(enabled_actors) == len(self.approved_actors):
+            self.display(f">> {command} (to all)")
+        else:
+            self.display(f">> {command} (to: {', '.join(enabled_actors)})")
     
     def send_go(self):
         self.send_command("*go")
