@@ -4,7 +4,7 @@
 # Usage: python director_client_ws.py
 
 import tkinter as tk
-from tkinter import messagebox, scrolledtext, filedialog, ttk
+from tkinter import messagebox, scrolledtext, filedialog
 import threading
 import json
 import websocket
@@ -23,8 +23,8 @@ class DirectorClient:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Director Client")
-        self.root.geometry("750x600")
-        self.root.minsize(700, 550)
+        self.root.geometry("850x700")
+        self.root.minsize(800, 650)
         
         self.config_path = get_default_config_path("director_config.json")
         self.config = load_config(self.config_path)
@@ -37,6 +37,10 @@ class DirectorClient:
         
         self.pending_actors = []  # List of {machine_id, name}
         self.approved_actors = []  # List of names
+        
+        # Countdown state
+        self.countdown_active = False
+        self.countdown_id = None
         
         self.setup_ui()
         
@@ -83,8 +87,10 @@ class DirectorClient:
         pending_btn_frame = tk.Frame(left_frame)
         pending_btn_frame.pack(fill=tk.X, padx=5, pady=5)
         
-        tk.Button(pending_btn_frame, text="✓ Approve", command=self.approve_selected, width=8).pack(side=tk.LEFT, padx=2)
-        tk.Button(pending_btn_frame, text="✗ Deny", command=self.deny_selected, width=8).pack(side=tk.LEFT, padx=2)
+        # Bigger buttons for VR
+        btn_style = {'height': 2, 'width': 10, 'font': ('Arial', 11, 'bold')}
+        tk.Button(pending_btn_frame, text="✓ Approve", command=self.approve_selected, **btn_style).pack(side=tk.LEFT, padx=2, pady=2)
+        tk.Button(pending_btn_frame, text="✗ Deny", command=self.deny_selected, **btn_style).pack(side=tk.LEFT, padx=2, pady=2)
         
         # Active actors
         tk.Label(left_frame, text="Active:").pack(anchor='w', padx=5, pady=(10, 0))
@@ -99,7 +105,7 @@ class DirectorClient:
         approved_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.approved_list.config(yscrollcommand=approved_scroll.set)
         
-        tk.Button(left_frame, text="Forget Actor", command=self.forget_actor).pack(pady=5)
+        tk.Button(left_frame, text="Forget Actor", command=self.forget_actor, height=2, width=15, font=('Arial', 11, 'bold')).pack(pady=5)
         
         # Right panel - Chat and controls
         right_frame = tk.Frame(main_frame)
@@ -121,50 +127,54 @@ class DirectorClient:
         self.chat_area = scrolledtext.ScrolledText(right_frame, height=15)
         self.chat_area.pack(fill=tk.BOTH, expand=True)
         
-        # Target selector
-        target_frame = tk.Frame(right_frame)
-        target_frame.pack(fill=tk.X, pady=5)
-        
-        tk.Label(target_frame, text="Target:").pack(side=tk.LEFT)
-        self.target_var = tk.StringVar(value="(All)")
-        self.target_combo = ttk.Combobox(target_frame, textvariable=self.target_var, width=20, state="readonly")
-        self.target_combo['values'] = ["(All)"]
-        self.target_combo.pack(side=tk.LEFT, padx=5)
-        
-        tk.Button(target_frame, text="Refresh", command=self.refresh_users).pack(side=tk.LEFT)
-        
         # Input area
         input_frame = tk.Frame(right_frame)
         input_frame.pack(fill=tk.X, pady=5)
         
-        self.entry = tk.Entry(input_frame)
+        self.entry = tk.Entry(input_frame, font=('Arial', 11))
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.entry.bind("<Return>", lambda e: self.send_msg())
         
-        self.send_btn = tk.Button(input_frame, text="Send", command=self.send_msg)
+        # Bigger button for VR
+        self.send_btn = tk.Button(input_frame, text="Send", command=self.send_msg,
+                                   height=2, width=10, font=('Arial', 11, 'bold'))
         self.send_btn.pack(side=tk.RIGHT)
         
-        # Command buttons
+        # Command buttons (bigger for VR)
         cmd_frame = tk.Frame(right_frame)
-        cmd_frame.pack(fill=tk.X, pady=5)
+        cmd_frame.pack(fill=tk.X, pady=10)
         
-        tk.Button(cmd_frame, text="▶ GO", command=self.send_go, width=8).pack(side=tk.LEFT, padx=2)
-        tk.Button(cmd_frame, text="⏹ Stop", command=self.send_stop, width=8).pack(side=tk.LEFT, padx=2)
-        tk.Button(cmd_frame, text="? Ready?", command=self.send_ready_check, width=8).pack(side=tk.LEFT, padx=2)
+        # Bigger button style for VR
+        cmd_btn_style = {'height': 3, 'width': 12, 'font': ('Arial', 14, 'bold')}
         
-        tk.Button(cmd_frame, text="▶ Target GO", command=self.send_targeted_go, width=10).pack(side=tk.LEFT, padx=2)
-        tk.Button(cmd_frame, text="⏹ Target Stop", command=self.send_targeted_stop, width=10).pack(side=tk.LEFT, padx=2)
+        tk.Button(cmd_frame, text="▶ GO", command=self.send_go, **cmd_btn_style).pack(side=tk.LEFT, padx=5)
+        
+        # Play in 3s button (countdown)
+        self.play_3s_btn = tk.Button(cmd_frame, text="⏱ Play in 3s", command=self.start_countdown, 
+                                      height=3, width=14, font=('Arial', 14, 'bold'))
+        self.play_3s_btn.pack(side=tk.LEFT, padx=5)
+        
+        tk.Button(cmd_frame, text="■ Stop", command=self.send_stop, **cmd_btn_style).pack(side=tk.LEFT, padx=5)
         
         # Window close handler
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
     
-    def display(self, message: str):
-        """Display a message in the chat area."""
+    def display(self, message: str, warning: bool = False):
+        """Display a message in the chat area.
+        
+        Args:
+            message: The message to display
+            warning: If True, display in yellow/orange text
+        """
         from datetime import datetime
         timestamp = datetime.now().strftime("%H:%M:%S")
         
         self.chat_area.config(state=tk.NORMAL)
-        self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n")
+        if warning:
+            self.chat_area.tag_configure("warning", foreground="#CC9900")
+            self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n", "warning")
+        else:
+            self.chat_area.insert(tk.END, f"[{timestamp}] {message}\n")
         self.chat_area.see(tk.END)
         self.chat_area.config(state=tk.DISABLED)
     
@@ -200,7 +210,8 @@ class DirectorClient:
             dialog.destroy()
             self.connect()
         
-        tk.Button(dialog, text="Connect", command=save_and_close).pack(pady=20)
+        # Bigger button for VR
+        tk.Button(dialog, text="Connect", command=save_and_close, height=2, width=15, font=('Arial', 11, 'bold')).pack(pady=20)
         
         self.root.wait_window(dialog)
     
@@ -239,8 +250,9 @@ class DirectorClient:
         
         btn_frame = tk.Frame(dialog)
         btn_frame.pack(pady=20)
-        tk.Button(btn_frame, text="Save", command=save_changes).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT)
+        # Bigger buttons for VR
+        tk.Button(btn_frame, text="Save", command=save_changes, height=2, width=10, font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Cancel", command=dialog.destroy, height=2, width=10, font=('Arial', 11, 'bold')).pack(side=tk.LEFT)
     
     def get_ws_url(self, server_url: str) -> str:
         """Convert HTTP URL to WebSocket URL with secret."""
@@ -376,9 +388,11 @@ class DirectorClient:
         elif msg_type == "MSG":
             sender = msg_data.get("sender", "Unknown")
             text = msg_data.get("text", "")
+            # Check if it's a warning (from SERVER with ⚠)
+            is_warning = sender == "SERVER" and text.startswith("⚠")
             # Don't show our own messages (we already displayed them locally)
             if sender != "Director":
-                self.root.after(0, lambda: self.display(f"{sender}: {text}"))
+                self.root.after(0, lambda: self.display(f"{sender}: {text}", warning=is_warning))
         
         elif msg_type == "PRIV":
             sender = msg_data.get("sender", "Unknown")
@@ -415,10 +429,6 @@ class DirectorClient:
         self.approved_list.delete(0, tk.END)
         for name in self.approved_actors:
             self.approved_list.insert(tk.END, name)
-        
-        # Update target combo
-        targets = ["(All)"] + self.approved_actors
-        self.target_combo['values'] = targets
     
     def approve_selected(self):
         """Approve selected pending actor."""
@@ -457,15 +467,7 @@ class DirectorClient:
         """Remove an actor from the approved list."""
         selection = self.approved_list.curselection()
         if not selection:
-            target = self.target_var.get()
-            if target and target != "(All)":
-                if messagebox.askyesno("Confirm Forget", f"Forget {target}?"):
-                    self.display(f"Forgetting: {target}...")
-                    if self.ws and self.connected:
-                        self.ws.send(f"FORGET_NAME|{target}")
-                return
-            
-            messagebox.showwarning("No Selection", "Please select an actor from the list or choose a target")
+            messagebox.showwarning("No Selection", "Please select an actor from the list")
             return
         
         idx = selection[0]
@@ -496,39 +498,64 @@ class DirectorClient:
         except Exception as e:
             self.display(f"Send error: {e}")
     
-    def send_command(self, command: str, target: str = None):
+    def send_command(self, command: str):
         """Send a command to actors."""
         if not self.ws or not self.connected:
             self.display("Not connected")
             return
         
-        if target and target != "(All)":
-            msg = format_message("PRIV", sender="Director", target=target, text=command)
-        else:
-            msg = format_message("CMD", command=command)
+        msg = format_message("CMD", command=command)
         
         try:
             self.ws.send(msg)
-            self.display(f">> {command}" + (f" (to {target})" if target and target != "(All)" else ""))
+            self.display(f">> {command}")
         except Exception as e:
             self.display(f"Send error: {e}")
     
     def send_go(self):
         self.send_command("*go")
     
+    def start_countdown(self):
+        """Start the 3-second countdown for Play in 3s button."""
+        if self.countdown_active:
+            return
+        
+        self.countdown_active = True
+        self.play_3s_btn.config(state=tk.DISABLED)
+        self._countdown_tick(3)
+    
+    def _countdown_tick(self, seconds):
+        """Countdown tick."""
+        if not self.countdown_active:
+            # Cancelled
+            self.play_3s_btn.config(text="⏱ Play in 3s", state=tk.NORMAL)
+            return
+        
+        if seconds > 0:
+            self.play_3s_btn.config(text=f"   {seconds}...   ")
+            self.countdown_id = self.root.after(1000, lambda: self._countdown_tick(seconds - 1))
+        else:
+            # Countdown complete, send command
+            self.countdown_active = False
+            self.play_3s_btn.config(text="⏱ Play in 3s", state=tk.NORMAL)
+            self.send_command("*go")
+    
+    def cancel_countdown(self):
+        """Cancel the countdown."""
+        if self.countdown_active:
+            self.countdown_active = False
+            if self.countdown_id:
+                self.root.after_cancel(self.countdown_id)
+                self.countdown_id = None
+            self.play_3s_btn.config(text="⏱ Play in 3s", state=tk.NORMAL)
+            self.display("Countdown cancelled")
+    
     def send_stop(self):
-        self.send_command("*stop")
-    
-    def send_ready_check(self):
-        self.send_command("*ready?")
-    
-    def send_targeted_go(self):
-        target = self.target_var.get()
-        self.send_command("*go", target if target != "(All)" else None)
-    
-    def send_targeted_stop(self):
-        target = self.target_var.get()
-        self.send_command("*stop", target if target != "(All)" else None)
+        # If countdown is active, cancel it instead of sending stop
+        if self.countdown_active:
+            self.cancel_countdown()
+        else:
+            self.send_command("*stop")
     
     def quit(self):
         """Quit the application."""
