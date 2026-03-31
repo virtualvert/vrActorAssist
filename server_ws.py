@@ -176,6 +176,24 @@ async def websocket_endpoint(
                         client.approved = True
                         log(f"Director '{name}' authenticated")
                         await websocket.send_text(format_message("APPROVED"))
+                        
+                        # Handle multi-director warnings
+                        existing_directors = [c for c in get_directors() if c.websocket != websocket]
+                        if existing_directors:
+                            # Warn new director about existing ones
+                            existing_names = [d.name for d in existing_directors]
+                            await websocket.send_text(format_message("MSG", sender="SERVER",
+                                text=f"⚠ Warning: {', '.join(existing_names)} is already connected"))
+                            log(f"Director '{name}' warned about existing directors")
+                            
+                            # Warn existing directors about new one
+                            for d in existing_directors:
+                                try:
+                                    await d.websocket.send_text(format_message("MSG", sender="SERVER",
+                                        text=f"⚠ Warning: {name} has connected as another director"))
+                                except:
+                                    pass
+                        
                         await send_user_list()
                         await send_pending_list()
                     else:

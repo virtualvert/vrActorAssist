@@ -72,6 +72,15 @@ Director can send:
 | `*ready?` | Ask actors to confirm ready |
 | `*play:5` | Play sound at index 5 |
 
+## Releases
+
+See [GitHub Releases](https://github.com/YOUR_USERNAME/vrActorAssist/releases) for downloadable builds.
+
+| Version | Notes |
+|---------|-------|
+| v0.1.0 | Initial release — basic WebSocket client, Soundpad integration |
+| v0.2.0 | (Planned) Selective triggering, file transfer, status indicators, VR-friendly buttons |
+
 ## Architecture
 
 ```
