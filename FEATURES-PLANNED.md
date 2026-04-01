@@ -9,27 +9,34 @@
 | Version | Status | Notes |
 |---------|--------|-------|
 | **v0.1.0** | Released | Initial release — basic WebSocket client, Soundpad integration |
-| **v0.2.0** | Planned | Selective triggering, file transfer, status indicators |
+| **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons |
+| **v0.3.0** | Planned | "Play in 3s" countdown |
 
 ---
 
-## v0.2.0 Scope
+## v0.2.0 Scope ✅ Complete
 
-Features planned for v0.2.0:
-- [ ] Selective actor triggering (checkboxes)
-- [ ] File transfer (director → actor)
-- [ ] Actor status indicators (ping + hover)
-- [ ] Multi-director warning
+Features released in v0.2.0:
+- [x] Selective actor triggering (checkboxes)
+- [x] File transfer (director → actor)
+- [x] Actor status indicators (ping + hover)
+- [x] Multi-director warning
+- [x] Bigger buttons for VR (3x size)
+- [x] Configurable Soundpad path
+- [x] Fix duplicate actors on reconnect
+
+---
+
+## v0.3.0 Scope
+
+Features planned for v0.3.0:
 - [ ] "Play in 3s" countdown button
-- [ ] Bigger buttons for VR (3x size)
-
-Window sizing fix (2026-03-31) will be included in v0.2.0 build.
 
 ---
 
-## Feature 1: Selective Actor Triggering
+## Feature 1: Selective Actor Triggering ✅
 
-**Goal:** Director can choose which actors receive broadcast commands via checkboxes.
+**Status:** Implemented
 
 ### UI Changes — Director Client
 
@@ -61,7 +68,9 @@ Window sizing fix (2026-03-31) will be included in v0.2.0 build.
 
 ---
 
-## Feature 3: Actor Status Indicators
+## Feature 3: Actor Status Indicators ✅
+
+**Status:** Implemented
 
 **Goal:** Show connection quality per actor with colored dot + latency on hover.
 
@@ -120,7 +129,9 @@ CMD|*go|targets=Alice,Bob,Charlie
 
 ---
 
-## Feature 2: File Transfer (Director → Actor)
+## Feature 2: File Transfer ✅
+
+**Status:** Implemented
 
 **Goal:** Director can send files to a selected actor. Actor can accept/decline or auto-accept.
 
@@ -224,7 +235,9 @@ Soundpad has a Remote Control API with:
 
 ---
 
-## Feature 4: Multi-Director Warning
+## Feature 4: Multi-Director Warning ✅
+
+**Status:** Implemented
 
 **Goal:** Warn if another director is already connected.
 
@@ -298,11 +311,12 @@ if role == "director":
 
 ## Implementation Order
 
-1. Multi-director warning (simple)
-2. Bigger buttons for VR
-3. "Play in 3s" countdown
-4. Selective actor triggering (checkboxes)
-5. Actor status indicators
-6. File transfer
+Completed in v0.2.0:
+1. ~~Multi-director warning (simple)~~ ✅
+2. ~~Bigger buttons for VR~~ ✅
+3. ~~Selective actor triggering (checkboxes)~~ ✅
+4. ~~Actor status indicators~~ ✅
+5. ~~File transfer~~ ✅
 
-Each feature = one commit.
+Remaining:
+6. "Play in 3s" countdown (v0.3.0)
