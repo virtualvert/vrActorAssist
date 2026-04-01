@@ -91,11 +91,21 @@ def find_soundpad_exe():
 
 # Cache the Soundpad path
 _SOUNDPAD_PATH = None
+_CONFIG_SOUNDPAD_PATH = None  # Set by actor client from config
+
+
+def set_soundpad_path(path):
+    """Set Soundpad path from config."""
+    global _CONFIG_SOUNDPAD_PATH
+    _CONFIG_SOUNDPAD_PATH = path
 
 
 def get_soundpad_path():
     """Get cached Soundpad path or find it."""
     global _SOUNDPAD_PATH
+    # Check config path first (set by actor client)
+    if _CONFIG_SOUNDPAD_PATH and os.path.isfile(_CONFIG_SOUNDPAD_PATH):
+        return _CONFIG_SOUNDPAD_PATH
     if _SOUNDPAD_PATH is None:
         _SOUNDPAD_PATH = find_soundpad_exe()
     return _SOUNDPAD_PATH
