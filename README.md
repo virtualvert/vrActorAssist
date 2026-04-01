@@ -79,7 +79,7 @@ See [GitHub Releases](https://github.com/YOUR_USERNAME/vrActorAssist/releases) f
 | Version | Notes |
 |---------|-------|
 | v0.1.0 | Initial release — basic WebSocket client, Soundpad integration |
-| v0.2.0 | (Planned) Selective triggering, file transfer, status indicators, VR-friendly buttons |
+| v0.2.0 | Selective triggering, file transfer, status indicators, VR-friendly buttons, configurable Soundpad path |
 
 ## Architecture
 
@@ -158,8 +158,7 @@ Text-based, pipe-delimited messages:
 ## Future
 
 See [ROADMAP.md](ROADMAP.md) for planned features:
-- Selective actor triggering
+- "Play in 3s" countdown
 - Ping compensation/delay
-- File transfer to actors
-- Actor status indicators
+- Sound list sync from actors
 - Web dashboard for server admin

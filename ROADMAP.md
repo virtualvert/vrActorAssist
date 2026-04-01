@@ -14,12 +14,7 @@
 
 ### v0.2.0 (In Progress)
 
-- [ ] **Multi-director warning** — Show warning if another director is already connected
-- [ ] **Bigger buttons for VR** — 3x size buttons for easier desktop overlay clicking
 - [ ] **"Play in 3s" countdown** — New button with 3-second delay before sending Go
-- [ ] **Selective actor triggering** — Checkboxes to select which actors receive commands
-- [ ] **Actor status indicators** — Green/yellow/red connection quality dots
-- [ ] **File transfer** — Director can send files to actors
 
 ### Priority 2: Future Improvements
 
@@ -97,4 +92,11 @@
 - [x] Basic command system (`*go`, `*stop`, `*play:N`)
 - [x] Private messaging to specific actors
 - [x] UI improvements (timestamps, error logging, window sizing)
+- [x] Multi-director warning — shows warning if another director is already connected
+- [x] Bigger buttons for VR — larger buttons for easier desktop overlay clicking
+- [x] Selective actor triggering — checkboxes to select which actors receive commands
+- [x] Actor status indicators — latency-based green/yellow/red connection quality dots
+- [x] File transfer — director can send files to actors
+- [x] Configurable Soundpad path — actors can set custom Soundpad.exe location via config or env var
+- [x] Duplicate actor fix — old connection now properly disconnected on reconnect
 - [x] v0.1.0 release — initial actor client
