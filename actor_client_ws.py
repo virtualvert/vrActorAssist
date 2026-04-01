@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 
 from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path
-from soundpad import execute_command
+from soundpad import execute_command, set_soundpad_path
 
 # Defaults
 DEFAULT_SERVER = "ws://localhost:5555/ws"
@@ -44,6 +44,10 @@ class ActorClient:
             if changed:
                 save_config(self.config_path, self.config)
                 self.display("Config updated with new fields", "info")
+            
+            # Set Soundpad path from config if available
+            if "soundpad_path" in self.config:
+                set_soundpad_path(self.config["soundpad_path"])
         
         self.machine_id = get_machine_id()
         
@@ -143,8 +147,8 @@ class ActorClient:
         """Prompt for initial configuration."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Actor Setup")
-        dialog.geometry("450x280")
-        dialog.minsize(450, 280)
+        dialog.geometry("450x350")
+        dialog.minsize(450, 350)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -177,6 +181,26 @@ class ActorClient:
         
         tk.Button(dir_frame, text="Browse", command=browse_dir).pack(side=tk.LEFT, padx=5)
         
+        # Soundpad path (optional)
+        tk.Label(frame, text="Soundpad Path (optional):").pack(anchor='w')
+        sp_frame = tk.Frame(frame)
+        sp_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        sp_entry = tk.Entry(sp_frame, width=30)
+        sp_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        sp_entry.insert(0, "")
+        
+        def browse_sp():
+            path = filedialog.askopenfilename(
+                title="Select Soundpad.exe",
+                filetypes=[("Executable", "*.exe"), ("All files", "*.*")]
+            )
+            if path:
+                sp_entry.delete(0, tk.END)
+                sp_entry.insert(0, path)
+        
+        tk.Button(sp_frame, text="Browse", command=browse_sp).pack(side=tk.LEFT, padx=5)
+        
         # Auto-accept toggle
         auto_accept_var = tk.BooleanVar(value=False)
         tk.Checkbutton(frame, text="Auto-accept incoming files", variable=auto_accept_var).pack(anchor='w')
@@ -188,6 +212,10 @@ class ActorClient:
                 "receive_dir": dir_entry.get().strip(),
                 "auto_accept_files": auto_accept_var.get()
             }
+            # Save Soundpad path if provided
+            sp_path = sp_entry.get().strip()
+            if sp_path:
+                self.config["soundpad_path"] = sp_path
             save_config(self.config_path, self.config)
             self.display(f"Config saved to {self.config_path}", "success")
             dialog.destroy()
@@ -206,8 +234,8 @@ class ActorClient:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Config")
-        dialog.geometry("450x280")
-        dialog.minsize(450, 280)
+        dialog.geometry("450x350")
+        dialog.minsize(450, 350)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -241,6 +269,26 @@ class ActorClient:
         
         tk.Button(dir_frame, text="Browse", command=browse_dir).pack(side=tk.LEFT, padx=5)
         
+        # Soundpad path (optional)
+        tk.Label(frame, text="Soundpad Path (optional):").pack(anchor='w')
+        sp_frame = tk.Frame(frame)
+        sp_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        sp_entry = tk.Entry(sp_frame, width=30)
+        sp_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        sp_entry.insert(0, self.config.get("soundpad_path", ""))
+        
+        def browse_sp():
+            path = filedialog.askopenfilename(
+                title="Select Soundpad.exe",
+                filetypes=[("Executable", "*.exe"), ("All files", "*.*")]
+            )
+            if path:
+                sp_entry.delete(0, tk.END)
+                sp_entry.insert(0, path)
+        
+        tk.Button(sp_frame, text="Browse", command=browse_sp).pack(side=tk.LEFT, padx=5)
+        
         # Auto-accept toggle
         auto_accept_var = tk.BooleanVar(value=self.config.get("auto_accept_files", False))
         tk.Checkbutton(frame, text="Auto-accept incoming files", variable=auto_accept_var).pack(anchor='w')
@@ -250,6 +298,11 @@ class ActorClient:
             self.config["actor_name"] = name_entry.get().strip() or "Actor"
             self.config["receive_dir"] = dir_entry.get().strip()
             self.config["auto_accept_files"] = auto_accept_var.get()
+            sp_path = sp_entry.get().strip()
+            if sp_path:
+                self.config["soundpad_path"] = sp_path
+            elif "soundpad_path" in self.config:
+                del self.config["soundpad_path"]
             save_config(self.config_path, self.config)
             self.display("Config updated. Reconnect to apply changes.", "success")
             dialog.destroy()
