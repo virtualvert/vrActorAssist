@@ -266,9 +266,9 @@ async def websocket_endpoint(
                 # Actor registration
                 if machine_id in approved_actors:
                     # Known actor - auto-approve
-                    # First, disconnect any existing connection with this machine_id
+                    # First, disconnect any existing actor connection with this machine_id
                     for old_ws, old_client in list(clients.items()):
-                        if old_ws != websocket and old_client.machine_id == machine_id:
+                        if old_ws != websocket and old_client.machine_id == machine_id and old_client.role == "actor":
                             log(f"Disconnecting old connection for '{old_client.name}'")
                             try:
                                 await old_ws.send_text(format_message("MSG", sender="SERVER", text="Reconnected from another location"))
