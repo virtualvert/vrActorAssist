@@ -17,6 +17,7 @@
   - Multi-select in file picker
   - Queue transfers with progress
   - Actor receives to configured directory
+  - Character-based routing for audioscript files (` - Character.mp3` pattern)
 
 - [ ] **Ping compensation / delay** — Add millisecond delay per actor:
   - Director can set delay per actor (e.g., Actor A: +50ms, Actor B: +100ms)

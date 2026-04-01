@@ -10,7 +10,7 @@
 |---------|--------|-------|
 | **v0.1.0** | Released | Initial release — basic WebSocket client, Soundpad integration |
 | **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
-| **v0.3.0** | Planned | Multiple directors, multi-file transfer, ping compensation |
+| **v0.3.0** | Planned | Multiple directors, multi-file transfer with character routing, ping compensation |
 
 ---
 
@@ -38,7 +38,7 @@
 
 ### Feature 2: Send Multiple Files
 
-**Goal:** Director can send multiple files to actor at once.
+**Goal:** Director can send multiple files to actors with optional character-based routing.
 
 ### UI Changes — Director
 - Multi-select in file picker
@@ -55,6 +55,75 @@ Same FILESTART/FILECHUNK/FILEEND protocol, but:
 - Director sends FILEREQ with multiple filenames
 - Actor acknowledges all at once
 - Sequential transfer of each file
+
+---
+
+### Feature 2b: Character-based File Routing (Audioscript Mode)
+
+**Goal:** Automatically route audioscript files to actors based on character name in filename.
+
+### Filename Pattern
+- Format: ` - Character.mp3` (e.g., "EP3 Scene 4.2 - Diego.mp3")
+- Character name extracted from between ` - ` and `.mp3`
+- Pattern is consistent across all audioscript files
+
+### Grouping Behavior
+- Files matching the pattern are **grouped by character**
+- Mapping dialog shows character name, not individual files
+- Multiple files for same character appear as one row with file count
+- Non-matching files are listed individually with full filename
+
+Example dialog:
+```
+┌─────────────────────────────────────────┐
+│  Map Characters to Actors              │
+│                                         │
+│  Diego      → [Coda        ▼] (2 files) │
+│  Quincey    → [Infinity    ▼] (1 file)  │
+│                                         │
+│  random_sound.mp3  → [Coda   ▼]         │
+│  intro_music.wav   → [unassigned ▼]     │
+│                                         │
+│  [ ] Remember for this session          │
+│                                         │
+│    [Send All]       [Cancel]           │
+└─────────────────────────────────────────┘
+```
+
+### Workflow
+1. Director selects multiple files
+2. System parses character names from filenames
+3. Files grouped by character, non-matching files listed separately
+4. Mapping dialog shows grouped characters + individual files
+5. Known mappings auto-filled from session memory
+6. Director reviews/confirms, clicks Send All
+7. Files dispatched to respective actors
+
+### Unmapped Characters
+If a character has no actor assigned:
+```
+"No actor is assigned to 'Diego'. Skip this file?"
+[Yes]  [No]
+```
+- **Yes:** Skip file, continue with remaining
+- **No:** Return to mapping dialog
+
+### Non-matching Filenames
+Files that don't match the pattern:
+- Show full filename in mapping dialog
+- Assign manually to any actor
+- Treated same as character-based files after assignment
+
+### Session Memory
+- Character→Actor mappings persist for the session
+- New batch auto-fills known mappings
+- Option to clear/reset mappings
+- Saved per-director (stored locally, not on server)
+
+### Implementation Notes
+- Pattern matching: `filename.split(' - ')[-1].replace('.mp3', '')`
+- Session memory stored in director config
+- No server changes needed — just client-side routing logic
 
 ---
 
