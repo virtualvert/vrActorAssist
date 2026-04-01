@@ -1,62 +1,34 @@
 # vrActorAssist Roadmap
 
-*Last updated: 2026-03-31*
-
----
-
-## 🐛 Bugs / UX Issues
-
-- [ ] **Config dialog too small** — Edit config dialog should show Connect/Save button without expanding window (set minimum size or auto-size)
+*Last updated: 2026-04-01*
 
 ---
 
 ## 🚀 Features (Planned)
 
-### v0.2.0 (In Progress)
+### Priority 1: v0.3.0
 
-- [ ] **"Play in 3s" countdown** — New button with 3-second delay before sending Go
-
-### Priority 2: Future Improvements
+- [ ] **Multiple director support** — Allow multiple directors with different names and permissions:
+  - Main director (full control)
+  - Assistant director (limited commands)
+  - Each director has their own identity/name
+  
+- [ ] **Send multiple files** — Director can send multiple files to actor at once:
+  - Multi-select in file picker
+  - Queue transfers with progress
+  - Actor receives to configured directory
 
 - [ ] **Ping compensation / delay** — Add millisecond delay per actor:
   - Director can set delay per actor (e.g., Actor A: +50ms, Actor B: +100ms)
   - Helps compensate for network latency differences
   - Stored in actor config, applied server-side
 
-### Priority 3: Soundpad Integration
+### Priority 2: Actor Improvements
 
-- [ ] **Sound list sync** — Director can request actor's Soundpad sound list:
-  - Shows numbered list of sounds
-  - Director knows what `*play:N` will trigger
-  
-- [ ] **Sound preview** — Director can preview sound before triggering (local playback)
-
-- [ ] **Hotkey mapping** — Custom hotkeys for common commands:
-  - F1-F12 for frequently used sounds
-  - Configurable per actor or global
-
-### Priority 4: Actor Improvements
-
-- [ ] **Minimize to tray** — Actor client can minimize to system tray:
-  - Right-click menu for quick status
-  - Notifications for commands received
-  
 - [ ] **Auto-start with Soundpad** — Option to launch Soundpad automatically
-  
-- [ ] **Volume control** — Director can adjust actor's Soundpad volume remotely
 
-### Priority 5: Server Improvements
+### Priority 3: Server Improvements
 
-- [ ] **Web dashboard** — Simple web UI for server admin:
-  - View connected actors
-  - Kick/ban actors
-  - View logs
-  - Restart server
-  
-- [ ] **Multiple director support** — Allow multiple directors with different permissions:
-  - Main director (full control)
-  - Assistant director (limited commands)
-  
 - [ ] **Session recording** — Log all commands and messages for review:
   - Export as JSON or CSV
   - Replay session for debugging
@@ -74,6 +46,11 @@
 
 ## 💡 Ideas (Future)
 
+- [ ] **OpenVR/OpenXR overlay** — In-VR overlay for both clients without desktop view
+- [ ] **TTS messages** — Send text-to-speech to actors (plays through mic)
+- [ ] **Web dashboard** — Web UI for server admin (view, kick, logs)
+- [ ] **Auto-add + play in Soundpad** — Automatically add transferred file and play it
+- [ ] **Volume control** — Director can adjust actor's Soundpad volume remotely
 - [ ] **Soundboard overlay** — OBS browser source showing triggered sounds
 - [ ] **Voice chat integration** — Discord/Slack bridge for audio cues
 - [ ] **Mobile app** — Director control from phone/tablet
@@ -99,4 +76,7 @@
 - [x] File transfer — director can send files to actors
 - [x] Configurable Soundpad path — actors can set custom Soundpad.exe location via config or env var
 - [x] Duplicate actor fix — old connection now properly disconnected on reconnect
+- [x] "Play in 3s" countdown — button with 3-second delay before sending Go
+- [x] Config dialog sizing — fixed to show Connect/Save button properly
 - [x] v0.1.0 release — initial actor client
+- [x] v0.2.0 release — selective triggering, file transfer, status indicators

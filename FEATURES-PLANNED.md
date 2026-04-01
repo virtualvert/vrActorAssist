@@ -9,34 +9,99 @@
 | Version | Status | Notes |
 |---------|--------|-------|
 | **v0.1.0** | Released | Initial release — basic WebSocket client, Soundpad integration |
-| **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons |
-| **v0.3.0** | Planned | "Play in 3s" countdown |
+| **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
+| **v0.3.0** | Planned | Multiple directors, multi-file transfer, ping compensation |
 
 ---
 
-## v0.2.0 Scope ✅ Complete
+## v0.3.0 Features (Planned)
 
-Features released in v0.2.0:
-- [x] Selective actor triggering (checkboxes)
-- [x] File transfer (director → actor)
-- [x] Actor status indicators (ping + hover)
-- [x] Multi-director warning
-- [x] Bigger buttons for VR (3x size)
-- [x] Configurable Soundpad path
-- [x] Fix duplicate actors on reconnect
+### Feature 1: Multiple Director Support
+
+**Goal:** Allow multiple directors with different names and permission levels.
+
+### Server Changes
+- Track director connections with names and roles
+- Role types: "main" (full control), "assistant" (limited commands)
+- Broadcast director list to all clients
+
+### Director UI
+- Director name field in config
+- Show other directors in actor list area
+- Warning when another director is connected (already implemented)
+
+### Permissions
+- Main director: full control (approve/deny actors, send commands, files)
+- Assistant director: limited (send commands, chat - no approve/deny, no files)
 
 ---
 
-## v0.3.0 Scope
+### Feature 2: Send Multiple Files
 
-Features planned for v0.3.0:
-- [ ] "Play in 3s" countdown button
+**Goal:** Director can send multiple files to actor at once.
+
+### UI Changes — Director
+- Multi-select in file picker
+- Queue transfers with overall progress
+- Cancel all button
+
+### UI Changes — Actor
+- Receive multiple files sequentially
+- Overall progress indicator
+- Per-file completion checkmarks
+
+### Protocol
+Same FILESTART/FILECHUNK/FILEEND protocol, but:
+- Director sends FILEREQ with multiple filenames
+- Actor acknowledges all at once
+- Sequential transfer of each file
 
 ---
 
-## Feature 1: Selective Actor Triggering ✅
+### Feature 3: Ping Compensation / Delay
 
-**Status:** Implemented
+**Goal:** Director can set delay per actor to compensate for network latency.
+
+### Server Changes
+- Store delay per actor in config
+- Apply delay before sending command to that actor
+- Delay is in milliseconds
+
+### Director UI
+- Right-click actor → "Set delay"
+- Input dialog: "Delay for ActorName (ms):"
+- Show delay value next to actor name (optional)
+
+### Actor Client
+- No changes needed - delay is server-side
+- Actor receives command after configured delay
+
+---
+
+## Future Ideas
+
+Lower priority features that will be designed when moved to a release:
+
+- **OpenVR/OpenXR overlay** — In-VR overlay for director and actor
+- **TTS messages** — Text-to-speech to actors (plays through mic)
+- **Web dashboard** — Browser-based server admin
+- **Auto-add + play in Soundpad** — Add transferred file and trigger playback
+- **Volume control** — Remote Soundpad volume adjustment
+- **Soundboard overlay** — OBS browser source showing triggered sounds
+- **Voice chat integration** — Discord/Slack bridge for audio cues
+- **Mobile app** — Director control from phone/tablet
+- **Cloud sync** — Share approved actors list across servers
+- **Scene presets** — Save/load actor configurations per scene
+
+---
+
+## Completed Features (v0.1.0 - v0.2.0)
+
+*Design specs retained for reference.*
+
+### Selective Actor Triggering ✅
+
+**Goal:** Director can choose which actors receive broadcast commands via checkboxes.
 
 ### UI Changes — Director Client
 
@@ -56,82 +121,9 @@ Features planned for v0.3.0:
 - `[Invert]` — flip all checkboxes
 - `[Send File...]` — only enabled when one actor is selected
 
-**Removed:**
-- Target dropdown (replaced by checkboxes)
-- "Target GO" and "Target Stop" buttons (removed for now, may be replaced later)
-
-### Server Changes
-
-- Track which actors are "active" (checked) per director
-- Broadcast commands only go to checked actors
-- Server doesn't need to know about checkboxes — director only sends to checked actors
-
 ---
 
-## Feature 3: Actor Status Indicators ✅
-
-**Status:** Implemented
-
-**Goal:** Show connection quality per actor with colored dot + latency on hover.
-
-### Server-Side Tracking
-
-- WebSocket already sends ping every 30s (keepalive)
-- Server tracks RTT per actor: `last_ping_sent` → `pong_received`
-- Store in actor metadata: `{"name": "Alice", "latency_ms": 85, "last_seen": timestamp}`
-
-### Protocol Addition
-
-Server broadcasts status to director periodically (every 10s or on significant change):
-
-```
-STATUS|actors=[{"name":"Alice","latency_ms":85},{"name":"Bob","latency_ms":150}]
-```
-
-### Director UI
-
-**Approved Actors List:**
-- Each actor has a colored dot indicator
-- Hover shows actual latency: "85ms"
-
-**Color thresholds:**
-- 🟢 Green: < 100ms (good)
-- 🟡 Yellow: 100-300ms (acceptable)
-- 🔴 Red: > 300ms (poor)
-- ⚪ Gray: No response in 60s (missed 2+ pings)
-- (removed): WebSocket closed / disconnect detected
-
-### Actor Client
-
-No changes needed — WebSocket ping/pong is automatic.
-
-### Protocol
-
-No new message types. Director simply sends to multiple actors instead of broadcast:
-
-**Old broadcast:**
-```
-CMD|*go
-```
-
-**New: Director sends individual PRIV messages to each checked actor:**
-```
-PRIV|Director|Alice|*go
-PRIV|Director|Bob|*go
-```
-
-Or add a new multi-target message:
-```
-CMD|*go|targets=Alice,Bob,Charlie
-```
-
-(TBD: which approach is cleaner)
-
----
-
-## Feature 2: File Transfer ✅
-
-**Status:** Implemented
+### File Transfer ✅
 
 **Goal:** Director can send files to a selected actor. Actor can accept/decline or auto-accept.
 
@@ -168,10 +160,6 @@ CMD|*go|targets=Alice,Bob,Charlie
 └─────────────────────────────────────┘
 ```
 
-**During transfer:**
-- Progress bar in status area
-- Notification on completion: "✓ Saved: sound_effect.mp3"
-
 ### Protocol
 
 Base64-encoded chunks over WebSocket:
@@ -196,48 +184,37 @@ FILEERR|filename|error_message
 
 **Chunk size:** 64KB (good balance of progress updates and overhead)
 
-### Constraints
+---
 
-- Max file size: 10 MB (enforced by director before sending)
-- One file at a time per actor (queue if multiple)
-- Actor must be online (no server-side buffering)
+### Actor Status Indicators ✅
+
+**Goal:** Show connection quality per actor with colored dot + latency on hover.
+
+### Server-Side Tracking
+
+- WebSocket sends ping every 30s (keepalive)
+- Server tracks RTT per actor: `last_ping_sent` → `pong_received`
+- Store in actor metadata: `{"name": "Alice", "latency_ms": 85, "last_seen": timestamp}`
+
+### Protocol Addition
+
+Server broadcasts status to director periodically (every 10s or on significant change):
+
+```
+STATUS|actors=[{"name":"Alice","latency_ms":85},{"name":"Bob","latency_ms":150}]
+```
+
+### Director UI
+
+**Color thresholds:**
+- 🟢 Green: < 100ms (good)
+- 🟡 Yellow: 100-300ms (acceptable)
+- 🔴 Red: > 300ms (poor)
+- ⚪ Gray: No response in 60s (missed 2+ pings)
 
 ---
 
-## TODO: Additional Features (To Be Designed)
-
-*Danny has more ideas to add here...*
-
----
-
-## Low Priority / Future Ideas
-
-### Soundpad Integration Improvements
-
-**Investigated 2026-03-31:**
-
-Soundpad has a Remote Control API with:
-- `DoPlaySound(index)` — play by index (current approach)
-- `DoPlaySoundFromCategory(catIdx, soundIdx)` — play from category
-- `AddSound(path)` — add file to list (pipe API only)
-- `GetSoundlist()` — retrieve current list (pipe API only)
-
-**Limitation:** Command line API only supports index-based playback. No `DoPlaySoundByPath()`.
-
-**Workarounds considered:**
-1. Use named pipe API directly for `AddSound()` (requires custom code)
-2. Python `soundpad_control` library (adds dependency)
-3. Keep current workflow — file transfer separate, manual add to Soundpad
-
-**Decision:** Keep current index-based approach. Auto-add/play after file transfer is low priority.
-
----
-
----
-
-## Feature 4: Multi-Director Warning ✅
-
-**Status:** Implemented
+### Multi-Director Warning ✅
 
 **Goal:** Warn if another director is already connected.
 
@@ -251,7 +228,6 @@ if role == "director":
     if existing:
         await websocket.send_text(format_message("MSG", sender="SERVER",
             text=f"Warning: {existing[0].name} is already connected"))
-    # ... continue with auth
 ```
 
 ### Behavior
@@ -262,7 +238,7 @@ if role == "director":
 
 ---
 
-## Feature 5: "Play in 3s" Countdown Button
+### "Play in 3s" Countdown Button ✅
 
 **Goal:** New button that sends Go command after 3-second countdown.
 
@@ -279,14 +255,9 @@ if role == "director":
 - Stop button cancels countdown (resets button)
 - Actor receives nothing until countdown completes
 
-**Implementation:**
-- `tkinter.after()` for countdown ticks
-- Flag to track if countdown is active
-- Stop button checks flag and cancels if needed
-
 ---
 
-## Feature 6: Bigger Buttons for VR
+### Bigger Buttons for VR ✅
 
 **Goal:** Buttons 3x current size for easier VR clicking via desktop overlay.
 
@@ -303,20 +274,33 @@ if role == "director":
 - Approve / Deny
 - All action buttons in both clients
 
-**Window sizing:**
-- May need to increase window height to accommodate larger buttons
-- Test minimum sizes after changes
+---
+
+### Configurable Soundpad Path ✅
+
+**Goal:** Allow actors to set custom Soundpad.exe location.
+
+### Implementation
+
+Priority order:
+1. Config file setting (via GUI)
+2. `SOUNDPAD_PATH` environment variable
+3. Auto-detection search (Program Files, Steam, etc.)
+
+### UI — Actor Client
+
+Config dialog has "Soundpad Path (optional)" field with Browse button.
 
 ---
 
-## Implementation Order
+### Duplicate Actor Fix ✅
 
-Completed in v0.2.0:
-1. ~~Multi-director warning (simple)~~ ✅
-2. ~~Bigger buttons for VR~~ ✅
-3. ~~Selective actor triggering (checkboxes)~~ ✅
-4. ~~Actor status indicators~~ ✅
-5. ~~File transfer~~ ✅
+**Goal:** Prevent actors from appearing twice when reconnecting.
 
-Remaining:
-6. "Play in 3s" countdown (v0.3.0)
+### Problem
+
+When an actor reconnects quickly, the old connection hadn't fully cleaned up, causing duplicates in the director's actor list.
+
+### Solution
+
+On actor registration, check for existing connection with same `machine_id` and role "actor", then disconnect the old connection before approving the new one.
