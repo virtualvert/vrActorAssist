@@ -33,7 +33,17 @@
   - Major version mismatch rejects connection
   - Minor/patch mismatch allows connection with warning
 
-### Priority 2: Actor Improvements
+### Priority 2: Director Improvements
+
+- [ ] **Actor display names** — Director can rename actors locally:
+  - Right-click actor → "Set Display Name"
+  - Shows character name instead of actor name on director's client
+  - Display name is temporary (cleared when director disconnects)
+  - Original actor name preserved and still shows on hover/tooltip
+  - No server state needed — stored only in director client memory
+  - Useful for mapping actors to character names during production
+
+### Priority 3: Actor Improvements
 
 - [ ] **Auto-start with Soundpad** — Option to launch Soundpad automatically
 

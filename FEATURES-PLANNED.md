@@ -241,6 +241,49 @@ VERSION|status|server_version|message
 
 ---
 
+### Feature 5: Actor Display Names
+
+**Goal:** Allow directors to rename actors locally for easier identification during production.
+
+### Director Client Changes
+- Right-click actor → "Set Display Name" option
+- Display name overlay shown instead of actor name in list
+- Tooltip on hover shows: "Original: <actor_name>"
+- Display name stored in director client memory only (not persisted)
+- Cleared when director disconnects
+
+### Use Case
+- Director assigns character names to actors: "Diego", "Alice", "Bob"
+- Easier to identify who to send commands to
+- No confusion about which actor is playing which character
+
+### Implementation
+- `display_names: Dict[str, str]` mapping machine_id → display_name
+- Applied to actor list rendering only
+- Original name preserved in all protocol messages
+- Server unaware of display names (purely client-side)
+
+### UI Mockup
+```
+┌─────────────────────────────────────┐
+│  Approved Actors                     │
+│                                      │
+│  🟢 Diego (hover: "Original: Coda")  │
+│  🟢 Alice (hover: "Original: Infinity")│
+│  🔇 Bob (hover: "Original: Quincey") │
+│                                      │
+│     [All] [None] [Invert]            │
+│     [Send File...] [Forget Actor...] │
+└─────────────────────────────────────┘
+```
+
+### Context Menu
+- Right-click actor row
+- "Set Display Name..." → Enter name dialog
+- "Clear Display Name" → Revert to original
+
+---
+
 ## Future Ideas
 
 Lower priority features that will be designed when moved to a release:
