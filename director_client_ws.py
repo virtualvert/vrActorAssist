@@ -95,7 +95,6 @@ class DirectorClient:
         # Bigger buttons for VR
         btn_style = {'height': 2, 'width': 10, 'font': ('Arial', 11, 'bold')}
         tk.Button(pending_btn_frame, text="✓ Approve", command=self.approve_selected, **btn_style).pack(side=tk.LEFT, padx=2, pady=2)
-        tk.Button(pending_btn_frame, text="✗ Deny", command=self.deny_selected, **btn_style).pack(side=tk.LEFT, padx=2, pady=2)
         
         # Active actors
         tk.Label(left_frame, text="Active:").pack(anchor='w', padx=5, pady=(10, 0))
@@ -628,77 +627,54 @@ class DirectorClient:
                 # Use pipe-delimited format: APPROVE|machine_id
                 self.ws.send(f"APPROVE|{actor['machine_id']}")
     
-    def deny_selected(self):
-        """Deny selected pending actor."""
-        selection = self.pending_list.curselection()
-        if not selection:
-            messagebox.showwarning("No Selection", "Please select an actor to deny")
-            return
-        
-        idx = selection[0]
-        if idx < len(self.pending_actors):
-            actor = self.pending_actors[idx]
-            if messagebox.askyesno("Confirm Deny", f"Deny {actor['name']}?"):
-                self.display(f"Denying: {actor['name']}...")
-                
-                if self.ws and self.connected:
-                    # Use pipe-delimited format: DENY|machine_id
-                    self.ws.send(f"DENY|{actor['machine_id']}")
-    
     def forget_actor(self):
         """Remove an actor from the approved list."""
-        # Find selected actor from the rows
-        selected_name = None
-        for name, row in self.actor_rows.items():
-            if row["frame"].winfo_ismapped():
-                # Simple selection: just ask which actor to forget
-                pass
-        
-        # Simple prompt for actor name
         if not self.approved_actors:
-            messagebox.showwarning("No Actors", "No actors to forget")
+            messagebox.showwarning("No Actors", "No actors connected")
             return
         
-        # Ask which actor to forget
-        names = self.approved_actors
-        name = messagebox.askquestion("Forget Actor", "Forget which actor?\n\n(Click Yes for first actor, No to cancel)")
-        if name != "yes":
-            return
+        # Actor selection dialog (same pattern as send_file_dialog)
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Forget Actor")
+        dialog.geometry("300x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
         
-        name = names[0]
-        if len(names) > 1:
-            # Use a simple selection dialog
-            dialog = tk.Toplevel(self.root)
-            dialog.title("Forget Actor")
-            dialog.geometry("250x200")
-            dialog.transient(self.root)
-            dialog.grab_set()
-            
-            tk.Label(dialog, text="Select actor to forget:").pack(pady=10)
-            
-            listbox = tk.Listbox(dialog, height=6)
-            for n in names:
-                listbox.insert(tk.END, n)
-            listbox.pack(fill=tk.X, padx=20)
+        tk.Label(dialog, text="Select actor to forget:", font=('Arial', 12)).pack(pady=10)
+        
+        # Actor listbox with selection
+        listbox_frame = tk.Frame(dialog)
+        listbox_frame.pack(fill=tk.X, padx=20)
+        
+        listbox = tk.Listbox(listbox_frame, height=6, selectmode=tk.SINGLE)
+        scrollbar = tk.Scrollbar(listbox_frame, orient=tk.VERTICAL, command=listbox.yview)
+        listbox.config(yscrollcommand=scrollbar.set)
+        
+        for name in self.approved_actors:
+            listbox.insert(tk.END, name)
+        
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Select first actor by default
+        if self.approved_actors:
             listbox.selection_set(0)
-            
-            def do_forget():
-                sel = listbox.curselection()
-                if sel:
-                    actor_name = listbox.get(sel[0])
-                    if messagebox.askyesno("Confirm", f"Forget {actor_name}?"):
-                        self.display(f"Forgetting: {actor_name}...")
-                        if self.ws and self.connected:
-                            self.ws.send(f"FORGET_NAME|{actor_name}")
-                dialog.destroy()
-            
-            tk.Button(dialog, text="Forget", command=do_forget, height=2, width=10, font=('Arial', 11, 'bold')).pack(pady=10)
-            return
+            listbox.activate(0)
         
-        if messagebox.askyesno("Confirm Forget", f"Forget {name}?"):
-            self.display(f"Forgetting: {name}...")
-            if self.ws and self.connected:
-                self.ws.send(f"FORGET_NAME|{name}")
+        def do_forget():
+            sel = listbox.curselection()
+            if not sel:
+                messagebox.showwarning("No Selection", "Please select an actor")
+                return
+            
+            actor_name = listbox.get(sel[0])
+            if messagebox.askyesno("Confirm", f"Forget {actor_name}?"):
+                self.display(f"Forgetting: {actor_name}...", "info")
+                if self.ws and self.connected:
+                    self.ws.send(f"FORGET_NAME|{actor_name}")
+            dialog.destroy()
+        
+        tk.Button(dialog, text="Forget", command=do_forget, height=2, width=10, font=('Arial', 11, 'bold')).pack(pady=10)
     
     def refresh_users(self):
         """Request user list refresh."""
