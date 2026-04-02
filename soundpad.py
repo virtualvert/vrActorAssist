@@ -124,9 +124,8 @@ def run_soundpad_command(command):
     soundpad_exe = get_soundpad_path()
     if not soundpad_exe:
         print("[Soundpad] Soundpad.exe not found!")
-        print("[Soundpad] Install Soundpad or set SOUNDPAD_PATH environment variable")
-        print("[Soundpad] Example: set SOUNDPAD_PATH=C:\\Program Files\\Soundpad\\Soundpad.exe")
-        return (False, "Soundpad not found. Please install Soundpad or set SOUNDPAD_PATH environment variable.")
+        print("[Soundpad] If Soundpad is installed, set the path in Settings or use SOUNDPAD_PATH env var")
+        return (False, "Soundpad not found. If installed, set the path in Settings (Soundpad Path field).")
     
     try:
         result = subprocess.run(
