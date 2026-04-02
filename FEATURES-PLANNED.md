@@ -10,7 +10,7 @@
 |---------|--------|-------|
 | **v0.1.0** | Released | Initial release — basic WebSocket client, Soundpad integration |
 | **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
-| **v0.3.0** | Planned | Multiple directors, multi-file transfer with character routing, ping compensation |
+| **v0.3.0** | Planned | Multiple directors, multi-file transfer with character routing, ping compensation, protocol versioning |
 
 ---
 
@@ -63,15 +63,34 @@ Same FILESTART/FILECHUNK/FILEEND protocol, but:
 **Goal:** Automatically route audioscript files to actors based on character name in filename.
 
 ### Filename Pattern
-- Format: ` - Character.mp3` (e.g., "EP3 Scene 4.2 - Diego.mp3")
-- Character name extracted from between ` - ` and `.mp3`
-- Pattern is consistent across all audioscript files
+- Format: ` - Character.ext` (e.g., "EP3 Scene 4.2 - Diego.mp3", "Scene 4 - Alice.wav")
+- Character name extracted from the segment after the **last** ` - ` (space-dash-space)
+- Works with any file extension (mp3, wav, ogg, etc.)
+- Files **without** ` - ` in the name are listed individually (not grouped)
+
+### Pattern Matching Logic
+```python
+# Extract character name from filename
+if ' - ' in filename:
+    character = filename.rsplit(' - ', 1)[-1].rsplit('.', 1)[0].strip()
+else:
+    # No character pattern — list individually
+    character = None
+```
+
+### Examples
+| Filename | Extracted Character | Behavior |
+|----------|---------------------|----------|
+| `Scene 4 - Diego.mp3` | `Diego` | Group by character |
+| `EP3 - Scene 4.2 - Diego.wav` | `Diego` | Group by character (last ` - ` wins) |
+| `intro_music.mp3` | None | List individually, assign manually |
+| `sound-effect-final.ogg` | None | List individually (no ` - ` pattern) |
 
 ### Grouping Behavior
 - Files matching the pattern are **grouped by character**
 - Mapping dialog shows character name, not individual files
 - Multiple files for same character appear as one row with file count
-- Non-matching files are listed individually with full filename
+- Files without the ` - ` pattern are listed individually with full filename
 
 Example dialog:
 ```
@@ -92,12 +111,13 @@ Example dialog:
 
 ### Workflow
 1. Director selects multiple files
-2. System parses character names from filenames
-3. Files grouped by character, non-matching files listed separately
-4. Mapping dialog shows grouped characters + individual files
-5. Known mappings auto-filled from session memory
-6. Director reviews/confirms, clicks Send All
-7. Files dispatched to respective actors
+2. System parses character names using ` - ` pattern
+3. Files with matching pattern grouped by character
+4. Files without pattern listed individually with full filename
+5. Mapping dialog shows grouped characters + individual files
+6. Known mappings auto-filled from session memory
+7. Director reviews/confirms, clicks Send All
+8. Files dispatched to respective actors
 
 ### Unmapped Characters
 If a character has no actor assigned:
@@ -109,7 +129,7 @@ If a character has no actor assigned:
 - **No:** Return to mapping dialog
 
 ### Non-matching Filenames
-Files that don't match the pattern:
+Files that don't have the ` - ` pattern:
 - Show full filename in mapping dialog
 - Assign manually to any actor
 - Treated same as character-based files after assignment
@@ -121,15 +141,45 @@ Files that don't match the pattern:
 - Saved per-director (stored locally, not on server)
 
 ### Implementation Notes
-- Pattern matching: `filename.split(' - ')[-1].replace('.mp3', '')`
+- Pattern matching: strict ` - ` (space-dash-space) required
+- Works with any file extension (not just .mp3)
 - Session memory stored in director config
 - No server changes needed — just client-side routing logic
+
+### Overwrite Handling
+When a file with the same name already exists:
+
+| Auto-Accept | Behavior |
+|-------------|----------|
+| **ON** | Silent overwrite. Both parties see yellow warning log: `"⚠ Saved (replaced existing): filename.mp3"` |
+| **OFF** | Prompt actor with overwrite warning before accepting |
+
+**Prompt dialog (auto-accept OFF):**
+```
+┌─────────────────────────────────────────────┐
+│  File Already Exists                       │
+│                                            │
+│  This will overwrite:                      │
+│    sound_effect.mp3                        │
+│                                            │
+│  [ ] Auto-accept future files              │
+│                                            │
+│    [Accept (Overwrite)]    [Decline]       │
+└─────────────────────────────────────────────┘
+```
+
+**Note:** If actor declines, director receives FILEDENY and the transfer aborts for that file. Remaining files in batch continue.
 
 ---
 
 ### Feature 3: Ping Compensation / Delay
 
 **Goal:** Director can set delay per actor to compensate for network latency.
+
+### Approach
+- Manual adjustment by director — no automatic calculation
+- Director sets delay, tests quickly with Go command, refines as needed
+- Practical for live production where actors may have different network conditions
 
 ### Server Changes
 - Store delay per actor in config
@@ -139,11 +189,53 @@ Files that don't match the pattern:
 ### Director UI
 - Right-click actor → "Set delay"
 - Input dialog: "Delay for ActorName (ms):"
-- Show delay value next to actor name (optional)
+- Show delay value next to actor name (optional): `Alice (85ms) [+50ms]`
 
 ### Actor Client
 - No changes needed - delay is server-side
 - Actor receives command after configured delay
+
+---
+
+### Feature 4: Protocol Versioning
+
+**Goal:** Clients know their protocol version and receive warnings when outdated.
+
+### Protocol Addition
+
+Client sends version during registration:
+```
+REGISTER|name|machine_id|role|secret|version
+```
+
+Version is optional for backward compatibility. If omitted, server assumes legacy client.
+
+Server responds after registration:
+```
+VERSION|status|server_version|message
+```
+
+| Status | Meaning |
+|--------|---------|
+| `ok` | Versions match, no action needed |
+| `warning` | Minor/patch mismatch, some features may not work |
+| `unsupported` | Major version mismatch, connection rejected |
+
+### Version Format
+- Semantic versioning: `MAJOR.MINOR.PATCH` (e.g., `0.2.0`)
+- Stored in `shared.py` as `PROTOCOL_VERSION`
+- Clients include version in REGISTER message
+
+### Client Behavior
+- On `warning`: display message in log, allow connection
+- On `unsupported`: show error dialog, disconnect
+- Old clients (no version field): server accepts with warning logged server-side
+
+### Server Behavior
+- Compare client version to server version
+- Different major version → `unsupported`
+- Different minor/patch → `warning`
+- Log version mismatches for debugging
 
 ---
 

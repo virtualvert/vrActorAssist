@@ -1,6 +1,6 @@
 # vrActorAssist Roadmap
 
-*Last updated: 2026-04-01*
+*Last updated: 2026-04-02*
 
 ---
 
@@ -18,11 +18,20 @@
   - Queue transfers with progress
   - Actor receives to configured directory
   - Character-based routing for audioscript files (` - Character.mp3` pattern)
+  - Overwrite warning when file exists (auto-accept toggle determines behavior)
 
 - [ ] **Ping compensation / delay** — Add millisecond delay per actor:
   - Director can set delay per actor (e.g., Actor A: +50ms, Actor B: +100ms)
-  - Helps compensate for network latency differences
+  - Manual adjustment, tested quickly with Go command
   - Stored in actor config, applied server-side
+  - Helps compensate for network latency differences
+
+- [ ] **Protocol versioning** — Version handshake during client registration:
+  - Client sends version in REGISTER message
+  - Server responds with VERSION|status|server_version|message
+  - Outdated clients see warning in log
+  - Major version mismatch rejects connection
+  - Minor/patch mismatch allows connection with warning
 
 ### Priority 2: Actor Improvements
 

@@ -72,6 +72,8 @@ Director can send:
 | `*ready?` | Ask actors to confirm ready |
 | `*play:5` | Play sound at index 5 |
 
+**Play in 3s:** Button sends `*go` after 3-second countdown. Actors receive nothing until countdown completes.
+
 ## Releases
 
 See [GitHub Releases](https://github.com/YOUR_USERNAME/vrActorAssist/releases) for downloadable builds.
@@ -79,7 +81,8 @@ See [GitHub Releases](https://github.com/YOUR_USERNAME/vrActorAssist/releases) f
 | Version | Notes |
 |---------|-------|
 | v0.1.0 | Initial release — basic WebSocket client, Soundpad integration |
-| v0.2.0 | Selective triggering, file transfer, status indicators, VR-friendly buttons, configurable Soundpad path |
+| v0.2.0 | Selective actor triggering, file transfer, status indicators (latency dots), VR-friendly buttons, Play in 3s countdown, configurable Soundpad path |
+| v0.3.0 | *Planned* — Multiple directors, multi-file transfer with character routing, ping compensation, protocol versioning |
 
 ## Architecture
 
@@ -158,7 +161,9 @@ Text-based, pipe-delimited messages:
 ## Future
 
 See [ROADMAP.md](ROADMAP.md) for planned features:
-- "Play in 3s" countdown
+- Multiple director support
+- Multi-file transfer with character-based routing
 - Ping compensation/delay
-- Sound list sync from actors
+- Protocol versioning
+- OpenVR/OpenXR overlay
 - Web dashboard for server admin
