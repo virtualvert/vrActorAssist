@@ -75,6 +75,8 @@
 - [x] Director approval system
 - [x] Auto-reconnect with keepalive
 - [x] Windows .exe build for actors
+- [x] Linux executable build (cross-platform support)
+- [x] Director client executable build
 - [x] Soundpad CLI integration
 - [x] Basic command system (`*go`, `*stop`, `*play:N`)
 - [x] Private messaging to specific actors
@@ -88,5 +90,10 @@
 - [x] Duplicate actor fix — old connection now properly disconnected on reconnect
 - [x] "Play in 3s" countdown — button with 3-second delay before sending Go
 - [x] Config dialog sizing — fixed to show Connect/Save button properly
+- [x] Forget Actor flow — director can remove actor, actor must re-request approval
+- [x] Cross-platform builds — Linux executables, director client builds
+- [x] Code cleanup — removed unused functions and handlers
 - [x] v0.1.0 release — initial actor client
 - [x] v0.2.0 release — selective triggering, file transfer, status indicators
+- [x] v0.2.1 release — configurable Soundpad path, duplicate actor fix
+- [x] v0.2.2 release — forget actor, cross-platform builds, cleanup

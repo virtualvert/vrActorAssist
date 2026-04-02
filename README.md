@@ -50,17 +50,23 @@ actor.yourdomain.com {
 }
 ```
 
-## Windows Executable
+## Standalone Executable
 
-Actors don't need Python! Build a standalone `.exe`:
+Actors don't need Python! Build a standalone executable:
 
-```powershell
+```bash
 pip install pyinstaller
-python build_exe.py
-# Output: dist/vrActorClient.exe
+python build_exe.py          # Build actor client (default)
+python build_exe.py actor    # Build actor client
+python build_exe.py director # Build director client
+python build_exe.py all      # Build both
 ```
 
-Just distribute `vrActorClient.exe` — no dependencies needed.
+Output:
+- **Windows:** `dist/vrActorClient.exe` / `dist/vrDirectorClient.exe`
+- **Linux:** `dist/vrActorClient` / `dist/vrDirectorClient`
+
+Just distribute the executable — no dependencies needed.
 
 ## Commands
 
@@ -81,8 +87,9 @@ See [GitHub Releases](https://github.com/YOUR_USERNAME/vrActorAssist/releases) f
 | Version | Notes |
 |---------|-------|
 | v0.1.0 | Initial release — basic WebSocket client, Soundpad integration |
-| v0.2.0 | Selective actor triggering, file transfer, status indicators (latency dots), VR-friendly buttons, Play in 3s countdown, configurable Soundpad path |
-| v0.3.0 | *Planned* — Multiple directors, multi-file transfer with character routing, ping compensation, protocol versioning |
+| v0.2.0 | Selective actor triggering, file transfer, status indicators (latency dots), VR-friendly buttons, Play in 3s countdown |
+| v0.2.1 | Configurable Soundpad path, duplicate actor fix |
+| v0.2.2 | Forget Actor flow, cross-platform builds (Linux executables), cleanup unused code |
 
 ## Architecture
 

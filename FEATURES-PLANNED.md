@@ -10,6 +10,8 @@
 |---------|--------|-------|
 | **v0.1.0** | Released | Initial release — basic WebSocket client, Soundpad integration |
 | **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
+| **v0.2.1** | Released | Configurable Soundpad path, duplicate actor fix |
+| **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
 | **v0.3.0** | Planned | Multiple directors, multi-file transfer with character routing, ping compensation, protocol versioning |
 
 ---
@@ -253,6 +255,56 @@ Lower priority features that will be designed when moved to a release:
 - **Mobile app** — Director control from phone/tablet
 - **Cloud sync** — Share approved actors list across servers
 - **Scene presets** — Save/load actor configurations per scene
+
+---
+
+## v0.2.2 Features
+
+### Forget Actor Flow ✅
+
+**Goal:** Allow director to remove an actor, requiring them to re-approve before reconnecting.
+
+### Director Client Changes
+- Forget Actor dialog now always shows selection list (same pattern as Send File)
+- Removed Deny button from pending actors — only Approve needed
+- Cleaner UX with consistent dialog pattern
+
+### Actor Client Changes
+- Receives "forgotten" message from server
+- Disconnects locally (clean UI state)
+- Shows "Forgotten - click Connect to rejoin" status
+- Actor must manually click Connect to request approval again
+
+### Server Changes
+- FORGET_NAME notifies actor and adds to pending list
+- Actor must be re-approved after being forgotten
+- Fix reconnect logic to update websocket in pending_actors
+- Removed unused FORGET and DENY handlers
+
+---
+
+### Cross-Platform Builds ✅
+
+**Goal:** Support Linux executables in addition to Windows .exe.
+
+### Build Script Changes
+- Auto-detect Windows vs Linux
+- Use correct path separator for PyInstaller (`;` on Windows, `:` on Unix)
+- Support building actor, director, or both
+- Output correct executable name per platform:
+  - Windows: `vrActorClient.exe` / `vrDirectorClient.exe`
+  - Linux: `vrActorClient` / `vrDirectorClient`
+
+---
+
+### Code Cleanup ✅
+
+**Goal:** Remove unused code for maintainability.
+
+### Removed
+- `deny_selected` function from director client (button was removed)
+- `FORGET` message handler from server (FORGET_NAME is used)
+- Unused imports and dead code
 
 ---
 
