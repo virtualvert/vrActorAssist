@@ -23,14 +23,15 @@ PATH_SEP = ';' if IS_WINDOWS else ':'  # PyInstaller uses ; on Windows, : on Uni
 # Determine build target
 target = sys.argv[1].lower() if len(sys.argv) > 1 else 'actor'
 
-def build_actor():
-    """Build actor client executable."""
-    print("Building actor client...")
-    
-    # Clean previous builds
+def clean_build():
+    """Clean build artifacts."""
     for folder in ['build', 'dist']:
         if os.path.exists(folder):
             shutil.rmtree(folder)
+
+def build_actor():
+    """Build actor client executable."""
+    print("Building actor client...")
     
     # Build executable
     PyInstaller.__main__.run([
@@ -62,11 +63,6 @@ def build_director():
     """Build director client executable."""
     print("Building director client...")
     
-    # Clean previous builds
-    for folder in ['build', 'dist']:
-        if os.path.exists(folder):
-            shutil.rmtree(folder)
-    
     # Build executable
     PyInstaller.__main__.run([
         'director_client_ws.py',
@@ -93,6 +89,9 @@ def build_director():
     print("\nNote: First run will prompt for server URL and director secret.")
 
 if __name__ == '__main__':
+    # Clean once at the start
+    clean_build()
+    
     if target == 'actor':
         build_actor()
     elif target == 'director':
