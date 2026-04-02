@@ -288,7 +288,8 @@ async def websocket_endpoint(
                     await broadcast(format_message("MSG", sender="SERVER", text=f"{client.name} joined"))
                     await send_user_list()
                 elif machine_id in pending_actors:
-                    # Already pending
+                    # Already pending - update websocket (may have reconnected)
+                    pending_actors[machine_id]["websocket"] = websocket
                     await websocket.send_text(format_message("DENIED", reason="Pending approval"))
                 else:
                     # New actor - needs approval
@@ -453,33 +454,43 @@ async def websocket_endpoint(
                             pass
                     await send_pending_list()
             
-            elif msg_type == "FORGET":
-                # Remove actor from approved list
-                if client.role != "director":
-                    continue
-                forget_machine_id = msg_data.get("machine_id")
-                if forget_machine_id and forget_machine_id in approved_actors:
-                    name = approved_actors[forget_machine_id].get("name", "Unknown")
-                    del approved_actors[forget_machine_id]
-                    save_approved(approved_actors)
-                    log(f"Actor forgotten: {name}")
-                    await send_user_list()
-            
             elif msg_type == "FORGET_NAME":
-                # Remove actor by name
+                # Remove actor by name, notify them, and add to pending for re-approval
                 if client.role != "director":
                     continue
                 forget_name = msg_data.get("name", "")
-                to_remove = None
+                
+                # Find the actor's machine_id
+                forget_machine_id = None
                 for mid, info in approved_actors.items():
                     if info.get("name") == forget_name:
-                        to_remove = mid
+                        forget_machine_id = mid
                         break
-                if to_remove:
-                    del approved_actors[to_remove]
+                
+                if forget_machine_id:
+                    # Remove from approved list
+                    del approved_actors[forget_machine_id]
                     save_approved(approved_actors)
                     log(f"Actor forgotten by name: {forget_name}")
+                    
+                    # Notify the actor (they will disconnect themselves)
+                    for ws, c in list(clients.items()):
+                        if c.machine_id == forget_machine_id and c.role == "actor":
+                            try:
+                                await ws.send_text(format_message("MSG", sender="SERVER", 
+                                    text="You have been forgotten. Reconnect to request approval."))
+                            except:
+                                pass
+                            break
+                    
+                    # Add to pending for re-approval (websocket updated on reconnect)
+                    pending_actors[forget_machine_id] = {
+                        "name": forget_name,
+                        "websocket": None,  # Will be set when actor reconnects
+                    }
+                    
                     await send_user_list()
+                    await send_pending_list()
             
             elif msg_type == "REFRESH":
                 await send_user_list()

@@ -362,6 +362,20 @@ class ActorClient:
         self.enable_input(False)
         self.display("Disconnected", "error")
     
+    def handle_forgotten(self):
+        """Handle being forgotten by director - disconnect locally."""
+        self.should_reconnect = False
+        if self.ws:
+            try:
+                self.ws.close()
+            except:
+                pass
+        self.connected = False
+        self.approved = False
+        self.connect_btn.config(text="Connect")
+        self.status_var.set("Forgotten - click Connect to rejoin")
+        self.enable_input(False)
+    
     def _connect_thread(self):
         """Connection thread using WebSocketApp for proper ping handling."""
         server_url = self.config.get("server_url", DEFAULT_SERVER)
@@ -458,8 +472,11 @@ class ActorClient:
         elif msg_type == "MSG":
             sender = msg_data.get("sender", "Unknown")
             text = msg_data.get("text", "")
-            # Don't show our own messages (we already displayed them locally)
-            if sender != self.config.get("actor_name", "Unknown"):
+            # Check for forgotten message
+            if "forgotten" in text.lower() and sender == "SERVER":
+                self.root.after(0, lambda: self.display("You have been forgotten. Click Connect to request approval.", "warning"))
+                self.root.after(0, self.handle_forgotten)
+            elif sender != self.config.get("actor_name", "Unknown"):
                 self.root.after(0, lambda: self.display(f"{sender}: {text}"))
         
         elif msg_type == "PRIV":
