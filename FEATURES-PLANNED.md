@@ -12,7 +12,7 @@
 | **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
 | **v0.2.1** | Released | Configurable Soundpad path, duplicate actor fix |
 | **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
-| **v0.3.0** | Planned | Multiple directors, multi-file transfer with character routing, ping compensation, protocol versioning |
+|| **v0.3.0** | Planned | Multiple directors, multi-file transfer with character routing, ping compensation, protocol versioning, version display & auto-updater |
 
 ---
 
@@ -281,6 +281,72 @@ VERSION|status|server_version|message
 - Right-click actor row
 - "Set Display Name..." → Enter name dialog
 - "Clear Display Name" → Revert to original
+
+---
+
+### Feature 6: Version Display & Auto-Updater
+
+**Goal:** Official versioning system and automatic client updates.
+
+### Version Number Format
+- 4-part version: `vMAJOR.MINOR.PATCH.HOTFIX` (e.g., v0.3.0.1)
+- Standard releases use v0.3.0, v0.3.1, etc.
+- Hotfixes or silent features for one client: increment HOTFIX (v0.3.0.1)
+
+### Version Display Locations
+- Window title: `vrActorClient v0.3.0`
+- About dialog: Full version + build info
+- Startup log: First message shows version
+
+### Auto-Update Flow
+1. Client checks GitHub Releases at startup (once per session)
+2. If newer version found, show notification: "Update available: v0.3.1"
+3. User clicks "Update" → download new exe
+4. Launch PowerShell/batch updater script
+5. Main app closes
+6. Updater overwrites exe, then relaunches app
+7. User sees "Updated to v0.3.1" on startup
+
+### Manual Update Check
+- "Check for Updates" button in About dialog
+- Shows current version, checks GitHub, displays result
+
+### Server-Side Hash Verification (Optional Fallback)
+- Client can verify download hash against server
+- Provides extra security layer beyond GitHub
+- Server endpoint: `VERSION_HASH|v0.3.0|sha256_hash`
+- If server unreachable, proceed with GitHub-only verification
+
+### Version Mismatch Warning
+When client connects to server:
+- Server checks client version vs. server expected version
+- On mismatch: show notification to client
+- Message: "Warning: Client v0.2.0 may have compatibility issues with server v0.3.0. Some features may not work."
+- Connection still allowed (notification only)
+- Silent releases (HOTFIX increment) do NOT trigger server warning
+
+### Client Independence
+- Director and Actor clients update independently
+- No forced sync between client types
+- Server tracks both and can log mismatch warnings
+
+### Platform Support
+- **Windows x64:** Primary target, full auto-update
+- **Linux x64:** Executable replacement or package manager
+- No planned support for x86 or ARM64
+
+### Rate Limiting
+- Check for updates once at startup only
+- Manual check button has 5-minute cooldown
+- Avoids GitHub API rate limits (60/hr unauthenticated)
+
+### GitHub Release Assets
+Each release includes:
+- `vrActorClient-v0.3.0.exe`
+- `vrDirectorClient-v0.3.0.exe`
+- `vrActorClient-v0.3.0` (Linux)
+- `vrDirectorClient-v0.3.0` (Linux)
+- `checksums.sha256`
 
 ---
 

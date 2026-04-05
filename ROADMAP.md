@@ -33,6 +33,17 @@
   - Major version mismatch rejects connection
   - Minor/patch mismatch allows connection with warning
 
+- [ ] **Version display & auto-updater** — Official versioning and automatic updates:
+  - 4-part version number: `vMAJOR.MINOR.PATCH.HOTFIX` (e.g., v0.3.0.1)
+  - Version shown in window title, About dialog, and startup log
+  - Auto-check for updates from GitHub Releases at startup
+  - Manual "Check for Updates" button in About dialog
+  - Windows: PowerShell/batch updater runs after app exit to overwrite exe
+  - Linux: Standard package update or executable replacement
+  - Server-side hash verification as optional security fallback
+  - Server warns on client version mismatch (notification, not blocking)
+  - Director and Actor clients update independently
+
 ### Priority 2: Director Improvements
 
 - [ ] **Actor display names** — Director can rename actors locally:
