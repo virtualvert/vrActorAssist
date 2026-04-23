@@ -1,5 +1,6 @@
+#!/usr/bin/env python3
 # Build script for creating standalone executable (Windows or Linux)
-# Run with: python build_exe.py [actor|director]
+# Run with: python build_exe.py [actor|director|all]
 #
 # Requirements (one-time setup):
 #   pip install pyinstaller
@@ -10,86 +11,114 @@
 #   python build_exe.py director # Build director client
 #   python build_exe.py all      # Build both
 
-import PyInstaller.__main__
-import os
-import shutil
+import subprocess
 import sys
+import os
 import platform
+import shutil
 
 # Detect OS
 IS_WINDOWS = platform.system() == 'Windows'
-PATH_SEP = ';' if IS_WINDOWS else ':'  # PyInstaller uses ; on Windows, : on Unix
+PATH_SEP = ';' if IS_WINDOWS else ':'
 
 # Determine build target
 target = sys.argv[1].lower() if len(sys.argv) > 1 else 'actor'
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def clean_build():
     """Clean build artifacts."""
     for folder in ['build', 'dist']:
-        if os.path.exists(folder):
-            shutil.rmtree(folder)
+        path = os.path.join(SCRIPT_DIR, folder)
+        if os.path.exists(path):
+            shutil.rmtree(path)
+    # Clean spec files from previous builds
+    for spec in ['vrActorClient.spec', 'vrDirectorClient.spec']:
+        path = os.path.join(SCRIPT_DIR, spec)
+        if os.path.exists(path):
+            os.remove(path)
+
+def run_pyinstaller(script_name, exe_name, extra_data=None):
+    """Run PyInstaller as a subprocess to avoid state contamination between builds."""
+    cmd = [
+        sys.executable, '-m', 'PyInstaller',
+        os.path.join(SCRIPT_DIR, script_name),
+        '--name=' + exe_name,
+        '--onefile',
+        '--windowed',
+        '--add-data', f'shared.py{PATH_SEP}.',
+        '--hiddenimport=websocket',
+        '--hiddenimport=tkinter',
+        '--clean',
+        '--distpath', os.path.join(SCRIPT_DIR, 'dist'),
+        '--workpath', os.path.join(SCRIPT_DIR, 'build'),
+        '--specpath', SCRIPT_DIR,
+    ]
+    
+    if extra_data:
+        for data in extra_data:
+            cmd.extend(['--add-data', f'{data}{PATH_SEP}.'])
+    
+    print(f"\nRunning: {' '.join(cmd[:8])}...")
+    result = subprocess.run(cmd, cwd=SCRIPT_DIR)
+    
+    if result.returncode != 0:
+        print(f"\n✗ Build failed for {exe_name} (exit code {result.returncode})")
+        sys.exit(result.returncode)
+    
+    return result.returncode == 0
 
 def build_actor():
     """Build actor client executable."""
+    print("="*50)
     print("Building actor client...")
+    print("="*50)
     
-    # Build executable
-    PyInstaller.__main__.run([
+    success = run_pyinstaller(
         'actor_client_ws.py',
-        '--name=vrActorClient',
-        '--onefile',           # Single file
-        '--windowed',          # No console window (GUI app)
-        f'--add-data=shared.py{PATH_SEP}.',    # Include shared module
-        f'--add-data=soundpad.py{PATH_SEP}.',  # Include soundpad module
-        '--hiddenimport=websocket',
-        '--hiddenimport=tkinter',
-        '--clean',
-    ])
+        'vrActorClient',
+        extra_data=['soundpad.py']
+    )
     
-    # Report result
-    exe_name = 'vrActorClient.exe' if IS_WINDOWS else 'vrActorClient'
-    exe_path = os.path.join('dist', exe_name)
+    exe_ext = '.exe' if IS_WINDOWS else ''
+    exe_path = os.path.join(SCRIPT_DIR, 'dist', f'vrActorClient{exe_ext}')
     
     print("\n" + "="*50)
     print("Actor client build complete!")
-    print(f"Executable: {exe_path}")
+    print(f"  Executable: {exe_path}")
     print("="*50)
-    print("\nTo distribute:")
-    print(f"1. Copy {exe_path}")
-    print(f"2. Actors just run the {'exe' if IS_WINDOWS else 'binary'} - no Python needed!")
-    print("\nNote: First run will prompt for server URL and actor name.")
+    
+    if IS_WINDOWS:
+        print("\nTo distribute: copy vrActorClient.exe — no Python needed!")
+    else:
+        print("\nTo distribute: copy vrActorClient, chmod +x, run — no Python needed!")
 
 def build_director():
     """Build director client executable."""
+    print("="*50)
     print("Building director client...")
+    print("="*50)
     
-    # Build executable
-    PyInstaller.__main__.run([
+    success = run_pyinstaller(
         'director_client_ws.py',
-        '--name=vrDirectorClient',
-        '--onefile',           # Single file
-        '--windowed',          # No console window (GUI app)
-        f'--add-data=shared.py{PATH_SEP}.',    # Include shared module
-        '--hiddenimport=websocket',
-        '--hiddenimport=tkinter',
-        '--clean',
-    ])
+        'vrDirectorClient'
+    )
     
-    # Report result
-    exe_name = 'vrDirectorClient.exe' if IS_WINDOWS else 'vrDirectorClient'
-    exe_path = os.path.join('dist', exe_name)
+    exe_ext = '.exe' if IS_WINDOWS else ''
+    exe_path = os.path.join(SCRIPT_DIR, 'dist', f'vrDirectorClient{exe_ext}')
     
     print("\n" + "="*50)
     print("Director client build complete!")
-    print(f"Executable: {exe_path}")
+    print(f"  Executable: {exe_path}")
     print("="*50)
-    print("\nTo distribute:")
-    print(f"1. Copy {exe_path}")
-    print(f"2. Directors just run the {'exe' if IS_WINDOWS else 'binary'} - no Python needed!")
-    print("\nNote: First run will prompt for server URL and director secret.")
+    
+    if IS_WINDOWS:
+        print("\nTo distribute: copy vrDirectorClient.exe — no Python needed!")
+    else:
+        print("\nTo distribute: copy vrDirectorClient, chmod +x, run — no Python needed!")
 
 if __name__ == '__main__':
-    # Clean once at the start
+    # Clean build artifacts at the start
     clean_build()
     
     if target == 'actor':
@@ -98,7 +127,6 @@ if __name__ == '__main__':
         build_director()
     elif target == 'all':
         build_actor()
-        print("\n")
         build_director()
     else:
         print(f"Unknown target: {target}")
