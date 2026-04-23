@@ -934,25 +934,49 @@ class ActorClient:
         threading.Thread(target=download, daemon=True).start()
     
     def _create_updater(self, current_path, new_path, is_windows):
-        """Create and launch the updater script, then exit."""
+        """Create and launch the updater script, then exit.
+        
+        Windows strategy: Rename running exe to .old (you CAN rename a running exe),
+        rename .tmp to the real name, then start the new exe. The .old file
+        gets cleaned up on next launch by _cleanup_old_updates.
+        
+        Linux strategy: Rename current to .old, rename .tmp to real name, and exec.
+        """
+        exe_dir = os.path.dirname(current_path)
+        exe_name = os.path.basename(current_path)
+        old_path = current_path + ".old"
+        
         if is_windows:
-            updater_path = os.path.join(os.path.dirname(current_path), "_updater.bat")
+            updater_path = os.path.join(exe_dir, "_updater.bat")
+            current_pid = os.getpid()
             with open(updater_path, "w") as f:
                 f.write("@echo off\n")
-                f.write("echo Updating vrActorClient...\n")
+                f.write("echo Updating vrActorAssist...\n")
+                # Wait for the current process to exit (PID-specific, not name-based)
                 f.write(f":wait\n")
-                f.write(f'tasklist | find "{os.path.basename(current_path)}" >nul 2>&1\n')
+                f.write(f'tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul 2>&1\n')
                 f.write("if %errorlevel%==0 timeout /t 1 >nul & goto wait\n")
+                # Give PyInstaller a moment to clean up its temp dir
+                f.write("timeout /t 2 /nointerrupt >nul\n")
+                # Rename running exe → .old, then rename .tmp → real name
+                # (can rename a running exe on Windows, can't delete/overwrite it)
+                f.write(f'if exist "{current_path}.old" del "{current_path}.old"\n')
+                f.write(f'ren "{current_path}" "{exe_name}.old"\n')
                 f.write(f'move /y "{new_path}" "{current_path}"\n')
                 f.write(f'start "" "{current_path}"\n')
-                f.write("del \"%~f0\"\n")
+                # Self-delete the updater script
+                f.write('del "%~f0"\n')
         else:
-            updater_path = os.path.join(os.path.dirname(current_path), "_updater.sh")
+            updater_path = os.path.join(exe_dir, "_updater.sh")
             with open(updater_path, "w") as f:
                 f.write("#!/bin/sh\n")
-                f.write("echo 'Updating vrActorClient...'\n")
+                f.write("echo 'Updating vrActorAssist...'\n")
                 f.write(f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done\n")
-                f.write(f"cp -f '{new_path}' '{current_path}'\n")
+                f.write("sleep 1\n")
+                # Remove old .old if present, rename current to .old
+                f.write(f"rm -f '{old_path}'\n")
+                f.write(f"mv -f '{current_path}' '{old_path}'\n")
+                f.write(f"mv -f '{new_path}' '{current_path}'\n")
                 f.write(f"chmod +x '{current_path}'\n")
                 f.write(f"exec '{current_path}'\n")
             os.chmod(updater_path, 0o755)
@@ -965,7 +989,7 @@ class ActorClient:
         self.quit()
     
     def _cleanup_old_updates(self):
-        """Clean up temp files and updater scripts from previous updates."""
+        """Clean up temp files, updater scripts, and .old files from previous updates."""
         try:
             if getattr(sys, 'frozen', False):
                 base_dir = os.path.dirname(sys.executable)
@@ -974,12 +998,19 @@ class ActorClient:
             
             for filename in os.listdir(base_dir):
                 filepath = os.path.join(base_dir, filename)
-                # Only match our update temp files (vrActorClient-*.tmp or vrDirectorClient-*.tmp)
+                # Clean up versioned .tmp download files
                 if (filename.startswith("vrActorClient-v") or filename.startswith("vrDirectorClient-v")) and filename.endswith(".tmp"):
                     try:
                         os.remove(filepath)
                     except:
                         pass
+                # Clean up .old files from self-update swaps
+                elif (filename.startswith("vrActorClient.") or filename.startswith("vrDirectorClient.")) and filename.endswith(".old"):
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
+                # Clean up updater scripts
                 elif filename in ('_updater.bat', '_updater.sh'):
                     try:
                         os.remove(filepath)
