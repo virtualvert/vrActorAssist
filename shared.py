@@ -5,10 +5,25 @@ import json
 import os
 import uuid
 import platform
+import hashlib
 from pathlib import Path
 
 # Application version (semver)
 APP_VERSION = "0.3.0"
+
+
+def get_platform_id():
+    """Get normalized platform identifier for update checks.
+    Returns 'windows-x64' or 'linux-x64' etc.
+    """
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if system == "windows":
+        return "windows-x64"
+    elif system == "linux":
+        return "linux-x64"
+    else:
+        return f"{system}-{machine}"
 
 # Protocol message types
 MSG_TYPES = {
@@ -16,11 +31,12 @@ MSG_TYPES = {
     "PRIV": "PRIV|{sender}|{target}|{text}", # Private message
     "USERS": "USERS|{user_list}",           # User list update
     "STATUS": "STATUS|{actors_json}",       # Actor status (latency)
-    "REGISTER": "REGISTER|{name}|{machine_id}|{role}|{secret}|{version}",  # Client registration (secret/version optional)
+    "REGISTER": "REGISTER|{name}|{machine_id}|{role}|{secret}|{version}|{platform}",  # Client registration
     "APPROVED": "APPROVED",                  # Actor approved
     "DENIED": "DENIED|{reason}",            # Actor denied
     "PENDING": "PENDING|{actors_json}",      # Pending actors list
     "VERSION": "VERSION|{status}|{server_version}|{message}",  # Version check response
+    "UPDATE": "UPDATE|{latest_version}|{download_url}|{sha256}|{release_notes}",  # Update available
     "CMD": "CMD|{command}",                 # Command (go, stop, etc.) - args optional
     "ACK": "ACK|{actor}|{command}|{status}", # Command acknowledgment
     "FILE": "FILE|{sender}|{filename}|{size}", # File transfer header
@@ -110,13 +126,14 @@ def parse_message(data):
         return msg_type, {"users": users}
     
     elif msg_type == "REGISTER" and len(parts) >= 4:
-        # REGISTER|name|machine_id|role|secret(|version)
+        # REGISTER|name|machine_id|role|secret(|version)(|platform)
         return msg_type, {
             "name": parts[1],
             "machine_id": parts[2],
             "role": parts[3],
             "secret": parts[4] if len(parts) >= 5 else "",
-            "version": parts[5] if len(parts) >= 6 else ""
+            "version": parts[5] if len(parts) >= 6 else "",
+            "platform": parts[6] if len(parts) >= 7 else ""
         }
     
     elif msg_type == "APPROVED":
@@ -127,6 +144,14 @@ def parse_message(data):
             "status": parts[1],
             "server_version": parts[2] if len(parts) >= 3 else "",
             "message": "|".join(parts[3:]) if len(parts) >= 4 else ""
+        }
+    
+    elif msg_type == "UPDATE" and len(parts) >= 2:
+        return msg_type, {
+            "latest_version": parts[1],
+            "download_url": parts[2] if len(parts) >= 3 else "",
+            "sha256": parts[3] if len(parts) >= 4 else "",
+            "release_notes": "|".join(parts[4:]) if len(parts) >= 5 else ""
         }
     
     elif msg_type == "DENIED" and len(parts) >= 2:

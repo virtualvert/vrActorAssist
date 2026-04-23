@@ -31,6 +31,7 @@ SERVER_SECRET = os.environ.get("VR_ACTOR_SECRET", DEFAULT_SECRET)
 BASE_DIR = Path(__file__).parent
 APPROVED_FILE = BASE_DIR / "approved_actors.json"
 LOG_FILE = BASE_DIR / "server.log"
+MANIFEST_FILE = BASE_DIR / "update_manifest.json"
 
 
 def log(message: str):
@@ -66,6 +67,52 @@ def compare_versions(client_ver: str, server_ver: str) -> tuple:
     return 'ok', ''
 
 
+def load_manifest() -> dict:
+    """Load update manifest from file. Returns empty dict if missing or invalid."""
+    try:
+        if MANIFEST_FILE.exists():
+            return json.loads(MANIFEST_FILE.read_text())
+    except Exception as e:
+        log(f"Error loading manifest: {e}")
+    return {}
+
+
+def find_update(manifest: dict, role: str, platform_id: str, client_version: str) -> dict:
+    """Check if an update is available for this client.
+    Returns dict with latest_version, download_url, sha256, release_notes
+    or empty dict if no update available.
+    """
+    if not manifest:
+        return {}
+    
+    latest = manifest.get("latest_version", "")
+    if not latest:
+        return {}
+    
+    # Check if client is already on latest
+    v_status, _ = compare_versions(client_version, latest)
+    if v_status == "ok":
+        return {}
+    
+    # Look up the asset key: e.g. "actor-windows-x64"
+    asset_key = f"{role}-{platform_id}"
+    assets = manifest.get("assets", {})
+    asset = assets.get(asset_key, {})
+    
+    download_url = asset.get("url", "")
+    sha256 = asset.get("sha256", "")
+    
+    if not download_url:
+        return {}
+    
+    return {
+        "latest_version": latest,
+        "download_url": download_url,
+        "sha256": sha256,
+        "release_notes": manifest.get("release_notes", "")
+    }
+
+
 def load_approved() -> Dict[str, dict]:
     """Load approved actors from file."""
     if APPROVED_FILE.exists():
@@ -98,6 +145,7 @@ class Client:
     role: str = "actor"
     approved: bool = False
     version: str = ""
+    platform: str = ""
     last_ping_sent: float = 0.0
     last_ping_received: float = 0.0
     latency_ms: int = 0  # Rolling average latency
@@ -250,8 +298,9 @@ async def websocket_endpoint(
                 client.machine_id = machine_id
                 client.role = role
                 client.version = msg_data.get("version", "")
+                client.platform = msg_data.get("platform", "")
                 
-                log(f"Registration: {name} ({role}), machine_id={machine_id[:8]}..., version={client.version or 'legacy'}")
+                log(f"Registration: {name} ({role}), machine_id={machine_id[:8]}..., version={client.version or 'legacy'}, platform={client.platform or 'unknown'}")
                 
                 # Director authentication
                 if role == "director":
@@ -260,12 +309,23 @@ async def websocket_endpoint(
                         log(f"Director '{name}' authenticated")
                         await websocket.send_text(format_message("APPROVED"))
                         
-                        # Version check
+                        # Version check + update
                         if client.version:
                             v_status, v_msg = compare_versions(client.version, APP_VERSION)
                             await websocket.send_text(format_message("VERSION", status=v_status, server_version=APP_VERSION, message=v_msg))
                             if v_status != "ok":
                                 log(f"Version mismatch: director '{name}' v{client.version} vs server v{APP_VERSION} ({v_status})")
+                        
+                        # Check for available update
+                        manifest = load_manifest()
+                        update = find_update(manifest, "director", client.platform, client.version)
+                        if update:
+                            await websocket.send_text(format_message("UPDATE",
+                                latest_version=update["latest_version"],
+                                download_url=update["download_url"],
+                                sha256=update["sha256"],
+                                release_notes=update["release_notes"]))
+                            log(f"Update available for director '{name}': v{update['latest_version']}")
                         
                         # Handle multi-director warnings
                         existing_directors = [c for c in get_directors() if c.websocket != websocket]
@@ -316,12 +376,23 @@ async def websocket_endpoint(
                     log(f"Actor '{client.name}' auto-approved (known machine_id)")
                     await websocket.send_text(format_message("APPROVED"))
                     
-                    # Version check
+                    # Version check + update
                     if client.version:
                         v_status, v_msg = compare_versions(client.version, APP_VERSION)
                         await websocket.send_text(format_message("VERSION", status=v_status, server_version=APP_VERSION, message=v_msg))
                         if v_status != "ok":
                             log(f"Version mismatch: actor '{client.name}' v{client.version} vs server v{APP_VERSION} ({v_status})")
+                    
+                    # Check for available update
+                    manifest = load_manifest()
+                    update = find_update(manifest, "actor", client.platform, client.version)
+                    if update:
+                        await websocket.send_text(format_message("UPDATE",
+                            latest_version=update["latest_version"],
+                            download_url=update["download_url"],
+                            sha256=update["sha256"],
+                            release_notes=update["release_notes"]))
+                        log(f"Update available for actor '{client.name}': v{update['latest_version']}")
                     
                     await broadcast(format_message("MSG", sender="SERVER", text=f"{client.name} joined"))
                     await send_user_list()
@@ -476,6 +547,16 @@ async def websocket_endpoint(
                                         await ws.send_text(format_message("VERSION", status=v_status, server_version=APP_VERSION, message=v_msg))
                                         if v_status != "ok":
                                             log(f"Version mismatch: actor '{c.name}' v{c.version} vs server v{APP_VERSION} ({v_status})")
+                                    # Check for available update
+                                    manifest = load_manifest()
+                                    update = find_update(manifest, "actor", c.platform, c.version)
+                                    if update:
+                                        await ws.send_text(format_message("UPDATE",
+                                            latest_version=update["latest_version"],
+                                            download_url=update["download_url"],
+                                            sha256=update["sha256"],
+                                            release_notes=update["release_notes"]))
+                                        log(f"Update available for actor '{c.name}': v{update['latest_version']}")
                                 except:
                                     pass
                                 break

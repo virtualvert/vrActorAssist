@@ -12,9 +12,13 @@ import time
 import base64
 import hashlib
 import os
+import urllib.request
+import tempfile
+import subprocess
+import sys
 from pathlib import Path
 
-from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path, APP_VERSION
+from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path, APP_VERSION, get_platform_id
 from soundpad import execute_command, set_soundpad_path
 
 # Defaults
@@ -65,6 +69,7 @@ class ActorClient:
         
         self.setup_ui()
         self.display(f"vrActorAssist Actor Client v{APP_VERSION}", "info")
+        self._cleanup_old_updates()
         
         # Auto-connect if config exists
         if self.config:
@@ -398,7 +403,8 @@ class ActorClient:
                 machine_id=self.machine_id,
                 role="actor",
                 secret="",
-                version=APP_VERSION
+                version=APP_VERSION,
+                platform=get_platform_id()
             )
             ws.send(register_msg)
         
@@ -476,6 +482,14 @@ class ActorClient:
                 self.root.after(0, lambda: self.display(f"⚠ {message}", "warning"))
             elif status == "unsupported":
                 self.root.after(0, lambda: self.display(f"✗ {message}", "error"))
+        
+        elif msg_type == "UPDATE":
+            latest = msg_data.get("latest_version", "")
+            url = msg_data.get("download_url", "")
+            sha256 = msg_data.get("sha256", "")
+            notes = msg_data.get("release_notes", "")
+            if latest and url:
+                self.root.after(0, lambda: self._show_update_dialog(latest, url, sha256, notes))
         
         elif msg_type == "DENIED":
             reason = msg_data.get("reason", "Unknown reason")
@@ -835,6 +849,126 @@ class ActorClient:
         state = tk.NORMAL if enabled else tk.DISABLED
         self.entry.config(state=state)
         self.send_btn.config(state=state)
+    
+    def _show_update_dialog(self, latest_version, download_url, sha256, release_notes):
+        """Show update available dialog."""
+        notes_text = f"\n\n{release_notes}" if release_notes else ""
+        result = messagebox.askyesno(
+            "Update Available",
+            f"A new version is available: v{latest_version}\n"
+            f"You are currently running v{APP_VERSION}\n"
+            f"{notes_text}\n\n"
+            f"Download and install update?",
+            parent=self.root
+        )
+        if result:
+            self._download_update(latest_version, download_url, sha256)
+    
+    def _download_update(self, version, url, expected_sha256):
+        """Download update in a background thread."""
+        self.display(f"⬇ Downloading v{version}...", "info")
+        
+        def download():
+            try:
+                if getattr(sys, 'frozen', False):
+                    exe_path = sys.executable
+                else:
+                    exe_path = os.path.abspath(__file__)
+                
+                is_windows = sys.platform == "win32"
+                
+                if is_windows:
+                    suffix = ".exe.tmp"
+                else:
+                    suffix = ".AppImage.tmp"
+                
+                temp_path = os.path.join(os.path.dirname(exe_path), f"vrActorClient-v{version}{suffix}")
+                
+                # Download
+                self.root.after(0, lambda: self.display(f"⬇ Downloading from {url}...", "info"))
+                urllib.request.urlretrieve(url, temp_path)
+                
+                # Verify SHA256
+                if expected_sha256:
+                    self.root.after(0, lambda: self.display("Verifying download...", "info"))
+                    sha256_hash = hashlib.sha256()
+                    with open(temp_path, "rb") as f:
+                        for chunk in iter(lambda: f.read(8192), b""):
+                            sha256_hash.update(chunk)
+                    actual_sha256 = sha256_hash.hexdigest()
+                    
+                    if actual_sha256.lower() != expected_sha256.lower():
+                        os.remove(temp_path)
+                        self.root.after(0, lambda: self.display("✗ Update failed: SHA256 checksum mismatch", "error"))
+                        return
+                
+                # Make executable on Linux
+                if not is_windows:
+                    os.chmod(temp_path, 0o755)
+                
+                self.root.after(0, lambda: self.display("✓ Download complete. Will update on restart.", "success"))
+                
+                # Create and launch updater script
+                self._create_updater(exe_path, temp_path, is_windows)
+                
+            except Exception as e:
+                self.root.after(0, lambda: self.display(f"✗ Update failed: {e}", "error"))
+        
+        threading.Thread(target=download, daemon=True).start()
+    
+    def _create_updater(self, current_path, new_path, is_windows):
+        """Create and launch the updater script, then exit."""
+        if is_windows:
+            updater_path = os.path.join(os.path.dirname(current_path), "_updater.bat")
+            with open(updater_path, "w") as f:
+                f.write("@echo off\n")
+                f.write("echo Updating vrActorClient...\n")
+                f.write(f":wait\n")
+                f.write(f'tasklist | find "{os.path.basename(current_path)}" >nul 2>&1\n')
+                f.write("if %errorlevel%==0 timeout /t 1 >nul & goto wait\n")
+                f.write(f'move /y "{new_path}" "{current_path}"\n')
+                f.write(f'start "" "{current_path}"\n')
+                f.write("del \"%~f0\"\n")
+        else:
+            updater_path = os.path.join(os.path.dirname(current_path), "_updater.sh")
+            with open(updater_path, "w") as f:
+                f.write("#!/bin/sh\n")
+                f.write("echo 'Updating vrActorClient...'\n")
+                f.write(f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done\n")
+                f.write(f"cp -f '{new_path}' '{current_path}'\n")
+                f.write(f"chmod +x '{current_path}'\n")
+                f.write(f"exec '{current_path}'\n")
+            os.chmod(updater_path, 0o755)
+        
+        if is_windows:
+            subprocess.Popen([updater_path], shell=True)
+        else:
+            subprocess.Popen([updater_path])
+        
+        self.quit()
+    
+    def _cleanup_old_updates(self):
+        """Clean up temp files and updater scripts from previous updates."""
+        try:
+            if getattr(sys, 'frozen', False):
+                base_dir = os.path.dirname(sys.executable)
+            else:
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+            
+            for filename in os.listdir(base_dir):
+                filepath = os.path.join(base_dir, filename)
+                if filename.endswith('.tmp'):
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
+                elif filename in ('_updater.bat', '_updater.sh'):
+                    try:
+                        os.remove(filepath)
+                    except:
+                        pass
+        except:
+            pass
     
     def quit(self):
         """Quit the application."""
