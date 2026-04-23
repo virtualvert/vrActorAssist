@@ -470,6 +470,12 @@ async def websocket_endpoint(
                                 c.approved = True
                                 try:
                                     await ws.send_text(format_message("APPROVED"))
+                                    # Version check for newly approved actor
+                                    if c.version:
+                                        v_status, v_msg = compare_versions(c.version, APP_VERSION)
+                                        await ws.send_text(format_message("VERSION", status=v_status, server_version=APP_VERSION, message=v_msg))
+                                        if v_status != "ok":
+                                            log(f"Version mismatch: actor '{c.name}' v{c.version} vs server v{APP_VERSION} ({v_status})")
                                 except:
                                     pass
                                 break
