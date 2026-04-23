@@ -12,7 +12,7 @@
 | **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
 | **v0.2.1** | Released | Configurable Soundpad path, duplicate actor fix |
 | **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
-|| **v0.3.0** | In Progress | Multi-file transfer with character routing, batch protocol, overwrite dialog, protocol versioning |
+|| **v0.3.0** | In Progress | Multi-file transfer, character routing, batch protocol, overwrite dialog, protocol versioning, auto-updater |
 || **v0.4.0** | Planned | Director client Tauri+Svelte migration, OSC cue editor with audio player |
 
 ## v0.3.0 Features (Planned)
@@ -316,30 +316,56 @@ VERSION|status|server_version|message
 
 **Goal:** Official versioning system and automatic client updates.
 
-### Version Number Format
-- 4-part version: `vMAJOR.MINOR.PATCH.HOTFIX` (e.g., v0.3.0.1)
-- Standard releases use v0.3.0, v0.3.1, etc.
-- Hotfixes or silent features for one client: increment HOTFIX (v0.3.0.1)
+**Status:** Implemented (v0.3.0-dev) — auto-updater, version display, protocol versioning
 
-### Version Display Locations
-- Window title: `vrActorClient v0.3.0`
-- About dialog: Full version + build info
-- Startup log: First message shows version
+### Implementation
 
-### Auto-Update Flow
-1. Client checks GitHub Releases at startup (once per session)
-2. If newer version found, show notification: "Update available: v0.3.1"
-3. User clicks "Update" → download new exe
-4. Launch PowerShell/batch updater script
-5. Main app closes
-6. Updater overwrites exe, then relaunches app
-7. User sees "Updated to v0.3.1" on startup
+**Version:**
+- Semver: `APP_VERSION = "0.3.0"` in `shared.py`
+- Window titles: "Director Client v0.3.0", "Actor Client v0.3.0"
+- Startup log shows version
 
-### Manual Update Check
-- "Check for Updates" button in About dialog
-- Shows current version, checks GitHub, displays result
+**Protocol versioning (Feature 4):**
+- REGISTER now includes version + platform: `REGISTER|name|machine_id|role|secret|version|platform`
+- Server sends VERSION response after APPROVED
+- Version mismatch: `ok`, `warning` (minor diff), `unsupported` (major diff)
 
-### Server-Side Hash Verification (Optional Fallback)
+**Auto-update flow:**
+1. Server operator edits `update_manifest.json` with latest version, download URLs, SHA256
+2. Client connects → REGISTER with version + platform
+3. Server checks: if client version < manifest latest AND matching asset has a download URL
+4. Server sends `UPDATE|latest_version|download_url|sha256|release_notes`
+5. Client shows dialog: "Update available: v0.3.1. Download?"
+6. User clicks Update → client downloads to temp file in background thread
+7. SHA256 verification — if mismatch, aborts with error
+8. Client writes updater script (`.bat` on Windows, `.sh` on Linux)
+9. Launches updater, calls `self.quit()`
+10. Updater waits for process exit, swaps files, relaunches
+11. On next startup, client cleans up `.tmp` and `_updater.*` files
+
+**Update manifest (`update_manifest.json`):**
+```json
+{
+  "latest_version": "0.3.1",
+  "minimum_version": "0.2.2",
+  "release_notes": "Batch transfer + versioning fixes",
+  "assets": {
+    "actor-windows-x64": {"url": "https://...", "sha256": "abc123"},
+    "actor-linux-x64": {"url": "https://...", "sha256": "def456"},
+    "director-windows-x64": {"url": "https://...", "sha256": "789"},
+    "director-linux-x64": {"url": "https://...", "sha256": "012"}
+  }
+}
+```
+
+**Key design decisions:**
+- Manifest lives next to server — operator controls download URLs at any time
+- Empty URLs = no update sent (operator controls rollout)
+- URLs can point anywhere: GitHub Releases, private server, Tailscale file share
+- No GitHub API dependency — server reads local file, not rate-limited endpoints
+- SHA256 verification built into download flow
+- Linux packaging: AppImage format (.AppImage.tmp → .AppImage swap)
+- Backward compatible: old clients without version/platform still connect fine
 - Client can verify download hash against server
 - Provides extra security layer beyond GitHub
 - Server endpoint: `VERSION_HASH|v0.3.0|sha256_hash`

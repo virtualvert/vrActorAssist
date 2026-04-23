@@ -27,23 +27,22 @@
   - Stored in actor config, applied server-side
   - Helps compensate for network latency differences
 
-- [ ] **Protocol versioning** — Version handshake during client registration *(implemented, needs docs update)*:
+- [x] **Protocol versioning** — Version handshake during client registration ✅
   - Client sends version in REGISTER message
   - Server responds with VERSION|status|server_version|message
   - Outdated clients see warning in log
   - Major version mismatch rejects connection
   - Minor/patch mismatch allows connection with warning
 
-- [ ] **Version display & auto-updater** — Official versioning and automatic updates:
-  - 4-part version number: `vMAJOR.MINOR.PATCH.HOTFIX` (e.g., v0.3.0.1)
-  - Version shown in window title, About dialog, and startup log
-  - Auto-check for updates from GitHub Releases at startup
-  - Manual "Check for Updates" button in About dialog
-  - Windows: PowerShell/batch updater runs after app exit to overwrite exe
-  - Linux: Standard package update or executable replacement
-  - Server-side hash verification as optional security fallback
-  - Server warns on client version mismatch (notification, not blocking)
-  - Director and Actor clients update independently
+- [ ] **Version display & auto-updater** — Official versioning and automatic updates *(auto-updater implemented, display in About/TBD)*:
+  - 4-part version number: `vMAJOR.MINOR.PATCH.HOTFIX` (e.g., v0.3.0.1) — *using semver MAJOR.MINOR.PATCH instead*
+  - Version shown in window title, startup log ✅
+  - Auto-check for updates from server at connect ✅
+  - Server-side manifest: `update_manifest.json` with download URLs ✅
+  - Client downloads, verifies SHA256, self-replaces via updater script ✅
+  - Update manifest can point at any URL (GitHub, private server, Tailscale) ✅
+  - Platform-aware: `windows-x64`, `linux-x64` (AppImage) ✅
+  - Director and Actor clients update independently ✅
 
 ### Priority 2: Director Improvements
 

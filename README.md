@@ -39,7 +39,7 @@ See [GitHub Releases](https://github.com/virtualvert/vrActorAssist/releases) for
 | v0.2.0 | Selective actor triggering, file transfer, status indicators, VR-friendly buttons |
 | v0.2.1 | Configurable Soundpad path, duplicate actor fix |
 | v0.2.2 | Forget Actor flow, cross-platform builds, code cleanup |
-|| v0.3.0-dev | Multi-file batch transfer, character routing, protocol versioning (in progress) |
+|| v0.3.0-dev | Multi-file batch transfer, character routing, protocol versioning, auto-updater (in progress) |
 
 ## Commands
 
