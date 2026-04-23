@@ -956,8 +956,10 @@ class ActorClient:
                 f.write(f":wait\n")
                 f.write(f'tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul 2>&1\n')
                 f.write("if %errorlevel%==0 timeout /t 1 >nul & goto wait\n")
-                # Give PyInstaller a moment to clean up its temp dir
-                f.write("timeout /t 2 /nointerrupt >nul\n")
+                # Wait for PyInstaller temp dir cleanup to finish
+                # The old process leaves a _MEIxxxxxx dir that the new process
+                # may conflict with if we start too soon
+                f.write("timeout /t 5 /nointerrupt >nul\n")
                 # Rename running exe → .old, then rename .tmp → real name
                 # (can rename a running exe on Windows, can't delete/overwrite it)
                 f.write(f'if exist "{current_path}.old" del "{current_path}.old"\n')
