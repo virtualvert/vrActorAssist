@@ -1404,74 +1404,54 @@ class DirectorClient:
                 if not is_windows:
                     os.chmod(temp_path, 0o755)
                 
-                self.root.after(0, lambda: self.display("✓ Download complete. Will update on restart.", "success"))
+                self.root.after(0, lambda: self.display("✓ Download complete. Restart to apply update.", "success"))
                 
-                # Schedule updater on main thread (quit from background thread crashes tkinter)
-                self.root.after(0, lambda: self._create_updater(exe_path, temp_path, is_windows))
+                # Schedule swap on main thread
+                self.root.after(0, lambda: self._apply_update(exe_path, temp_path, is_windows))
                 
             except Exception as e:
                 self.root.after(0, lambda: self.display(f"✗ Update failed: {e}", "error"))
         
         threading.Thread(target=download, daemon=True).start()
     
-    def _create_updater(self, current_path, new_path, is_windows):
-        """Create and launch the updater script, then exit.
+    def _apply_update(self, current_path, new_path, is_windows):
+        """Swap the downloaded update into place and tell user to restart.
         
-        Windows strategy: Rename running exe to .old (you CAN rename a running exe),
-        rename .tmp to the real name, then start the new exe. The .old file
-        gets cleaned up on next launch by _cleanup_old_updates.
-        
-        Linux strategy: Copy .tmp over the running binary (works since Linux
-        doesn't lock open files the same way), chmod +x, and exec.
+        Simple approach: rename the running exe to .old (possible on Windows even while running),
+        then rename the .tmp to the real name. The old .old file gets cleaned up on next launch.
+        User manually restarts — no race conditions with PyInstaller temp dirs.
         """
-        exe_dir = os.path.dirname(current_path)
-        exe_name = os.path.basename(current_path)
-        old_path = current_path + ".old"
-        
-        if is_windows:
-            updater_path = os.path.join(exe_dir, "_updater.bat")
-            current_pid = os.getpid()
-            with open(updater_path, "w") as f:
-                f.write("@echo off\n")
-                f.write("echo Updating vrActorAssist...\n")
-                # Wait for the current process to exit (PID-specific, not name-based)
-                f.write(f":wait\n")
-                f.write(f'tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul 2>&1\n')
-                f.write("if %errorlevel%==0 timeout /t 1 >nul & goto wait\n")
-                # Wait for PyInstaller temp dir cleanup to finish
-                # The old process leaves a _MEIxxxxxx dir that the new process
-                # may conflict with if we start too soon
-                f.write("timeout /t 5 /nointerrupt >nul\n")
-                # Rename running exe → .old, then rename .tmp → real name
-                # (can rename a running exe on Windows, can't delete/overwrite it)
-                f.write(f'if exist "{current_path}.old" del "{current_path}.old"\n')
-                f.write(f'ren "{current_path}" "{exe_name}.old"\n')
-                f.write(f'move /y "{new_path}" "{current_path}"\n')
-                f.write(f'start "" "{current_path}"\n')
-                # Self-delete the updater script
-                f.write('del "%~f0"\n')
-        else:
-            updater_path = os.path.join(exe_dir, "_updater.sh")
-            with open(updater_path, "w") as f:
-                f.write("#!/bin/sh\n")
-                f.write("echo 'Updating vrActorAssist...'\n")
-                f.write(f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done\n")
-                f.write("sleep 1\n")
-                # Remove old .old if present, rename current to .old
-                f.write(f"rm -f '{old_path}'\n")
-                f.write(f"mv -f '{current_path}' '{old_path}'\n")
-                f.write(f"mv -f '{new_path}' '{current_path}'\n")
-                f.write(f"chmod +x '{current_path}'\n")
-                f.write(f"exec '{current_path}'\n")
-            os.chmod(updater_path, 0o755)
-        
-        # Launch updater and exit
-        if is_windows:
-            subprocess.Popen([updater_path], shell=True)
-        else:
-            subprocess.Popen([updater_path])
-        
-        self.quit()
+        try:
+            old_path = current_path + ".old"
+            
+            # Remove stale .old from a previous update if it exists
+            if os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except:
+                    pass  # Might still be locked, will clean up later
+            
+            # Rename running exe → .old (works on Windows even while running)
+            os.rename(current_path, old_path)
+            
+            # Rename downloaded .tmp → real name
+            os.rename(new_path, current_path)
+            
+            # Make executable on Linux
+            if not is_windows:
+                os.chmod(current_path, 0o755)
+            
+            self.display("✓ Update applied. Please restart vrActorAssist.", "success")
+            self.display("  Close this window and open the app again.", "info")
+            
+        except Exception as e:
+            # Try to roll back the rename if something went wrong
+            if os.path.exists(old_path) and not os.path.exists(current_path):
+                try:
+                    os.rename(old_path, current_path)
+                except:
+                    pass
+            self.display(f"✗ Update failed: {e}. Try downloading manually.", "error")
     
     def _cleanup_old_updates(self):
         """Clean up temp files, updater scripts, and .old files from previous updates."""
