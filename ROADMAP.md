@@ -27,7 +27,7 @@
   - Stored in actor config, applied server-side
   - Helps compensate for network latency differences
 
-- [ ] **Protocol versioning** — Version handshake during client registration:
+- [ ] **Protocol versioning** — Version handshake during client registration *(implemented, needs docs update)*:
   - Client sends version in REGISTER message
   - Server responds with VERSION|status|server_version|message
   - Outdated clients see warning in log

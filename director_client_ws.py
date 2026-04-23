@@ -14,7 +14,7 @@ import base64
 import os
 from pathlib import Path
 
-from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path
+from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path, APP_VERSION
 
 # Defaults
 DEFAULT_SERVER = "ws://localhost:5555/ws"
@@ -25,7 +25,7 @@ RECONNECT_DELAY = 5
 class DirectorClient:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Director Client")
+        self.root.title(f"Director Client v{APP_VERSION}")
         self.root.geometry("850x700")
         self.root.minsize(800, 650)
         
@@ -54,6 +54,7 @@ class DirectorClient:
         self.char_actor_map = {}  # character_name -> actor_name (session memory)
         
         self.setup_ui()
+        self.display(f"vrActorAssist Director Client v{APP_VERSION}", "info")
         
         # Auto-connect if config exists
         if self.config:
@@ -364,7 +365,8 @@ class DirectorClient:
                 name="Director",
                 machine_id=self.machine_id,
                 role="director",
-                secret=secret
+                secret=secret,
+                version=APP_VERSION
             )
             ws.send(register_msg)
         
@@ -419,6 +421,17 @@ class DirectorClient:
             self.approved = True
             self.root.after(0, lambda: self.display("✓ Authenticated as Director", "success"))
             self.root.after(0, lambda: self.status_var.set("Connected (Director)"))
+        
+        elif msg_type == "VERSION":
+            status = msg_data.get("status", "")
+            server_ver = msg_data.get("server_version", "")
+            message = msg_data.get("message", "")
+            if status == "ok":
+                self.root.after(0, lambda: self.display(f"✓ Server version: v{server_ver}", "info"))
+            elif status == "warning":
+                self.root.after(0, lambda: self.display(f"⚠ {message}", "warning"))
+            elif status == "unsupported":
+                self.root.after(0, lambda: self.display(f"✗ {message}", "error"))
         
         elif msg_type == "DENIED":
             reason = msg_data.get("reason", "Unknown reason")

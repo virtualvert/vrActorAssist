@@ -7,16 +7,20 @@ import uuid
 import platform
 from pathlib import Path
 
+# Application version (semver)
+APP_VERSION = "0.3.0"
+
 # Protocol message types
 MSG_TYPES = {
     "MSG": "MSG|{sender}|{text}",           # Broadcast message
     "PRIV": "PRIV|{sender}|{target}|{text}", # Private message
     "USERS": "USERS|{user_list}",           # User list update
     "STATUS": "STATUS|{actors_json}",       # Actor status (latency)
-    "REGISTER": "REGISTER|{name}|{machine_id}|{role}|{secret}",  # Client registration (secret optional)
+    "REGISTER": "REGISTER|{name}|{machine_id}|{role}|{secret}|{version}",  # Client registration (secret/version optional)
     "APPROVED": "APPROVED",                  # Actor approved
     "DENIED": "DENIED|{reason}",            # Actor denied
     "PENDING": "PENDING|{actors_json}",      # Pending actors list
+    "VERSION": "VERSION|{status}|{server_version}|{message}",  # Version check response
     "CMD": "CMD|{command}",                 # Command (go, stop, etc.) - args optional
     "ACK": "ACK|{actor}|{command}|{status}", # Command acknowledgment
     "FILE": "FILE|{sender}|{filename}|{size}", # File transfer header
@@ -106,16 +110,24 @@ def parse_message(data):
         return msg_type, {"users": users}
     
     elif msg_type == "REGISTER" and len(parts) >= 4:
-        # REGISTER|name|machine_id|role|secret (secret optional)
+        # REGISTER|name|machine_id|role|secret(|version)
         return msg_type, {
             "name": parts[1],
             "machine_id": parts[2],
             "role": parts[3],
-            "secret": parts[4] if len(parts) >= 5 else ""
+            "secret": parts[4] if len(parts) >= 5 else "",
+            "version": parts[5] if len(parts) >= 6 else ""
         }
     
     elif msg_type == "APPROVED":
         return msg_type, {}
+    
+    elif msg_type == "VERSION" and len(parts) >= 2:
+        return msg_type, {
+            "status": parts[1],
+            "server_version": parts[2] if len(parts) >= 3 else "",
+            "message": "|".join(parts[3:]) if len(parts) >= 4 else ""
+        }
     
     elif msg_type == "DENIED" and len(parts) >= 2:
         return msg_type, {"reason": "|".join(parts[1:])}

@@ -18,7 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import JSONResponse
 import uvicorn
 
-from shared import parse_message, format_message
+from shared import parse_message, format_message, APP_VERSION
 
 # Configuration
 DEFAULT_PORT = 5555
@@ -43,6 +43,27 @@ def log(message: str):
             f.write(entry + "\n")
     except:
         pass
+
+
+def compare_versions(client_ver: str, server_ver: str) -> tuple:
+    """Compare client and server versions. Returns (status, message).
+    status: 'ok', 'warning', 'unsupported'
+    """
+    try:
+        c_parts = [int(x) for x in client_ver.split('.')]
+        s_parts = [int(x) for x in server_ver.split('.')]
+    except (ValueError, AttributeError):
+        return 'warning', f'Cannot parse version (client={client_ver}, server={server_ver})'
+    
+    # Pad to 3 parts
+    while len(c_parts) < 3: c_parts.append(0)
+    while len(s_parts) < 3: s_parts.append(0)
+    
+    if c_parts[0] != s_parts[0]:
+        return 'unsupported', f'Client v{client_ver} is incompatible with server v{server_ver}'
+    if c_parts[1:] != s_parts[1:]:
+        return 'warning', f'Client v{client_ver} may have issues with server v{server_ver}. Some features may not work.'
+    return 'ok', ''
 
 
 def load_approved() -> Dict[str, dict]:
@@ -76,6 +97,7 @@ class Client:
     machine_id: str = ""
     role: str = "actor"
     approved: bool = False
+    version: str = ""
     last_ping_sent: float = 0.0
     last_ping_received: float = 0.0
     latency_ms: int = 0  # Rolling average latency
@@ -227,8 +249,9 @@ async def websocket_endpoint(
                 client.name = name
                 client.machine_id = machine_id
                 client.role = role
+                client.version = msg_data.get("version", "")
                 
-                log(f"Registration: {name} ({role}), machine_id={machine_id[:8]}...")
+                log(f"Registration: {name} ({role}), machine_id={machine_id[:8]}..., version={client.version or 'legacy'}")
                 
                 # Director authentication
                 if role == "director":
@@ -236,6 +259,13 @@ async def websocket_endpoint(
                         client.approved = True
                         log(f"Director '{name}' authenticated")
                         await websocket.send_text(format_message("APPROVED"))
+                        
+                        # Version check
+                        if client.version:
+                            v_status, v_msg = compare_versions(client.version, APP_VERSION)
+                            await websocket.send_text(format_message("VERSION", status=v_status, server_version=APP_VERSION, message=v_msg))
+                            if v_status != "ok":
+                                log(f"Version mismatch: director '{name}' v{client.version} vs server v{APP_VERSION} ({v_status})")
                         
                         # Handle multi-director warnings
                         existing_directors = [c for c in get_directors() if c.websocket != websocket]
@@ -285,6 +315,14 @@ async def websocket_endpoint(
                     client.name = approved_actors[machine_id].get("name", name)
                     log(f"Actor '{client.name}' auto-approved (known machine_id)")
                     await websocket.send_text(format_message("APPROVED"))
+                    
+                    # Version check
+                    if client.version:
+                        v_status, v_msg = compare_versions(client.version, APP_VERSION)
+                        await websocket.send_text(format_message("VERSION", status=v_status, server_version=APP_VERSION, message=v_msg))
+                        if v_status != "ok":
+                            log(f"Version mismatch: actor '{client.name}' v{client.version} vs server v{APP_VERSION} ({v_status})")
+                    
                     await broadcast(format_message("MSG", sender="SERVER", text=f"{client.name} joined"))
                     await send_user_list()
                 elif machine_id in pending_actors:
@@ -548,7 +586,7 @@ if __name__ == "__main__":
     # Update secret from arg
     SERVER_SECRET = args.secret
     
-    log(f"Starting WebSocket server on {args.host}:{args.port}")
+    log(f"Starting vrActorAssist Server v{APP_VERSION} on {args.host}:{args.port}")
     log(f"Director secret: {SERVER_SECRET[:4]}...")
     
     # Run with websocket ping enabled

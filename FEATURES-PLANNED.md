@@ -12,7 +12,7 @@
 | **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
 | **v0.2.1** | Released | Configurable Soundpad path, duplicate actor fix |
 | **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
-|| **v0.3.0** | In Progress | Multi-file transfer with character routing, batch protocol, overwrite dialog |
+|| **v0.3.0** | In Progress | Multi-file transfer with character routing, batch protocol, overwrite dialog, protocol versioning |
 || **v0.4.0** | Planned | Director client Tauri+Svelte migration, OSC cue editor with audio player |
 
 ## v0.3.0 Features (Planned)
@@ -228,6 +228,8 @@ When a file with the same name already exists:
 ### Feature 4: Protocol Versioning
 
 **Goal:** Clients know their protocol version and receive warnings when outdated.
+
+**Status:** Implemented (v0.3.0-dev) — code in `shared.py`, `server_ws.py`, both clients
 
 ### Protocol Addition
 
