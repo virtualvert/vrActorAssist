@@ -1307,7 +1307,6 @@ class DirectorClient:
                 else:
                     exe_path = os.path.abspath(__file__)
                 
-                ext = os.path.splitext(exe_path)[1]
                 # Windows: .exe, Linux: .AppImage or no extension
                 is_windows = sys.platform == "win32"
                 
@@ -1342,8 +1341,8 @@ class DirectorClient:
                 
                 self.root.after(0, lambda: self.display("✓ Download complete. Will update on restart.", "success"))
                 
-                # Create and launch updater script
-                self._create_updater(exe_path, temp_path, is_windows)
+                # Schedule updater on main thread (quit from background thread crashes tkinter)
+                self.root.after(0, lambda: self._create_updater(exe_path, temp_path, is_windows))
                 
             except Exception as e:
                 self.root.after(0, lambda: self.display(f"✗ Update failed: {e}", "error"))
@@ -1392,7 +1391,8 @@ class DirectorClient:
             
             for filename in os.listdir(base_dir):
                 filepath = os.path.join(base_dir, filename)
-                if filename.endswith('.tmp'):
+                # Only match our update temp files (vrActorClient-*.tmp or vrDirectorClient-*.tmp)
+                if (filename.startswith("vrActorClient-v") or filename.startswith("vrDirectorClient-v")) and filename.endswith(".tmp"):
                     try:
                         os.remove(filepath)
                     except:
