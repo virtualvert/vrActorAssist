@@ -1,24 +1,25 @@
 # vrActorAssist Roadmap
 
-*Last updated: 2026-04-02*
+*Last updated: 2026-04-23*
 
 ---
 
 ## 🚀 Features (Planned)
 
-### Priority 1: v0.3.0
+### Priority 1: v0.3.0 — Last tkinter Director Release
 
 - [ ] **Multiple director support** — Allow multiple directors with different names and permissions:
   - Main director (full control)
   - Assistant director (limited commands)
   - Each director has their own identity/name
   
-- [ ] **Send multiple files** — Director can send multiple files to actor at once:
-  - Multi-select in file picker
-  - Queue transfers with progress
-  - Actor receives to configured directory
-  - Character-based routing for audioscript files (` - Character.mp3` pattern)
-  - Overwrite warning when file exists (auto-accept toggle determines behavior)
+- [ ] **Send multiple files** — Director can send multiple files to actor at once *(partially implemented: batch protocol, multi-select, character routing, overwrite dialog — needs Cancel Batch UI button)*:
+  - Multi-select in file picker ✅
+  - Queue transfers with progress ✅ (sequential, BATCH_START/BATCH_END protocol)
+  - Actor receives to configured directory ✅
+  - Character-based routing for audioscript files (` - Character.mp3` pattern) ✅
+  - Overwrite warning when file exists (auto-accept toggle determines behavior) ✅
+  - Cancel batch button ❌ (method exists, no UI trigger)
 
 - [ ] **Ping compensation / delay** — Add millisecond delay per actor:
   - Director can set delay per actor (e.g., Actor A: +50ms, Actor B: +100ms)
@@ -54,6 +55,28 @@
   - No server state needed — stored only in director client memory
   - Useful for mapping actors to character names during production
 
+### Priority 2.5: v0.4.0 — Tauri Director Migration + OSC Cue Editor
+
+- [ ] **Director client → Tauri+Svelte** — Migrated from tkinter to Tauri 2.0 + Svelte 5:
+  - All existing director features ported (actor panel, checkboxes, chat, file transfer, etc.)
+  - Same protocol — talks to the same Python server
+  - Single ~8MB binary instead of PyInstaller bundle
+
+- [ ] **OSC cue list** — Timed VRChat parameter triggers synced to Play command:
+  - Director creates list of "at X ms after Play, set parameter to value" cues
+  - Supports bool values (true/false) and float values (0.0-1.0) for blend shapes
+  - Actor client runs local timers — no network jitter on OSC sends
+  - Same checkbox targeting as `*go` — only checked actors receive cues
+  - Shorthand parameter names (`RecIcon` → `/avatar/parameters/RecIcon`)
+  - Audio player with seek bar (ms precision) — load the sound, scrub to place cues visually
+  - Cue markers on seek bar — vertical lines with row numbers, click row to jump to position
+  - "Add at Playhead" button — inserts cue at current audio position
+  - Global delay offset for ping compensation — one field, applied to all cues at send time
+  - Cue presets saveable per scene (offset is per-session, not saved)
+  - Test button fires OSC without playing Soundpad sound
+  - Graceful fallback if VRChat OSC is disabled (log + skip)
+  - `*stop` cancels all pending cue timers
+
 ### Priority 3: Actor Improvements
 
 - [ ] **Auto-start with Soundpad** — Option to launch Soundpad automatically
@@ -72,6 +95,10 @@
 - [ ] **Error handling** — Better error messages and recovery
 - [ ] **Logging levels** — Configurable log verbosity
 - [ ] **Config validation** — Validate URLs, names, etc. before connecting
+- [ ] **Cancel Batch UI button** — `cancel_batch()` method exists but needs a director UI trigger
+- [ ] **Duplicate filename collision** — `pending_files` dict keyed by basename only; two files with same name in a batch will collide. Fix: use unique key like `batch_id:filename`
+- [ ] **Pipe character in filenames** — `|` in a filename breaks the pipe-delimited protocol. Unlikely in practice but should be documented or escaped
+- [ ] **Actor file dialog on WS thread** — `filedialog.askdirectory()` called from WebSocket thread can crash tkinter on some platforms. Move to `root.after()` pattern
 
 ---
 

@@ -60,6 +60,9 @@ class ActorClient:
         self.incoming_file = None
         self.file_chunks = {}
         
+        # Batch transfer state
+        self.active_batch = None  # {file_count, total_bytes, files_received, files_ok, files_err}
+        
         self.setup_ui()
         
         # Auto-connect if config exists
@@ -592,21 +595,86 @@ class ActorClient:
                         save_config(self.config_path, self.config)
                     
                     save_path = os.path.join(save_dir, filename)
-                    with open(save_path, 'wb') as f:
-                        f.write(self.file_chunks[filename]["data"])
                     
-                    self.root.after(0, lambda: self.display(f"✓ Saved: {save_path}", "success"))
+                    # Overwrite handling
+                    file_saved = False
+                    if os.path.exists(save_path):
+                        auto_accept = self.config.get("auto_accept_files", False)
+                        if auto_accept:
+                            # Silent overwrite
+                            with open(save_path, 'wb') as f:
+                                f.write(self.file_chunks[filename]["data"])
+                            self.root.after(0, lambda sp=save_path: self.display(f"⚠ Saved (replaced existing): {sp}", "warning"))
+                            file_saved = True
+                        else:
+                            # Write to temp file first to avoid holding bytes in lambda
+                            import tempfile
+                            temp_fd, temp_path = tempfile.mkstemp(prefix="vra_", suffix=os.path.splitext(filename)[1])
+                            try:
+                                with os.fdopen(temp_fd, 'wb') as tmp_f:
+                                    tmp_f.write(self.file_chunks[filename]["data"])
+                            except:
+                                os.close(temp_fd)
+                                raise
+                            # Prompt for overwrite — dialog handles FILEOK/FILEDENY
+                            self.root.after(0, lambda fn=filename, sd=save_dir, tp=temp_path: 
+                                self._show_overwrite_dialog(fn, sd, tp))
+                            # Cleanup chunks but DON'T send FILEOK yet — dialog handles that
+                            del self.file_chunks[filename]
+                            return
+                    else:
+                        with open(save_path, 'wb') as f:
+                            f.write(self.file_chunks[filename]["data"])
+                        self.root.after(0, lambda sp=save_path: self.display(f"✓ Saved: {sp}", "success"))
+                        file_saved = True
                     
-                    # Send confirmation
-                    ok_msg = format_message("FILEOK", filename=filename, saved_path=save_path)
-                    self.ws.send(ok_msg)
+                    if file_saved:
+                        # Send confirmation
+                        ok_msg = format_message("FILEOK", filename=filename, saved_path=save_path)
+                        self.ws.send(ok_msg)
+                        
+                        # Track batch progress
+                        self._on_file_received(ok=True)
                 else:
                     self.root.after(0, lambda: self.display("✗ Checksum mismatch", "error"))
                     err_msg = format_message("FILEERR", filename=filename, error="Checksum mismatch")
                     self.ws.send(err_msg)
+                    self._on_file_received(ok=False)
                 
                 # Cleanup
                 del self.file_chunks[filename]
+        
+        # Batch file transfer messages
+        elif msg_type == "BATCH_START":
+            file_count = msg_data.get("file_count", 0)
+            total_bytes = msg_data.get("total_bytes", 0)
+            size_str = f"{total_bytes/1024:.1f} KB" if total_bytes < 1024*1024 else f"{total_bytes/1024/1024:.1f} MB"
+            self.active_batch = {
+                "file_count": file_count,
+                "total_bytes": total_bytes,
+                "files_received": 0,
+                "files_ok": 0,
+                "files_err": 0
+            }
+            self.root.after(0, lambda fc=file_count, ss=size_str: 
+                self.display(f"📦 Receiving batch of {fc} file{'s' if fc > 1 else ''} ({ss})", "info"))
+        
+        elif msg_type == "BATCH_END":
+            if self.active_batch:
+                ok = self.active_batch["files_ok"]
+                err = self.active_batch["files_err"]
+                total = self.active_batch["file_count"]
+                status = "✓" if err == 0 else "⚠"
+                msg_type_str = "success" if err == 0 else "warning"
+                self.root.after(0, lambda: self.display(
+                    f"{status} Batch complete: {ok}/{total} saved" + (f", {err} failed" if err > 0 else ""),
+                    msg_type_str))
+                self.active_batch = None
+        
+        elif msg_type == "BATCH_CANCEL":
+            reason = msg_data.get("reason", "")
+            self.root.after(0, lambda: self.display(f"⚠ Batch cancelled by director{': ' + reason if reason else ''}", "warning"))
+            self.active_batch = None
     
     def show_file_request(self, filename: str, size: int):
         """Show file request dialog."""
@@ -663,6 +731,73 @@ class ActorClient:
             deny_msg = format_message("FILEDENY", filename=filename, reason="Declined")
             self.ws.send(deny_msg)
             self.display(f"Declined {filename}", "warning")
+    
+    def _on_file_received(self, ok: bool):
+        """Track batch progress when a file transfer completes."""
+        if self.active_batch:
+            self.active_batch["files_received"] += 1
+            if ok:
+                self.active_batch["files_ok"] += 1
+                received = self.active_batch["files_received"]
+                total = self.active_batch["file_count"]
+                if total > 1:
+                    self.root.after(0, lambda r=received, t=total: 
+                        self.display(f"  Batch progress: {r}/{t} files", "info"))
+            else:
+                self.active_batch["files_err"] += 1
+    
+    def _show_overwrite_dialog(self, filename: str, save_dir: str, temp_path: str):
+        """Show overwrite confirmation dialog when file already exists.
+        
+        Args:
+            filename: Name of the file
+            save_dir: Directory to save in
+            temp_path: Path to temp file containing the data (not raw bytes)
+        """
+        dialog = tk.Toplevel(self.root)
+        dialog.title("File Already Exists")
+        dialog.geometry("400x180")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        tk.Label(dialog, text="This will overwrite:", font=('Arial', 11)).pack(pady=(15, 5))
+        tk.Label(dialog, text=filename, font=('Arial', 11, 'bold')).pack(pady=5)
+        
+        auto_accept_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(dialog, text="Auto-accept future files", 
+                       variable=auto_accept_var, font=('Arial', 10)).pack(pady=5)
+        
+        def do_accept():
+            if auto_accept_var.get():
+                self.config["auto_accept_files"] = True
+                save_config(self.config_path, self.config)
+            dialog.destroy()
+            save_path = os.path.join(save_dir, filename)
+            import shutil
+            shutil.move(temp_path, save_path)
+            self.display(f"⚠ Saved (replaced existing): {save_path}", "warning")
+            ok_msg = format_message("FILEOK", filename=filename, saved_path=save_path)
+            self.ws.send(ok_msg)
+            self._on_file_received(ok=True)
+        
+        def do_decline():
+            dialog.destroy()
+            # Clean up temp file
+            try:
+                os.unlink(temp_path)
+            except:
+                pass
+            deny_msg = format_message("FILEDENY", filename=filename, reason="Declined overwrite")
+            self.ws.send(deny_msg)
+            self.display(f"Declined overwrite for {filename}", "warning")
+            self._on_file_received(ok=False)
+        
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        tk.Button(btn_frame, text="Accept (Overwrite)", command=do_accept,
+                  height=2, width=16, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Decline", command=do_decline,
+                  height=2, width=10, font=('Arial', 10)).pack(side=tk.RIGHT, padx=5)
     
     def send_msg(self):
         """Send a chat message."""

@@ -357,7 +357,6 @@ async def websocket_endpoint(
                 if msg_type == "FILEREQ":
                     # Director requesting to send to actor
                     target = msg_data.get("target", "")
-                    sender_ws = websocket
                     
                     # Find target actor
                     for ws, c in clients.items():
@@ -393,10 +392,19 @@ async def websocket_endpoint(
                             await transfer["actor_ws"].send_text(data)
                         except:
                             pass
-                        
-                        if msg_type == "FILEEND":
-                            # Will be cleaned up after FILEOK/FILEERR
+            
+            # Batch file transfer messages - route to target actor
+            elif msg_type in ("BATCH_START", "BATCH_END", "BATCH_CANCEL"):
+                target = msg_data.get("target", "")
+                
+                # Find target actor and forward
+                for ws, c in clients.items():
+                    if c.name == target and c.approved and c.role == "actor":
+                        try:
+                            await ws.send_text(data)
+                        except:
                             pass
+                        break
             
             elif msg_type == "APPROVE":
                 # Director approves pending actor

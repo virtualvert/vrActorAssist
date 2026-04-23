@@ -12,9 +12,8 @@
 | **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
 | **v0.2.1** | Released | Configurable Soundpad path, duplicate actor fix |
 | **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
-|| **v0.3.0** | Planned | Multiple directors, multi-file transfer with character routing, ping compensation, protocol versioning, version display & auto-updater |
-
----
+|| **v0.3.0** | In Progress | Multi-file transfer with character routing, batch protocol, overwrite dialog |
+|| **v0.4.0** | Planned | Director client Tauri+Svelte migration, OSC cue editor with audio player |
 
 ## v0.3.0 Features (Planned)
 
@@ -42,21 +41,48 @@
 
 **Goal:** Director can send multiple files to actors with optional character-based routing.
 
+**Status:** Implemented (v0.3.0-dev) — code in `director_client_ws.py`, `actor_client_ws.py`, `server_ws.py`, `shared.py`
+
+### Implementation
+
+**Batch Protocol (new messages):**
+```
+BATCH_START|target|file_count|total_bytes   — Director tells actor "N files incoming"
+BATCH_END|target|success_count|fail_count   — Director signals batch complete
+BATCH_CANCEL|target|reason                  — Director cancels remaining files
+```
+
+**Sequential file flow:**
+- Director sends BATCH_START, then FILEREQ for first file only
+- After each FILEOK/FILEERR/FILEDENY, director sends FILEREQ for next file
+- After all files done, director sends BATCH_END
+- Each file still uses existing FILESTART/FILECHUNK/FILEEND protocol unchanged
+- Actor sees progressive "Receiving batch: 2/5 files" in log
+
+**Not the original spec** (which had "FILEREQ with multiple filenames, actor acknowledges all at once"). The implemented approach is simpler: each file goes through the standard single-file protocol, wrapped in batch envelope messages. This means:
+- No new acknowledgment patterns
+- No new chunk logic
+- Actor auto-accept still works per-file
+- Overwrite dialog still works per-file
+- Server just relays batch messages (no state tracking)
+
 ### UI Changes — Director
-- Multi-select in file picker
-- Queue transfers with overall progress
-- Cancel all button
+- Multi-select file picker (`askopenfilenames`)
+- Character-to-actor mapping dialog with dropdowns per character/ungrouped file
+- Session memory for character→actor mappings (auto-fills on next batch)
+- Single-file fallback (no ` - ` pattern) still uses simple actor-picker dialog
+- "📁 Send Files..." button replaces old "📁 Send File..."
 
 ### UI Changes — Actor
-- Receive multiple files sequentially
-- Overall progress indicator
-- Per-file completion checkmarks
+- Batch progress: "📦 Receiving batch of N files (X KB)" on BATCH_START
+- Per-file progress: "Batch progress: 2/5 files"
+- Batch summary on BATCH_END: "✓ Batch complete: 4/5 saved, 1 failed"
+- Cancellation notice on BATCH_CANCEL
+- Overwrite dialog with temp file approach (no memory bloat from holding bytes in lambda)
 
-### Protocol
-Same FILESTART/FILECHUNK/FILEEND protocol, but:
-- Director sends FILEREQ with multiple filenames
-- Actor acknowledges all at once
-- Sequential transfer of each file
+### Cancel Batch
+- `cancel_batch()` method exists on director client but has no UI button yet
+- Sends BATCH_CANCEL to actor, cleans up pending files, removes batch state
 
 ---
 
@@ -347,6 +373,169 @@ Each release includes:
 - `vrActorClient-v0.3.0` (Linux)
 - `vrDirectorClient-v0.3.0` (Linux)
 - `checksums.sha256`
+
+---
+
+## v0.4.0 Features (Planned) — Tauri Director Migration + OSC Cue Editor
+### Feature: OSC Cue List
+
+**Goal:** Director can schedule VRChat OSC parameter changes at specific times after hitting Play, synced to Soundpad audio. Enables timed avatar expressions, gestures, and indicators that need to land on a beat.
+
+**Why a cue list instead of a single toggle:**
+
+A single "fire this parameter at X ms" covers the common case, but the first time you need two things to happen — like mouth open at 2s, close at 5s — you're stuck. A cue list supports that and costs almost nothing extra. The single-toggle case is just a 1-item cue list.
+
+### Director UI — OSC Cue Editor
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  OSC CUES                                                    │
+│                                                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  🎵 sound_effect.mp3                                  │  │
+│  │  ▶ 0:02.340 ████████░░░░░░░░░░░░░░░ 0:05.120  ▌▌ │  │
+│  │                                                       │  │
+│  │  [▶ Play] [⏹ Stop] [Load Sound...]                  │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  Global Delay Offset: [+0 ms]  (ping compensation)          │
+│                                                              │
+│  #  Delay    Parameter            Value      Actors          │
+│  1  2000ms   RecIcon             true       ☑Coda           │
+│  2  2000ms   /MouthOpen          true       ☑Coda           │
+│  3  2300ms   /EyeClose           true       ☑Coda           │
+│  4  5000ms   /MouthOpen          false      ☑Coda           │
+│                                                              │
+│  [+ Add Cue]  [Add at Playhead ▼]  [Test]  [Save Preset]  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Audio Player:**
+- Director loads a Soundpad sound file (or picks from the actor's sound list if remote library is implemented)
+- Seek bar shows the full waveform timeline with millisecond precision
+- Playhead position displayed as `M:SS.mmm` (e.g., `0:02.340`)
+- Click anywhere on the seek bar to jump to that position
+- Cues are marked on the seek bar as vertical lines with their row number
+- Clicking a cue row scrolls the seek bar to show that cue's position
+- **Add at Playhead** button inserts a new cue with the delay set to the current playhead position
+
+**Global Delay Offset (Ping Compensation):**
+- Single field (in ms) added to ALL cue delays before sending
+- Director sets it once instead of editing each cue individually
+- Example: offset of +80ms means a cue at 2000ms fires at 2080ms for the actor
+- Offset is per-session, not saved in presets (network conditions change)
+- Display shows effective times: `1  2080ms (+80)  RecIcon  true`
+
+**Controls:**
+- **Add Cue** — adds a new row with delay, parameter, value, and actor checkboxes
+- **Add at Playhead** — adds a new row with delay set to current audio position
+- **Test** — fires OSC cues without playing Soundpad sound (verify timing)
+- **Save as Preset** — saves cue list for reuse (per scene)
+- **Load Preset** — load a saved cue list
+- **Remove** — delete a cue row
+- Double-click a cue row to jump audio player to that position
+- All delays are in milliseconds, editable
+
+**Parameter format:**
+- Shorthand: `RecIcon` → automatically expands to `/avatar/parameters/RecIcon`
+- Full path: `/avatar/parameters/CustomParam` → used as-is
+- Leading slash distinguishes full paths from shorthand
+
+**Value types:**
+- `true` / `false` — bool parameters (toggles, visibility)
+- `0.0` to `1.0` — float parameters (blend shapes, gesture weights, sliders)
+
+**Actor targeting:**
+- Same checkbox pattern as `*go` command
+- Only checked actors receive the OSC event
+- Director can send different cues to different actors
+
+### Actor Client — OSC Integration
+
+**New dependency:** `python-osc` (for VRChat OSC)
+
+**Behavior:**
+- On receiving `*go`, actor starts local timers for all cues targeting them
+- Each timer fires the OSC parameter at the specified delay
+- Timers are local to the actor client — no network jitter on OSC sends
+- On receiving `*stop`, cancel all pending timers and optionally reset parameters
+
+**Config addition:**
+```json
+{
+  "vrchat_osc_host": "127.0.0.1",
+  "vrchat_osc_port": 9000,
+  "osc_enabled": true
+}
+```
+
+### Protocol Addition
+
+```
+# Director sends cue list to actors (before or with the go command)
+OSC_CUE|delay_ms|parameter|value
+
+# Example: cue list sent before *go
+OSC_CUE|2000|RecIcon|true
+OSC_CUE|2000|/avatar/parameters/MouthOpen|true
+OSC_CUE|2300|/avatar/parameters/EyeClose|true
+OSC_CUE|5000|/avatar/parameters/MouthOpen|false
+
+# When director hits Play (*go), each actor starts their local timers
+# OSC_CUE messages are targeted — only sent to checked actors
+# *go command triggers the timers (same actor targeting as *go checkboxes)
+
+# Actor acknowledges cue list received
+OSC_CUE_ACK|count|4
+```
+
+**Flow:**
+1. Director creates cue list in UI (or loads preset)
+2. Director optionally adjusts Global Delay Offset for ping compensation
+3. Director clicks Play (or Play in 3s)
+4. Director sends OSC_CUE messages to checked actors (with global offset applied)
+5. Immediately sends `*go` to same actors (or after 3s countdown)
+6. Actors receive `*go` → play Soundpad sound + start OSC cue timers
+7. Each timer fires at its delay + global offset → sends OSC parameter to VRChat
+8. Actor sends OSC_CUE_ACK confirming cue count
+
+**Timing accuracy:**
+- Timers run on actor client (local to VRChat, no network jitter on OSC)
+- OSC is UDP — near-instant delivery to localhost
+- Typical jitter: <5ms, well within tolerance for synced expressions
+- If Soundpad has latency, actor can adjust delays per-sound in the preset
+- Global offset is applied once at send time, not saved in presets (network conditions change per session)
+
+### Preset System
+
+**Purpose:** Save and load cue lists so directors don't rebuild them every take.
+
+**Storage:** Per-director, saved in director config directory as JSON files.
+
+**Preset format:**
+```json
+{
+  "name": "EP3 Scene 4 - Diego monologue",
+  "cues": [
+    {"delay_ms": 2000, "parameter": "RecIcon", "value": "true", "actors": ["Coda"]},
+    {"delay_ms": 2000, "parameter": "/avatar/parameters/MouthOpen", "value": "true", "actors": ["Coda"]},
+    {"delay_ms": 5000, "parameter": "/avatar/parameters/MouthOpen", "value": "false", "actors": ["Coda"]}
+  ]
+}
+```
+
+**UI flow:**
+- "Save as Preset" prompts for name
+- "Load Preset" dropdown shows saved presets
+- Presets can be associated with specific sounds (auto-load when sound is selected)
+
+### Fallback for non-OSC setups
+
+If actor client has `osc_enabled: false` or VRChat OSC is not reachable:
+- Cues are still received and stored
+- Log shows: `[OSC] Cue at 2000ms: RecIcon=true (skipped — OSC disabled)`
+- Director sees: actor name shows ⚠ OSC indicator
+- No error popups, just silent skip with log entry
 
 ---
 

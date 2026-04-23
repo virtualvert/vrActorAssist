@@ -30,6 +30,10 @@ MSG_TYPES = {
     "FILEEND": "FILEEND|{filename}|{checksum}",
     "FILEOK": "FILEOK|{filename}|{saved_path}",
     "FILEERR": "FILEERR|{filename}|{error}",
+    # Batch file transfer protocol
+    "BATCH_START": "BATCH_START|{target}|{file_count}|{total_bytes}",
+    "BATCH_END": "BATCH_END|{target}|{success_count}|{fail_count}",
+    "BATCH_CANCEL": "BATCH_CANCEL|{target}|{reason}",
 }
 
 
@@ -201,6 +205,27 @@ def parse_message(data):
     elif msg_type == "FORGET_NAME" and len(parts) >= 2:
         return msg_type, {"name": parts[1]}
     
+    # Batch file transfer messages
+    elif msg_type == "BATCH_START" and len(parts) >= 4:
+        return msg_type, {
+            "target": parts[1],
+            "file_count": int(parts[2]),
+            "total_bytes": int(parts[3])
+        }
+    
+    elif msg_type == "BATCH_END" and len(parts) >= 4:
+        return msg_type, {
+            "target": parts[1],
+            "success_count": int(parts[2]),
+            "fail_count": int(parts[3])
+        }
+    
+    elif msg_type == "BATCH_CANCEL" and len(parts) >= 2:
+        return msg_type, {
+            "target": parts[1],
+            "reason": "|".join(parts[2:]) if len(parts) > 2 else ""
+        }
+
     elif msg_type == "REFRESH":
         return msg_type, {}
     

@@ -47,6 +47,12 @@ class DirectorClient:
         self.countdown_active = False
         self.countdown_id = None
         
+        # Batch file transfer state
+        self.pending_files = {}  # filename -> {path, target, checksum, accepted, batch_id}
+        self.active_batches = {}  # batch_id -> {target, file_count, files_done, files_ok, files_err, cancelled}
+        self.batch_counter = 0   # Incrementing batch ID
+        self.char_actor_map = {}  # character_name -> actor_name (session memory)
+        
         self.setup_ui()
         
         # Auto-connect if config exists
@@ -128,8 +134,8 @@ class DirectorClient:
         tk.Button(toggle_frame, text="All On", command=self.enable_all_actors, height=2, width=8, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
         tk.Button(toggle_frame, text="All Off", command=self.disable_all_actors, height=2, width=8, font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
         
-        # Send file button
-        tk.Button(left_frame, text="📁 Send File...", command=self.send_file_dialog, height=2, width=15, font=('Arial', 11, 'bold')).pack(pady=5)
+        # Send file button (multi-file with character routing)
+        tk.Button(left_frame, text="📁 Send Files...", command=self.send_file_dialog, height=2, width=15, font=('Arial', 11, 'bold')).pack(pady=5)
         
         # Right panel - Chat and controls
         right_frame = tk.Frame(main_frame)
@@ -472,21 +478,61 @@ class DirectorClient:
                 self.root.after(0, lambda fn=filename: self.send_file_chunks(fn))
             else:
                 self.root.after(0, lambda: self.display(f"Actor declined {filename}", "warning"))
+                # If part of a batch, mark as failed and advance queue
+                if filename in self.pending_files:
+                    batch_id = self.pending_files[filename].get("batch_id")
+                    self.pending_files.pop(filename, None)
+                    if batch_id and batch_id in self.active_batches:
+                        self.active_batches[batch_id]["files_err"] += 1
+                        self.active_batches[batch_id]["files_done"] += 1
+                        self.active_batches[batch_id]["current"] = None
+                        if not self._check_batch_complete(batch_id):
+                            self._send_next_in_batch(batch_id)
         
         elif msg_type == "FILEDENY":
             filename = msg_data.get("filename", "")
             reason = msg_data.get("reason", "Unknown")
             self.root.after(0, lambda: self.display(f"File transfer denied: {reason}", "warning"))
+            # If part of a batch, mark as failed and advance queue
+            if filename in self.pending_files:
+                batch_id = self.pending_files[filename].get("batch_id")
+                self.pending_files.pop(filename, None)
+                if batch_id and batch_id in self.active_batches:
+                    self.active_batches[batch_id]["files_err"] += 1
+                    self.active_batches[batch_id]["files_done"] += 1
+                    self.active_batches[batch_id]["current"] = None
+                    if not self._check_batch_complete(batch_id):
+                        self._send_next_in_batch(batch_id)
         
         elif msg_type == "FILEOK":
             filename = msg_data.get("filename", "")
             saved_path = msg_data.get("saved_path", "")
             self.root.after(0, lambda: self.display(f"✓ File saved: {saved_path}", "success"))
+            # Track batch progress and advance queue
+            if filename in self.pending_files:
+                batch_id = self.pending_files[filename].get("batch_id")
+                self.pending_files.pop(filename, None)
+                if batch_id and batch_id in self.active_batches:
+                    self.active_batches[batch_id]["files_ok"] += 1
+                    self.active_batches[batch_id]["files_done"] += 1
+                    self.active_batches[batch_id]["current"] = None
+                    if not self._check_batch_complete(batch_id):
+                        self._send_next_in_batch(batch_id)
         
         elif msg_type == "FILEERR":
             filename = msg_data.get("filename", "")
             error = msg_data.get("error", "Unknown error")
             self.root.after(0, lambda: self.display(f"✗ File error: {error}", "error"))
+            # Track batch progress and advance queue
+            if filename in self.pending_files:
+                batch_id = self.pending_files[filename].get("batch_id")
+                self.pending_files.pop(filename, None)
+                if batch_id and batch_id in self.active_batches:
+                    self.active_batches[batch_id]["files_err"] += 1
+                    self.active_batches[batch_id]["files_done"] += 1
+                    self.active_batches[batch_id]["current"] = None
+                    if not self._check_batch_complete(batch_id):
+                        self._send_next_in_batch(batch_id)
     
     def update_pending_list(self):
         """Update the pending actors listbox."""
@@ -768,13 +814,63 @@ class DirectorClient:
         else:
             self.send_command("*stop")
     
+    # --- Character name parsing ---
+    
+    @staticmethod
+    def parse_character_name(filename: str):
+        """Extract character name from filename using ' - ' pattern.
+        
+        Pattern: 'Scene 4 - Diego.mp3' -> 'Diego'
+        Last ' - ' wins: 'EP3 - Scene 4.2 - Diego.wav' -> 'Diego'
+        Returns None if no pattern match.
+        """
+        if ' - ' in filename:
+            # Extract after last ' - ', strip extension
+            character = filename.rsplit(' - ', 1)[-1].rsplit('.', 1)[0].strip()
+            return character if character else None
+        return None
+    
+    # --- Multi-file send dialog ---
+    
     def send_file_dialog(self):
-        """Open file picker and send file to selected actor."""
+        """Open multi-file picker, parse character names, show mapping dialog."""
         if not self.approved_actors:
             messagebox.showwarning("No Actors", "No actors connected")
             return
         
-        # Actor selection dialog
+        # Multi-select file picker
+        filepaths = filedialog.askopenfilenames(
+            title="Select files to send"
+        )
+        
+        if not filepaths:
+            return
+        
+        # Parse filenames for character names
+        # Group: {character: [filepath, ...]} or None for ungrouped
+        char_groups = {}   # character_name -> [filepath, ...]
+        ungrouped = []     # files without character pattern
+        
+        for fp in filepaths:
+            filename = os.path.basename(fp)
+            character = self.parse_character_name(filename)
+            if character:
+                if character not in char_groups:
+                    char_groups[character] = []
+                char_groups[character].append(fp)
+            else:
+                ungrouped.append(fp)
+        
+        # If only one file and no character pattern, use simple single-file flow
+        if len(filepaths) == 1 and not char_groups:
+            self._send_single_file_dialog(filepaths[0])
+            return
+        
+        # Show character/actor mapping dialog
+        self._show_mapping_dialog(char_groups, ungrouped)
+    
+    def _send_single_file_dialog(self, filepath: str):
+        """Original single-file send flow (for backward compat with 1 file, no pattern)."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Send File")
         dialog.geometry("300x200")
@@ -783,7 +879,6 @@ class DirectorClient:
         
         tk.Label(dialog, text="Send file to:", font=('Arial', 12)).pack(pady=10)
         
-        # Actor listbox with explicit selection mode
         listbox_frame = tk.Frame(dialog)
         listbox_frame.pack(fill=tk.X, padx=20)
         
@@ -797,7 +892,6 @@ class DirectorClient:
         listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Select first actor by default
         if self.approved_actors:
             listbox.selection_set(0)
             listbox.activate(0)
@@ -807,22 +901,274 @@ class DirectorClient:
             if not sel:
                 messagebox.showwarning("No Selection", "Please select an actor")
                 return
-            
             actor_name = listbox.get(sel[0])
             dialog.destroy()
-            
-            # Open file picker
-            filepath = filedialog.askopenfilename(
-                title=f"Send file to {actor_name}",
-            )
-            
-            if filepath:
-                self.send_file_to_actor(filepath, actor_name)
+            self.send_file_to_actor(filepath, actor_name)
         
         tk.Button(dialog, text="Send", command=do_send, height=2, width=10, font=('Arial', 11, 'bold')).pack(pady=10)
     
+    def _show_mapping_dialog(self, char_groups: dict, ungrouped: list):
+        """Show character-to-actor mapping dialog for multi-file send."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Map Characters to Actors")
+        dialog.geometry("500x450")
+        dialog.minsize(450, 350)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        tk.Label(dialog, text="Map files to actors:", font=('Arial', 12, 'bold')).pack(pady=10)
+        
+        # Scrollable mapping area
+        canvas = tk.Canvas(dialog, highlightthickness=0)
+        scrollbar = tk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+        scroll_frame = tk.Frame(canvas)
+        
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10)
+        
+        mappings = {}  # Display key -> (character_or_filename, actor_var, is_char_group)
+        
+        # Character groups
+        for char_name, file_list in char_groups.items():
+            row = tk.Frame(scroll_frame)
+            row.pack(fill=tk.X, pady=2, padx=5)
+            
+            file_count = len(file_list)
+            label_text = f"{char_name}  ({file_count} file{'s' if file_count > 1 else ''})"
+            tk.Label(row, text=label_text, font=('Arial', 11), anchor='w', width=25).pack(side=tk.LEFT)
+            
+            # Auto-fill from session memory
+            default_actor = self.char_actor_map.get(char_name, "")
+            actor_var = tk.StringVar(value=default_actor)
+            
+            # Dropdown with actor names + "Skip" option
+            options = [""] + self.approved_actors + ["<Skip>"]
+            combo = tk.OptionMenu(row, actor_var, *options)
+            combo.config(font=('Arial', 10), width=15)
+            combo.pack(side=tk.LEFT, padx=5)
+            
+            mappings[char_name] = (char_name, actor_var, True, file_list)
+        
+        # Ungrouped files
+        for fp in ungrouped:
+            filename = os.path.basename(fp)
+            row = tk.Frame(scroll_frame)
+            row.pack(fill=tk.X, pady=2, padx=5)
+            
+            # Truncate long filenames
+            display_name = filename if len(filename) <= 30 else filename[:27] + "..."
+            tk.Label(row, text=display_name, font=('Arial', 10), anchor='w', width=25).pack(side=tk.LEFT)
+            
+            actor_var = tk.StringVar(value="")
+            options = [""] + self.approved_actors + ["<Skip>"]
+            combo = tk.OptionMenu(row, actor_var, *options)
+            combo.config(font=('Arial', 10), width=15)
+            combo.pack(side=tk.LEFT, padx=5)
+            
+            mappings[filename] = (filename, actor_var, False, [fp])
+        
+        # "Remember for this session" checkbox
+        remember_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(scroll_frame, text="Remember character→actor mappings for this session",
+                       variable=remember_var, font=('Arial', 10)).pack(pady=10, padx=5, anchor='w')
+        
+        # Buttons
+        btn_frame = tk.Frame(dialog)
+        btn_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        def do_send_all():
+            # Build per-actor file lists
+            actor_files = {}  # actor_name -> [filepath, ...]
+            skipped_chars = []
+            
+            for key, (name, actor_var, is_char, file_list) in mappings.items():
+                actor = actor_var.get()
+                if actor == "<Skip>" or actor == "":
+                    if is_char:
+                        skipped_chars.append(name)
+                    continue
+                if actor not in actor_files:
+                    actor_files[actor] = []
+                actor_files[actor].extend(file_list)
+                
+                # Save session memory
+                if is_char and remember_var.get():
+                    self.char_actor_map[name] = actor
+            
+            if not actor_files:
+                messagebox.showinfo("Nothing to Send", "All files were skipped. Select actors to send files to.")
+                return
+            
+            dialog.destroy()
+            
+            # Send batches to each actor
+            for actor_name, files in actor_files.items():
+                self.send_batch_to_actor(files, actor_name)
+            
+            if skipped_chars:
+                self.display(f"Skipped: {', '.join(skipped_chars)} (no actor assigned)", "warning")
+        
+        tk.Button(btn_frame, text="Send All", command=do_send_all,
+                  height=2, width=12, font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Cancel", command=dialog.destroy,
+                  height=2, width=12, font=('Arial', 11)).pack(side=tk.RIGHT, padx=5)
+    
+    # --- Batch file transfer ---
+    
+    def send_batch_to_actor(self, filepaths: list, actor_name: str):
+        """Send multiple files to an actor using batch protocol."""
+        if not self.ws or not self.connected:
+            messagebox.showerror("Error", "Not connected")
+            return
+        
+        # Calculate total size
+        total_bytes = 0
+        for fp in filepaths:
+            total_bytes += os.path.getsize(fp)
+        
+        file_count = len(filepaths)
+        self.batch_counter += 1
+        batch_id = self.batch_counter
+        
+        # Send BATCH_START
+        start_msg = format_message("BATCH_START",
+            target=actor_name,
+            file_count=file_count,
+            total_bytes=total_bytes
+        )
+        self.ws.send(start_msg)
+        
+        # Track batch
+        self.active_batches[batch_id] = {
+            "target": actor_name,
+            "file_count": file_count,
+            "files_done": 0,
+            "files_ok": 0,
+            "files_err": 0,
+            "cancelled": False,
+            "queue": filepaths,  # Remaining files to send
+            "current": None      # File waiting for FILEACK
+        }
+        
+        self.display(f"📦 Sending batch of {file_count} file{'s' if file_count > 1 else ''} to {actor_name} ({total_bytes/1024:.1f} KB)")
+        
+        # Send first FILEREQ only — subsequent ones sent after FILEACK
+        self._send_next_in_batch(batch_id)
+    
+    def _send_next_in_batch(self, batch_id: int):
+        """Send FILEREQ for the next file in a batch after previous FILEACK received."""
+        if batch_id not in self.active_batches:
+            return
+        
+        batch = self.active_batches[batch_id]
+        
+        if batch["cancelled"]:
+            return
+        
+        if batch["current"] is not None:
+            # A file is already pending — skip (shouldn't happen, but guard)
+            return
+        
+        if not batch["queue"]:
+            # No more files to queue — batch completion handled by FILEOK/FILEERR
+            return
+        
+        filepath = batch["queue"].pop(0)
+        filename = os.path.basename(filepath)
+        filesize = os.path.getsize(filepath)
+        
+        # Calculate MD5 checksum
+        md5 = hashlib.md5()
+        with open(filepath, 'rb') as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                md5.update(chunk)
+        checksum = md5.hexdigest()
+        
+        # Send FILEREQ
+        req_msg = format_message("FILEREQ",
+            sender="Director",
+            target=batch["target"],
+            filename=filename,
+            size=filesize,
+            checksum=checksum
+        )
+        self.ws.send(req_msg)
+        
+        # Store in pending with batch_id
+        self.pending_files[filename] = {
+            "path": filepath,
+            "target": batch["target"],
+            "checksum": checksum,
+            "accepted": False,
+            "batch_id": batch_id
+        }
+        batch["current"] = filename
+    
+    def _check_batch_complete(self, batch_id: int) -> bool:
+        """Check if a batch is complete and send BATCH_END if so.
+        
+        Returns True if batch is complete (and was cleaned up), False otherwise.
+        """
+        if batch_id not in self.active_batches:
+            return True  # Already cleaned up
+        
+        batch = self.active_batches[batch_id]
+        if batch["files_done"] >= batch["file_count"] or batch["cancelled"]:
+            # Batch complete
+            target = batch["target"]
+            ok = batch["files_ok"]
+            err = batch["files_err"]
+            
+            end_msg = format_message("BATCH_END",
+                target=target,
+                success_count=ok,
+                fail_count=err
+            )
+            if self.ws and self.connected:
+                self.ws.send(end_msg)
+            
+            status = "✓" if err == 0 else "⚠"
+            self.display(f"{status} Batch to {target} complete: {ok} ok, {err} failed", 
+                        "success" if err == 0 else "warning")
+            
+            del self.active_batches[batch_id]
+            return True
+        return False
+    
+    def cancel_batch(self, batch_id: int):
+        """Cancel an in-progress batch transfer."""
+        if batch_id not in self.active_batches:
+            return
+        
+        batch = self.active_batches[batch_id]
+        batch["cancelled"] = True
+        target = batch["target"]
+        
+        cancel_msg = format_message("BATCH_CANCEL",
+            target=target,
+            reason="Cancelled by director"
+        )
+        if self.ws and self.connected:
+            self.ws.send(cancel_msg)
+        
+        self.display(f"⚠ Batch to {target} cancelled", "warning")
+        
+        # Cleanup remaining pending files for this batch
+        to_remove = [fn for fn, info in self.pending_files.items() 
+                     if info.get("batch_id") == batch_id]
+        for fn in to_remove:
+            del self.pending_files[fn]
+        
+        del self.active_batches[batch_id]
+    
+    # --- Backwards-compatible single file send ---
+    
     def send_file_to_actor(self, filepath: str, actor_name: str):
-        """Send file to specific actor."""
+        """Send a single file to specific actor (non-batch, backward compatible)."""
         if not self.ws or not self.connected:
             messagebox.showerror("Error", "Not connected")
             return
@@ -849,14 +1195,13 @@ class DirectorClient:
         )
         self.ws.send(req_msg)
         
-        # Store pending file transfer
-        if not hasattr(self, 'pending_files'):
-            self.pending_files = {}
+        # Store pending file transfer (no batch_id)
         self.pending_files[filename] = {
             "path": filepath,
             "target": actor_name,
             "checksum": checksum,
-            "accepted": False
+            "accepted": False,
+            "batch_id": None
         }
     
     def send_file_chunks(self, filename: str):
@@ -907,7 +1252,7 @@ class DirectorClient:
         self.ws.send(end_msg)
         
         self.display(f"✓ Sent {filename}", "success")
-        del self.pending_files[filename]
+        # Note: pending_files cleanup happens in FILEOK/FILEERR/FILEDENY handlers
     
     def quit(self):
         """Quit the application."""
