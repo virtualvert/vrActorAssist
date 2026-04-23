@@ -52,7 +52,7 @@ class DirectorClient:
         self.countdown_id = None
         
         # Batch file transfer state
-        self.pending_files = {}  # filename -> {path, target, checksum, accepted, batch_id}
+        self.pending_files = {}  # key -> {path, target, checksum, accepted, batch_id, filename}
         self.active_batches = {}  # batch_id -> {target, file_count, files_done, files_ok, files_err, cancelled}
         self.batch_counter = 0   # Incrementing batch ID
         self.char_actor_map = {}  # character_name -> actor_name (session memory)
@@ -78,6 +78,10 @@ class DirectorClient:
         file_menu.add_command(label="Edit Config", command=self.edit_config)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.quit)
+        
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self._show_about)
         
         # Main frame
         main_frame = tk.Frame(self.root)
@@ -142,6 +146,10 @@ class DirectorClient:
         
         # Send file button (multi-file with character routing)
         tk.Button(left_frame, text="📁 Send Files...", command=self.send_file_dialog, height=2, width=15, font=('Arial', 11, 'bold')).pack(pady=5)
+        
+        # Cancel batch button (enabled only during active batch)
+        self.cancel_batch_btn = tk.Button(left_frame, text="✖ Cancel Batch", command=self._cancel_active_batch, height=2, width=15, font=('Arial', 11, 'bold'), state=tk.DISABLED)
+        self.cancel_batch_btn.pack(pady=(0, 5))
         
         # Right panel - Chat and controls
         right_frame = tk.Frame(main_frame)
@@ -506,9 +514,10 @@ class DirectorClient:
             else:
                 self.root.after(0, lambda: self.display(f"Actor declined {filename}", "warning"))
                 # If part of a batch, mark as failed and advance queue
-                if filename in self.pending_files:
-                    batch_id = self.pending_files[filename].get("batch_id")
-                    self.pending_files.pop(filename, None)
+                key, info = self._find_pending_by_filename(filename)
+                if info:
+                    batch_id = info.get("batch_id")
+                    del self.pending_files[key]
                     if batch_id and batch_id in self.active_batches:
                         self.active_batches[batch_id]["files_err"] += 1
                         self.active_batches[batch_id]["files_done"] += 1
@@ -521,9 +530,10 @@ class DirectorClient:
             reason = msg_data.get("reason", "Unknown")
             self.root.after(0, lambda: self.display(f"File transfer denied: {reason}", "warning"))
             # If part of a batch, mark as failed and advance queue
-            if filename in self.pending_files:
-                batch_id = self.pending_files[filename].get("batch_id")
-                self.pending_files.pop(filename, None)
+            key, info = self._find_pending_by_filename(filename)
+            if info:
+                batch_id = info.get("batch_id")
+                del self.pending_files[key]
                 if batch_id and batch_id in self.active_batches:
                     self.active_batches[batch_id]["files_err"] += 1
                     self.active_batches[batch_id]["files_done"] += 1
@@ -536,9 +546,10 @@ class DirectorClient:
             saved_path = msg_data.get("saved_path", "")
             self.root.after(0, lambda: self.display(f"✓ File saved: {saved_path}", "success"))
             # Track batch progress and advance queue
-            if filename in self.pending_files:
-                batch_id = self.pending_files[filename].get("batch_id")
-                self.pending_files.pop(filename, None)
+            key, info = self._find_pending_by_filename(filename)
+            if info:
+                batch_id = info.get("batch_id")
+                del self.pending_files[key]
                 if batch_id and batch_id in self.active_batches:
                     self.active_batches[batch_id]["files_ok"] += 1
                     self.active_batches[batch_id]["files_done"] += 1
@@ -551,9 +562,10 @@ class DirectorClient:
             error = msg_data.get("error", "Unknown error")
             self.root.after(0, lambda: self.display(f"✗ File error: {error}", "error"))
             # Track batch progress and advance queue
-            if filename in self.pending_files:
-                batch_id = self.pending_files[filename].get("batch_id")
-                self.pending_files.pop(filename, None)
+            key, info = self._find_pending_by_filename(filename)
+            if info:
+                batch_id = info.get("batch_id")
+                del self.pending_files[key]
                 if batch_id and batch_id in self.active_batches:
                     self.active_batches[batch_id]["files_err"] += 1
                     self.active_batches[batch_id]["files_done"] += 1
@@ -857,6 +869,28 @@ class DirectorClient:
             return character if character else None
         return None
     
+    # --- Pending file helpers ---
+    
+    def _pending_key(self, filename: str, batch_id) -> str:
+        """Get the pending_files dict key for a file.
+        Batch files use 'batch_id:filename' to avoid duplicate-name collisions.
+        Single files (batch_id=None) just use the filename.
+        """
+        if batch_id is not None:
+            return f"{batch_id}:{filename}"
+        return filename
+    
+    def _find_pending_by_filename(self, filename: str):
+        """Find a pending file entry by filename (from protocol messages).
+        Returns (key, info) or (None, None).
+        Since only one file with a given name is in-flight at a time,
+        this scan is always short.
+        """
+        for key, info in self.pending_files.items():
+            if info.get("filename") == filename:
+                return key, info
+        return None, None
+    
     # --- Multi-file send dialog ---
     
     def send_file_dialog(self):
@@ -1082,6 +1116,7 @@ class DirectorClient:
         }
         
         self.display(f"📦 Sending batch of {file_count} file{'s' if file_count > 1 else ''} to {actor_name} ({total_bytes/1024:.1f} KB)")
+        self._update_cancel_btn()
         
         # Send first FILEREQ only — subsequent ones sent after FILEACK
         self._send_next_in_batch(batch_id)
@@ -1125,13 +1160,15 @@ class DirectorClient:
         )
         self.ws.send(req_msg)
         
-        # Store in pending with batch_id
-        self.pending_files[filename] = {
+        # Store in pending with composite key to avoid duplicate filename collisions
+        key = self._pending_key(filename, batch_id)
+        self.pending_files[key] = {
             "path": filepath,
             "target": batch["target"],
             "checksum": checksum,
             "accepted": False,
-            "batch_id": batch_id
+            "batch_id": batch_id,
+            "filename": filename
         }
         batch["current"] = filename
     
@@ -1163,6 +1200,7 @@ class DirectorClient:
                         "success" if err == 0 else "warning")
             
             del self.active_batches[batch_id]
+            self._update_cancel_btn()
             return True
         return False
     
@@ -1191,6 +1229,20 @@ class DirectorClient:
             del self.pending_files[fn]
         
         del self.active_batches[batch_id]
+        self._update_cancel_btn()
+    
+    def _cancel_active_batch(self):
+        """Cancel the most recent active batch (button callback)."""
+        if not self.active_batches:
+            return
+        # Cancel the first (oldest) active batch
+        batch_id = next(iter(self.active_batches))
+        self.cancel_batch(batch_id)
+    
+    def _update_cancel_btn(self):
+        """Update cancel batch button state based on active batches."""
+        if hasattr(self, 'cancel_batch_btn'):
+            self.cancel_batch_btn.config(state=tk.NORMAL if self.active_batches else tk.DISABLED)
     
     # --- Backwards-compatible single file send ---
     
@@ -1222,21 +1274,21 @@ class DirectorClient:
         )
         self.ws.send(req_msg)
         
-        # Store pending file transfer (no batch_id)
+        # Store pending file transfer (no batch_id, uses filename as key)
         self.pending_files[filename] = {
             "path": filepath,
             "target": actor_name,
             "checksum": checksum,
             "accepted": False,
-            "batch_id": None
+            "batch_id": None,
+            "filename": filename
         }
     
     def send_file_chunks(self, filename: str):
-        """Send file in chunks after accepted."""
-        if filename not in self.pending_files:
+        """Send file in chunks after accepted. Looks up file by basename."""
+        key, pending = self._find_pending_by_filename(filename)
+        if not pending:
             return
-        
-        pending = self.pending_files[filename]
         filepath = pending["path"]
         filesize = os.path.getsize(filepath)
         checksum = pending["checksum"]
@@ -1280,6 +1332,19 @@ class DirectorClient:
         
         self.display(f"✓ Sent {filename}", "success")
         # Note: pending_files cleanup happens in FILEOK/FILEERR/FILEDENY handlers
+    
+    def _show_about(self):
+        """Show About dialog."""
+        messagebox.showinfo(
+            "About vrActorAssist",
+            f"Danny Grey Productions\n\n"
+            f"vrActorAssist Director Client\n"
+            f"Version {APP_VERSION}\n\n"
+            f"VRChat filmmaking assistant\n"
+            f"for directors and actors.\n\n"
+            f"https://github.com/virtualvert/vrActorAssist",
+            parent=self.root
+        )
     
     def _show_update_dialog(self, latest_version, download_url, sha256, release_notes):
         """Show update available dialog."""

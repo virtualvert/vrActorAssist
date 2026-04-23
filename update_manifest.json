@@ -1,7 +1,6 @@
 {
   "latest_version": "0.3.0",
-  "minimum_version": "0.2.2",
-  "release_notes": "Multi-file batch transfer, character routing, protocol versioning",
+  "release_notes": "Multi-file batch transfer, character routing, protocol versioning, auto-updater",
   "assets": {
     "actor-windows-x64": {
       "url": "",

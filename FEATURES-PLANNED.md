@@ -12,7 +12,7 @@
 | **v0.2.0** | Released | Selective triggering, file transfer, status indicators, VR-friendly buttons, Play in 3s |
 | **v0.2.1** | Released | Configurable Soundpad path, duplicate actor fix |
 | **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
-|| **v0.3.0** | In Progress | Multi-file transfer, character routing, batch protocol, overwrite dialog, protocol versioning, auto-updater |
+|| **v0.3.0** | Released | Multi-file transfer, character routing, batch protocol, overwrite dialog, cancel batch, protocol versioning, auto-updater, About dialog |
 || **v0.4.0** | Planned | Director client Tauri+Svelte migration, OSC cue editor with audio player |
 
 ## v0.3.0 Features (Planned)
@@ -41,7 +41,7 @@
 
 **Goal:** Director can send multiple files to actors with optional character-based routing.
 
-**Status:** Implemented (v0.3.0-dev) — code in `director_client_ws.py`, `actor_client_ws.py`, `server_ws.py`, `shared.py`
+**Status:** Implemented (v0.3.0) — code in `director_client_ws.py`, `actor_client_ws.py`, `server_ws.py`, `shared.py`
 
 ### Implementation
 
@@ -229,7 +229,7 @@ When a file with the same name already exists:
 
 **Goal:** Clients know their protocol version and receive warnings when outdated.
 
-**Status:** Implemented (v0.3.0-dev) — code in `shared.py`, `server_ws.py`, both clients
+**Status:** Implemented (v0.3.0) — code in `shared.py`, `server_ws.py`, both clients
 
 ### Protocol Addition
 
@@ -316,7 +316,7 @@ VERSION|status|server_version|message
 
 **Goal:** Official versioning system and automatic client updates.
 
-**Status:** Implemented (v0.3.0-dev) — auto-updater, version display, protocol versioning
+**Status:** Implemented (v0.3.0) — auto-updater, version display, protocol versioning
 
 ### Implementation
 
@@ -347,7 +347,6 @@ VERSION|status|server_version|message
 ```json
 {
   "latest_version": "0.3.1",
-  "minimum_version": "0.2.2",
   "release_notes": "Batch transfer + versioning fixes",
   "assets": {
     "actor-windows-x64": {"url": "https://...", "sha256": "abc123"},
@@ -357,6 +356,8 @@ VERSION|status|server_version|message
   }
 }
 ```
+
+**Note:** `minimum_version` field is not implemented yet. Can be added later to force-update or reject clients below a threshold version.
 
 **Key design decisions:**
 - Manifest lives next to server — operator controls download URLs at any time

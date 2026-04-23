@@ -6,25 +6,19 @@
 
 ## 🚀 Features (Planned)
 
-### Priority 1: v0.3.0 — Last tkinter Director Release
+### Priority 1: v0.3.0 — Released ✅
 
-- [ ] **Multiple director support** — Allow multiple directors with different names and permissions:
-  - Main director (full control)
-  - Assistant director (limited commands)
-  - Each director has their own identity/name
+- [ ] **Multiple director support** — *(deferred to v0.3.1, see Priority 1.5)*
   
-- [ ] **Send multiple files** — Director can send multiple files to actor at once *(partially implemented: batch protocol, multi-select, character routing, overwrite dialog — needs Cancel Batch UI button)*:
+- [x] **Send multiple files** — Director can send multiple files to actor at once ✅:
   - Multi-select in file picker ✅
   - Queue transfers with progress ✅ (sequential, BATCH_START/BATCH_END protocol)
   - Actor receives to configured directory ✅
   - Character-based routing for audioscript files (` - Character.mp3` pattern) ✅
   - Overwrite warning when file exists (auto-accept toggle determines behavior) ✅
-  - Cancel batch button ❌ (method exists, no UI trigger)
+  - Cancel batch button ✅
 
-- [ ] **Ping compensation / delay** — Add millisecond delay per actor:
-  - Director can set delay per actor (e.g., Actor A: +50ms, Actor B: +100ms)
-  - Manual adjustment, tested quickly with Go command
-  - Stored in actor config, applied server-side
+- [ ] **Ping compensation / delay** — *(deferred to v0.3.1, see Priority 1.5)*
   - Helps compensate for network latency differences
 
 - [x] **Protocol versioning** — Version handshake during client registration ✅
@@ -34,9 +28,10 @@
   - Major version mismatch rejects connection
   - Minor/patch mismatch allows connection with warning
 
-- [ ] **Version display & auto-updater** — Official versioning and automatic updates *(auto-updater implemented, display in About/TBD)*:
+- [x] **Version display & auto-updater** — Official versioning and automatic updates ✅:
   - 4-part version number: `vMAJOR.MINOR.PATCH.HOTFIX` (e.g., v0.3.0.1) — *using semver MAJOR.MINOR.PATCH instead*
   - Version shown in window title, startup log ✅
+  - About dialog with version info ✅
   - Auto-check for updates from server at connect ✅
   - Server-side manifest: `update_manifest.json` with download URLs ✅
   - Client downloads, verifies SHA256, self-replaces via updater script ✅
@@ -44,9 +39,20 @@
   - Platform-aware: `windows-x64`, `linux-x64` (AppImage) ✅
   - Director and Actor clients update independently ✅
 
-### Priority 2: Director Improvements
+### Priority 1.5: v0.3.1 — Last tkinter Polish
 
-- [ ] **Actor display names** — Director can rename actors locally:
+- [ ] **Multiple director support** *(deferred from v0.3.0)* — Allow multiple directors with different names and permissions:
+  - Main director (full control)
+  - Assistant director (limited commands)
+  - Each director has their own identity/name
+
+- [ ] **Ping compensation / delay** *(deferred from v0.3.0)* — Add millisecond delay per actor:
+  - Director can set delay per actor (e.g., Actor A: +50ms, Actor B: +100ms)
+  - Manual adjustment, tested quickly with Go command
+  - Stored in actor config, applied server-side
+  - Helps compensate for network latency differences
+
+- [ ] **Actor display names** — *(deferred to v0.4.0 — will be built in Tauri/Svelte instead of tkinter)*
   - Right-click actor → "Set Display Name"
   - Shows character name instead of actor name on director's client
   - Display name is temporary (cleared when director disconnects)
@@ -94,8 +100,8 @@
 - [ ] **Error handling** — Better error messages and recovery
 - [ ] **Logging levels** — Configurable log verbosity
 - [ ] **Config validation** — Validate URLs, names, etc. before connecting
-- [ ] **Cancel Batch UI button** — `cancel_batch()` method exists but needs a director UI trigger
-- [ ] **Duplicate filename collision** — `pending_files` dict keyed by basename only; two files with same name in a batch will collide. Fix: use unique key like `batch_id:filename`
+- [x] **Cancel Batch UI button** — Added "✖ Cancel Batch" button, enabled when batch is active
+- [x] **Duplicate filename collision** — Fixed: `pending_files` now uses composite key `batch_id:filename` for batch files, with `_find_pending_by_filename()` lookup helper
 - [ ] **Pipe character in filenames** — `|` in a filename breaks the pipe-delimited protocol. Unlikely in practice but should be documented or escaped
 - [ ] **Actor file dialog on WS thread** — `filedialog.askdirectory()` called from WebSocket thread can crash tkinter on some platforms. Move to `root.after()` pattern
 

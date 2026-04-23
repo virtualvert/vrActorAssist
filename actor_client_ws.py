@@ -89,6 +89,10 @@ class ActorClient:
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.quit)
         
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self._show_about)
+        
         # Status bar with connection button
         self.status_var = tk.StringVar(value="Disconnected")
         status_frame = tk.Frame(self.root)
@@ -849,6 +853,19 @@ class ActorClient:
         state = tk.NORMAL if enabled else tk.DISABLED
         self.entry.config(state=state)
         self.send_btn.config(state=state)
+    
+    def _show_about(self):
+        """Show About dialog."""
+        messagebox.showinfo(
+            "About vrActorAssist",
+            f"Danny Grey Productions\n\n"
+            f"vrActorAssist Actor Client\n"
+            f"Version {APP_VERSION}\n\n"
+            f"VRChat filmmaking assistant\n"
+            f"for directors and actors.\n\n"
+            f"https://github.com/virtualvert/vrActorAssist",
+            parent=self.root
+        )
     
     def _show_update_dialog(self, latest_version, download_url, sha256, release_notes):
         """Show update available dialog."""
