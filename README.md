@@ -14,7 +14,7 @@ Run it and enter:
 
 ### For Actors
 
-Download **vrActorClient.exe** (Windows) or **vrActorClient** (Linux) from [Releases](https://github.com/virtualvert/vrActorAssist/releases).
+Download **vrActorClient.exe** (Windows) from [Releases](https://github.com/virtualvert/vrActorAssist/releases).
 
 Run it and enter:
 - Server URL and your actor name
@@ -26,12 +26,13 @@ Run it and enter:
 
 See [GitHub Releases](https://github.com/virtualvert/vrActorAssist/releases) for downloadable builds.
 
-| File | Description |
-|------|-------------|
-| `vrDirectorClient.exe` | Standalone director client for Windows |
-| `vrActorClient.exe` | Standalone actor client for Windows |
-| `vrDirectorClient` | Standalone director client for Linux |
-| `vrActorClient` | Standalone actor client for Linux |
+| File | Platform | Description |
+|------|----------|-------------|
+| `vrDirectorClient.exe` | Windows | Standalone director client |
+| `vrActorClient.exe` | Windows | Standalone actor client |
+| `vrDirectorClient` | Linux | Standalone director client |
+
+> **Note:** No Linux actor binary is distributed. `soundpad.py` is Windows-only; Linux actors can run from source if needed. See [Platform Strategy](#platform-strategy) below.
 
 | Version | Notes |
 |---------|-------|
@@ -98,8 +99,8 @@ actor.yourdomain.com {
 # Server
 pip install fastapi uvicorn websockets
 
-# Clients
-pip install websocket-client
+# Clients (from source)
+pip install websocket-client PySide6
 ```
 
 ### Start the Server
@@ -131,7 +132,7 @@ python build_exe.py all      # Build both
 
 Output:
 - **Windows:** `dist/vrActorClient.exe` / `dist/vrDirectorClient.exe`
-- **Linux:** `dist/vrActorClient` / `dist/vrDirectorClient`
+- **Linux:** `dist/vrDirectorClient` only (actor build skipped — see [Platform Strategy](#platform-strategy))
 
 ## Project Structure
 
@@ -167,19 +168,30 @@ vrActorAssist/
 - websocket-client, tkinter
 - **OR** use standalone executable (no Python needed)
 
-### Actor (Windows or Linux)
+### Actor (Windows)
 - **Windows 10/11** for Soundpad integration
-- **Linux** for director client or actor without Soundpad
-- Soundpad installed (Windows only)
+- Soundpad installed
 - Python 3.8+ (if running from source)
-- **OR** use standalone executable (no Python needed)
+- **OR** use standalone `vrActorClient.exe` (no Python needed)
+
+> **Note:** Actor builds are Windows-only. Soundpad has no Linux equivalent, so Linux actor binaries are not distributed. The source code remains cross-platform for future Pipewire support. See [ROADMAP.md](ROADMAP.md).
 
 ## Future
 
 See [ROADMAP.md](ROADMAP.md) for planned features:
 - Multiple director support
-- ~~Multi-file transfer with character-based routing~~ ✅ (v0.3.0)
 - Ping compensation/delay
-- Protocol versioning
+- OSC cue editor with audio player
 - OpenVR/OpenXR overlay
 - Web dashboard for server admin
+
+---
+
+## Platform Strategy
+
+| Client | Windows | Linux | Notes |
+|--------|---------|-------|-------|
+| **Director** | ✅ Full feature | ✅ Full feature | Cross-platform, no OS-specific dependencies |
+| **Actor** | ✅ Full feature | ⛔ Build not distributed | Soundpad.exe Windows-only; source still runs on Linux for chat/file receive |
+
+We are migrating both clients from **tkinter** to **PySide6** in v0.4.0 to unlock the OSC cue editor (audio timeline, waveform markers) and eliminate tkinter's threading frailties. See [ROADMAP.md](ROADMAP.md) for details.

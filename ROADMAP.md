@@ -52,7 +52,7 @@
   - Stored in actor config, applied server-side
   - Helps compensate for network latency differences
 
-- [ ] **Actor display names** — *(deferred to v0.4.0 — will be built in Tauri/Svelte instead of tkinter)*
+- [ ] **Actor display names** — *(deferred to v0.4.0 — will be built in PySide6 instead of tkinter)*
   - Right-click actor → "Set Display Name"
   - Shows character name instead of actor name on director's client
   - Display name is temporary (cleared when director disconnects)
@@ -60,12 +60,20 @@
   - No server state needed — stored only in director client memory
   - Useful for mapping actors to character names during production
 
-### Priority 2.5: v0.4.0 — Tauri Director Migration + OSC Cue Editor
+### Priority 2.5: v0.4.0 — PySide6 Migration + OSC Cue Editor
 
-- [ ] **Director client → Tauri+Svelte** — Migrated from tkinter to Tauri 2.0 + Svelte 5:
+- [ ] **Director client → PySide6** — Migrated from tkinter to PySide6 (Qt):
   - All existing director features ported (actor panel, checkboxes, chat, file transfer, etc.)
+  - Thread-safe signals replace `root.after()` patterns
+  - QScrollArea replaces canvas scroll hack for actor list
+  - QMediaPlayer + QPainter enables the OSC audio cue timeline
   - Same protocol — talks to the same Python server
-  - Single ~8MB binary instead of PyInstaller bundle
+  - Single PyInstaller binary (~80-150MB), same delivery method
+
+- [ ] **Actor client → PySide6** — Same migration for consistency:
+  - Simpler UI than director — main window, chat, file receive
+  - Soundpad integration unchanged (Windows-only)
+  - Auto-updater, overwrite dialog, file receive all port cleanly
 
 - [ ] **OSC cue list** — Timed VRChat parameter triggers synced to Play command:
   - Director creates list of "at X ms after Play, set parameter to value" cues
@@ -82,11 +90,20 @@
   - Graceful fallback if VRChat OSC is disabled (log + skip)
   - `*stop` cancels all pending cue timers
 
-### Priority 3: Actor Improvements
+### Priority 3: Linux Actor Support (Future)
+
+- [ ] **Pipewire soundboard for Linux actors** — When actors want Linux support:
+  - Build a small Pipewire audio player that replaces `soundpad.py` on Linux
+  - `pw-play` or `python-pulsectl` for audio cue playback
+  - Same command interface (`play_selected()`, `stop()`, etc.) so actor_client_ws.py doesn't change
+  - Re-enable Linux actor binaries once the Pipewire module is ready
+  - No GUI changes — the swap happens in the sound backend only
+
+### Priority 4: Actor Improvements
 
 - [ ] **Auto-start with Soundpad** — Option to launch Soundpad automatically
 
-### Priority 3: Server Improvements
+### Priority 4: Server Improvements
 
 - [ ] **Session recording** — Log all commands and messages for review:
   - Export as JSON or CSV

@@ -70,6 +70,15 @@ def run_pyinstaller(script_name, exe_name, extra_data=None):
 
 def build_actor():
     """Build actor client executable."""
+    # Actor builds are Windows-only: Soundpad is Windows-only
+    if not IS_WINDOWS:
+        print("="*50)
+        print("Skipping actor client build on Linux.")
+        print("Soundpad has no Linux equivalent; actor binaries are Windows-only.")
+        print("Source still runs on Linux if needed (chat, file receive).")
+        print("="*50)
+        return
+    
     print("="*50)
     print("Building actor client...")
     print("="*50)
