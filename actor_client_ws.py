@@ -923,9 +923,9 @@ class ActorClient:
                 if not is_windows:
                     os.chmod(temp_path, 0o755)
                 
-                self.root.after(0, lambda: self.display("✓ Download complete. Restart to apply update.", "success"))
+                self.root.after(0, lambda: self.display("✓ Download complete. Verifying...", "success"))
                 
-                # Schedule swap on main thread
+                # Schedule update prompt on main thread
                 self.root.after(0, lambda: self._apply_update(exe_path, temp_path, is_windows))
                 
             except Exception as e:
@@ -934,43 +934,61 @@ class ActorClient:
         threading.Thread(target=download, daemon=True).start()
     
     def _apply_update(self, current_path, new_path, is_windows):
-        """Swap the downloaded update into place and tell user to restart.
+        """Prompt user to restart, then swap the update into place after exit.
         
-        Simple approach: rename the running exe to .old (possible on Windows even while running),
-        then rename the .tmp to the real name. The old .old file gets cleaned up on next launch.
-        User manually restarts — no race conditions with PyInstaller temp dirs.
+        Flow:
+        1. Ask user "Update ready. Restart to apply?"
+        2. If yes: write a swap script, launch it, then quit the app
+        3. Swap script waits for this process to die, then renames files
+        4. User reopens the app manually (no auto-restart)
         """
-        try:
-            old_path = current_path + ".old"
-            
-            # Remove stale .old from a previous update if it exists
-            if os.path.exists(old_path):
-                try:
-                    os.remove(old_path)
-                except:
-                    pass  # Might still be locked, will clean up later
-            
-            # Rename running exe → .old (works on Windows even while running)
-            os.rename(current_path, old_path)
-            
-            # Rename downloaded .tmp → real name
-            os.rename(new_path, current_path)
-            
-            # Make executable on Linux
-            if not is_windows:
-                os.chmod(current_path, 0o755)
-            
-            self.display("✓ Update applied. Please restart vrActorAssist.", "success")
-            self.display("  Close this window and open the app again.", "info")
-            
-        except Exception as e:
-            # Try to roll back the rename if something went wrong
-            if os.path.exists(old_path) and not os.path.exists(current_path):
-                try:
-                    os.rename(old_path, current_path)
-                except:
-                    pass
-            self.display(f"✗ Update failed: {e}. Try downloading manually.", "error")
+        result = messagebox.askyesno(
+            "Update Ready",
+            "A new version has been downloaded and verified.\n\n"
+            "The app needs to close to apply the update.\n\n"
+            "Close and apply update now?",
+            parent=self.root
+        )
+        if not result:
+            self.display("Update downloaded but not applied. Restart to apply.", "info")
+            return
+        
+        # Write the swap script
+        exe_dir = os.path.dirname(current_path)
+        current_pid = os.getpid()
+        
+        if is_windows:
+            updater_path = os.path.join(exe_dir, "_updater.bat")
+            with open(updater_path, "w") as f:
+                f.write("@echo off\n")
+                f.write("echo Applying update...\n")
+                f.write(f":wait\n")
+                f.write(f'tasklist /FI "PID eq {current_pid}" | find "{current_pid}" >nul 2>&1\n')
+                f.write("if %errorlevel%==0 timeout /t 1 >nul & goto wait\n")
+                f.write("timeout /t 2 /nointerrupt >nul\n")
+                f.write(f'move /y "{new_path}" "{current_path}"\n')
+                f.write("echo Update applied. You can now reopen vrActorAssist.\n")
+                f.write("pause\n")
+                f.write('del "%~f0"\n')
+        else:
+            updater_path = os.path.join(exe_dir, "_updater.sh")
+            with open(updater_path, "w") as f:
+                f.write("#!/bin/sh\n")
+                f.write("echo 'Applying update...'\n")
+                f.write(f"while kill -0 {current_pid} 2>/dev/null; do sleep 1; done\n")
+                f.write("sleep 1\n")
+                f.write(f"mv -f '{new_path}' '{current_path}'\n")
+                f.write(f"chmod +x '{current_path}'\n")
+                f.write("echo 'Update applied. You can now reopen vrActorAssist.'\n")
+            os.chmod(updater_path, 0o755)
+        
+        # Launch the swap script and quit
+        if is_windows:
+            subprocess.Popen([updater_path], shell=True)
+        else:
+            subprocess.Popen([updater_path])
+        
+        self.quit()
     
     def _cleanup_old_updates(self):
         """Clean up temp files, updater scripts, and .old files from previous updates."""
