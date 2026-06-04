@@ -39,6 +39,7 @@ class ActorClient:
         
         self.config_path = get_default_config_path("actor_config.json")
         self.config = load_config(self.config_path)
+        self._config_migrated = False
         
         # Migrate config to add new fields if missing
         if self.config:
@@ -64,7 +65,9 @@ class ActorClient:
                 changed = True
             if changed:
                 save_config(self.config_path, self.config)
-                self.display("Config updated with new fields", "info")
+                self._config_migrated = True
+            else:
+                self._config_migrated = False
             
             # Set Soundpad path from config if available
             if "soundpad_path" in self.config:
@@ -89,6 +92,8 @@ class ActorClient:
         self.osc_pending_timers = []  # Active threading.Timer objects for scheduled cues
         
         self.setup_ui()
+        if self._config_migrated:
+            self.display("Config updated with new fields", "info")
         self.display(f"vrActorAssist Actor Client v{APP_VERSION}", "info")
         self._cleanup_old_updates()
         
