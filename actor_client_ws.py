@@ -21,6 +21,10 @@ from pathlib import Path
 from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path, APP_VERSION, get_platform_id
 from soundpad import execute_command, set_soundpad_path
 
+# OSC configuration defaults
+OSC_DEFAULT_HOST = "127.0.0.1"
+OSC_DEFAULT_PORT = 9000
+
 # Defaults
 DEFAULT_SERVER = "ws://localhost:5555/ws"
 RECONNECT_DELAY = 5
@@ -45,6 +49,16 @@ class ActorClient:
             if "auto_accept_files" not in self.config:
                 self.config["auto_accept_files"] = False
                 changed = True
+            # OSC config migration
+            if "osc_enabled" not in self.config:
+                self.config["osc_enabled"] = True
+                changed = True
+            if "vrchat_osc_host" not in self.config:
+                self.config["vrchat_osc_host"] = OSC_DEFAULT_HOST
+                changed = True
+            if "vrchat_osc_port" not in self.config:
+                self.config["vrchat_osc_port"] = OSC_DEFAULT_PORT
+                changed = True
             if changed:
                 save_config(self.config_path, self.config)
                 self.display("Config updated with new fields", "info")
@@ -66,6 +80,10 @@ class ActorClient:
         
         # Batch transfer state
         self.active_batch = None  # {file_count, total_bytes, files_received, files_ok, files_err}
+        
+        # OSC state
+        self.osc_client = None  # python-osc UDP client
+        self.osc_pending_timers = []  # Active threading.Timer objects for scheduled cues
         
         self.setup_ui()
         self.display(f"vrActorAssist Actor Client v{APP_VERSION}", "info")
@@ -160,8 +178,8 @@ class ActorClient:
         """Prompt for initial configuration."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Actor Setup")
-        dialog.geometry("450x350")
-        dialog.minsize(450, 350)
+        dialog.geometry("450x420")
+        dialog.minsize(450, 420)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -218,12 +236,34 @@ class ActorClient:
         auto_accept_var = tk.BooleanVar(value=False)
         tk.Checkbutton(frame, text="Auto-accept incoming files", variable=auto_accept_var).pack(anchor='w')
         
+        # OSC settings
+        osc_frame = tk.LabelFrame(frame, text="VRChat OSC")
+        osc_frame.pack(fill=tk.X, pady=(10, 5))
+        
+        osc_enabled_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(osc_frame, text="Enable OSC triggers", variable=osc_enabled_var).pack(anchor='w', padx=5)
+        
+        host_frame = tk.Frame(osc_frame)
+        host_frame.pack(fill=tk.X, padx=5, pady=2)
+        tk.Label(host_frame, text="Host:").pack(side=tk.LEFT)
+        osc_host_entry = tk.Entry(host_frame, width=20)
+        osc_host_entry.insert(0, OSC_DEFAULT_HOST)
+        osc_host_entry.pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(host_frame, text="Port:").pack(side=tk.LEFT)
+        osc_port_entry = tk.Entry(host_frame, width=8)
+        osc_port_entry.insert(0, str(OSC_DEFAULT_PORT))
+        osc_port_entry.pack(side=tk.LEFT, padx=5)
+        
         def save_and_close():
             self.config = {
                 "server_url": server_entry.get().strip(),
                 "actor_name": name_entry.get().strip() or "Actor",
                 "receive_dir": dir_entry.get().strip(),
-                "auto_accept_files": auto_accept_var.get()
+                "auto_accept_files": auto_accept_var.get(),
+                "osc_enabled": osc_enabled_var.get(),
+                "vrchat_osc_host": osc_host_entry.get().strip() or OSC_DEFAULT_HOST,
+                "vrchat_osc_port": int(osc_port_entry.get().strip() or str(OSC_DEFAULT_PORT))
             }
             # Save Soundpad path if provided
             sp_path = sp_entry.get().strip()
@@ -306,11 +346,36 @@ class ActorClient:
         auto_accept_var = tk.BooleanVar(value=self.config.get("auto_accept_files", False))
         tk.Checkbutton(frame, text="Auto-accept incoming files", variable=auto_accept_var).pack(anchor='w')
         
+        # OSC settings
+        osc_frame = tk.LabelFrame(frame, text="VRChat OSC")
+        osc_frame.pack(fill=tk.X, pady=(10, 5))
+        
+        osc_enabled_var = tk.BooleanVar(value=self.config.get("osc_enabled", True))
+        tk.Checkbutton(osc_frame, text="Enable OSC triggers", variable=osc_enabled_var).pack(anchor='w', padx=5)
+        
+        host_frame = tk.Frame(osc_frame)
+        host_frame.pack(fill=tk.X, padx=5, pady=2)
+        tk.Label(host_frame, text="Host:").pack(side=tk.LEFT)
+        osc_host_entry = tk.Entry(host_frame, width=20)
+        osc_host_entry.insert(0, self.config.get("vrchat_osc_host", OSC_DEFAULT_HOST))
+        osc_host_entry.pack(side=tk.LEFT, padx=5)
+        
+        tk.Label(host_frame, text="Port:").pack(side=tk.LEFT)
+        osc_port_entry = tk.Entry(host_frame, width=8)
+        osc_port_entry.insert(0, str(self.config.get("vrchat_osc_port", OSC_DEFAULT_PORT)))
+        osc_port_entry.pack(side=tk.LEFT, padx=5)
+        
         def save_changes():
             self.config["server_url"] = server_entry.get().strip()
             self.config["actor_name"] = name_entry.get().strip() or "Actor"
             self.config["receive_dir"] = dir_entry.get().strip()
             self.config["auto_accept_files"] = auto_accept_var.get()
+            self.config["osc_enabled"] = osc_enabled_var.get()
+            self.config["vrchat_osc_host"] = osc_host_entry.get().strip() or OSC_DEFAULT_HOST
+            try:
+                self.config["vrchat_osc_port"] = int(osc_port_entry.get().strip())
+            except ValueError:
+                self.config["vrchat_osc_port"] = OSC_DEFAULT_PORT
             sp_path = sp_entry.get().strip()
             if sp_path:
                 self.config["soundpad_path"] = sp_path
@@ -475,6 +540,8 @@ class ActorClient:
             self.root.after(0, lambda: self.display("✓ Approved by director!", "success"))
             self.root.after(0, lambda: self.status_var.set(f"Connected (as {actor_name})"))
             self.root.after(0, lambda: self.enable_input(True))
+            # Initialize OSC client for receiving cues
+            self._init_osc_client()
         
         elif msg_type == "VERSION":
             status = msg_data.get("status", "")
@@ -537,6 +604,10 @@ class ActorClient:
             command = msg_data.get("command", "")
             args = msg_data.get("args", "")
             self.root.after(0, lambda: self.display(f">> Command: {command}"))
+            
+            # Cancel OSC timers on stop
+            if command in ("stop", "*stop"):
+                self._cancel_osc_timers()
             
             # Execute Soundpad command
             success, error_msg = execute_command(command, args)
@@ -706,6 +777,13 @@ class ActorClient:
             reason = msg_data.get("reason", "")
             self.root.after(0, lambda: self.display(f"⚠ Batch cancelled by director{': ' + reason if reason else ''}", "warning"))
             self.active_batch = None
+        
+        # OSC cue trigger — fire parameter immediately (no delay for MVP)
+        elif msg_type == "OSC_CUE":
+            parameter = msg_data.get("parameter", "")
+            value = msg_data.get("value", "")
+            # Fire on the main thread to avoid tkinter thread issues
+            self.root.after(0, lambda p=parameter, v=value: self._send_osc_parameter(p, v))
     
     def show_file_request(self, filename: str, size: int):
         """Show file request dialog."""
@@ -830,6 +908,58 @@ class ActorClient:
         tk.Button(btn_frame, text="Decline", command=do_decline,
                   height=2, width=10, font=('Arial', 10)).pack(side=tk.RIGHT, padx=5)
     
+    def _init_osc_client(self):
+        """Initialize the python-osc UDP client for VRChat OSC."""
+        if not self.config.get("osc_enabled", True):
+            self.osc_client = None
+            return
+        try:
+            from pythonosc import udp_client
+            host = self.config.get("vrchat_osc_host", OSC_DEFAULT_HOST)
+            port = self.config.get("vrchat_osc_port", OSC_DEFAULT_PORT)
+            self.osc_client = udp_client.SimpleUDPClient(host, port)
+            self.display(f"OSC client ready → {host}:{port}", "info")
+        except ImportError:
+            self.osc_client = None
+            self.display("python-osc not installed. OSC cues disabled.", "warning")
+        except Exception as e:
+            self.osc_client = None
+            self.display(f"OSC init failed: {e}", "warning")
+
+    def _ensure_osc_address(self, parameter: str) -> str:
+        """Ensure parameter has full /avatar/parameters/ path."""
+        param = parameter.strip()
+        if param.startswith("/"):
+            return param
+        return f"/avatar/parameters/{param}"
+
+    def _send_osc_parameter(self, parameter: str, value: str):
+        """Send an OSC parameter to VRChat immediately."""
+        if not self.osc_client:
+            self.display(f"[OSC] Skipped {parameter}={value} — OSC not initialized", "warning")
+            return False
+        try:
+            addr = self._ensure_osc_address(parameter)
+            if value.lower() in ("true", "false"):
+                self.osc_client.send_message(addr, value.lower() == "true")
+            else:
+                # Future: float/int parsing
+                self.osc_client.send_message(addr, value)
+            self.display(f"[OSC] {addr} ← {value}", "success")
+            return True
+        except Exception as e:
+            self.display(f"[OSC] Failed: {parameter}={value} — {e}", "error")
+            return False
+
+    def _cancel_osc_timers(self):
+        """Cancel all pending OSC cue timers."""
+        for timer in self.osc_pending_timers:
+            try:
+                timer.cancel()
+            except:
+                pass
+        self.osc_pending_timers.clear()
+
     def send_msg(self):
         """Send a chat message."""
         msg = self.entry.get().strip()

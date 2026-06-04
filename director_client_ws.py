@@ -47,6 +47,9 @@ class DirectorClient:
         self.actor_status = {}  # name -> {"latency_ms": int}
         self.actor_enabled = {}  # name -> bool (checkbox state)
         
+        # OSC toggle config per actor: {name: {"param": str, "value": bool}}
+        self.osc_config = {}  # persists across dialog opens
+        
         # Countdown state
         self.countdown_active = False
         self.countdown_id = None
@@ -199,6 +202,10 @@ class DirectorClient:
         self.play_3s_btn.pack(side=tk.LEFT, padx=5)
         
         tk.Button(cmd_frame, text="■ Stop", command=self.send_stop, **cmd_btn_style).pack(side=tk.LEFT, padx=5)
+        
+        # OSC toggle trigger
+        tk.Button(cmd_frame, text="🔘 OSC", command=self.osc_toggle_dialog,
+                  height=3, width=10, font=('Arial', 14, 'bold')).pack(side=tk.LEFT, padx=5)
         
         # Window close handler
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
@@ -807,6 +814,10 @@ class DirectorClient:
             self.display(f">> {command} (to all)")
         else:
             self.display(f">> {command} (to: {', '.join(enabled_actors)})")
+        
+        # Also fire OSC cues for go/stop commands
+        if command in ("*go", "*stop", "go", "stop"):
+            self._send_osc_cues_for_command(command)
     
     def send_go(self):
         self.send_command("*go")
@@ -868,6 +879,164 @@ class DirectorClient:
             character = filename.rsplit(' - ', 1)[-1].rsplit('.', 1)[0].strip()
             return character if character else None
         return None
+    
+    # --- OSC Toggle Trigger ---
+    
+    def osc_toggle_dialog(self):
+        """Open dialog to configure per-actor OSC bool parameters.
+        
+        Configuration is saved to self.osc_config. Go sends the stored value
+        for each configured actor; Stop sends the inverse (bool toggle off).
+        """
+        if not self.approved_actors:
+            messagebox.showwarning("No Actors", "No actors connected")
+            return
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("OSC Toggle Config")
+        dialog.geometry("550x420")
+        dialog.minsize(450, 300)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Local state for the dialog — seeded from self.osc_config
+        # {name: {"param": tk.StringVar, "enabled": tk.BooleanVar, "value": tk.BooleanVar, "label": tk.StringVar}}
+        local_state = {}
+        for name in self.approved_actors:
+            saved = self.osc_config.get(name, {})
+            init_val = saved.get("value", True)
+            local_state[name] = {
+                "param": tk.StringVar(value=saved.get("param", "RecIcon")),
+                "enabled": tk.BooleanVar(value=name in self.osc_config),
+                "value": tk.BooleanVar(value=init_val),
+                "label": tk.StringVar(value="True" if init_val else "False"),
+            }
+        
+        # Header
+        header = tk.Frame(dialog)
+        header.pack(fill=tk.X, padx=10, pady=(10, 5))
+        tk.Label(header, text="Configure OSC bool triggers — fires on Go, reverses on Stop.",
+                 font=('Arial', 10)).pack(anchor='w')
+        
+        # Scrollable actor rows
+        canvas = tk.Canvas(dialog, highlightthickness=0)
+        scrollbar = tk.Scrollbar(dialog, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas)
+        
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10)
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
+        
+        # Column headers
+        col_header = tk.Frame(inner)
+        col_header.pack(fill=tk.X, pady=(0, 5))
+        tk.Label(col_header, text="Actor", width=12, anchor='w', font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
+        tk.Label(col_header, text="Parameter", width=16, anchor='w', font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
+        tk.Label(col_header, text="Value", width=8, anchor='w', font=('Arial', 10, 'bold')).pack(side=tk.LEFT, padx=2)
+        
+        for name in self.approved_actors:
+            s = local_state[name]
+            
+            row = tk.Frame(inner)
+            row.pack(fill=tk.X, pady=2)
+            
+            # Checkbox (enables this actor for OSC on Go/Stop)
+            chk = tk.Checkbutton(row, text=name, variable=s["enabled"])
+            chk.pack(side=tk.LEFT, padx=2)
+            
+            # Parameter name entry
+            param_entry = tk.Entry(row, textvariable=s["param"], width=16)
+            param_entry.pack(side=tk.LEFT, padx=2)
+            
+            # Value toggle button
+            def make_toggle(s):
+                def toggle():
+                    s["value"].set(not s["value"].get())
+                    s["label"].set("True" if s["value"].get() else "False")
+                return toggle
+            
+            toggle_btn = tk.Button(row, textvariable=s["label"], command=make_toggle(s),
+                                    width=6, font=('Arial', 10, 'bold'))
+            toggle_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Bottom controls
+        bottom = tk.Frame(dialog)
+        bottom.pack(fill=tk.X, padx=10, pady=10)
+        
+        def save_config():
+            """Write dialog state into self.osc_config, then close."""
+            self.osc_config.clear()
+            for name in self.approved_actors:
+                s = local_state[name]
+                if s["enabled"].get():
+                    param = s["param"].get().strip()
+                    if param:
+                        self.osc_config[name] = {
+                            "param": param,
+                            "value": s["value"].get(),
+                        }
+            actor_count = len(self.osc_config)
+            self.display(f"OSC config saved: {actor_count} actor{'s' if actor_count != 1 else ''} configured", "success")
+            dialog.destroy()
+        
+        def reset_all():
+            """Clear all config and reset defaults."""
+            for name in self.approved_actors:
+                s = local_state[name]
+                s["enabled"].set(False)
+                s["param"].set("RecIcon")
+                s["value"].set(True)
+                s["label"].set("True")
+        
+        tk.Button(bottom, text="Save & Close", command=save_config,
+                  height=2, font=('Arial', 11, 'bold')).pack(side=tk.LEFT, padx=5)
+        tk.Button(bottom, text="Reset All", command=reset_all,
+                  height=2, font=('Arial', 10)).pack(side=tk.LEFT, padx=5)
+        tk.Button(bottom, text="Cancel", command=dialog.destroy,
+                  height=2, font=('Arial', 10)).pack(side=tk.RIGHT, padx=5)
+
+    def _send_osc_cues_for_command(self, command: str):
+        """Send OSC_CUE messages for all configured actors when Go/Stop fires.
+        
+        On *go: send the stored value (e.g. RecIcon=true)
+        On *stop: send the opposite (e.g. RecIcon=false) to reverse the trigger.
+        """
+        if not self.osc_config:
+            return
+        
+        is_stop = command in ("stop", "*stop")
+        
+        for actor_name, cfg in self.osc_config.items():
+            param = cfg.get("param", "")
+            value = cfg.get("value", True)
+            if not param:
+                continue
+            
+            if is_stop:
+                # Reverse: send the opposite bool
+                send_value = "false" if value else "true"
+            else:
+                send_value = "true" if value else "false"
+            
+            self._send_osc_cue(actor_name, param, send_value)
+        
+        verb = "Stop (reverse)" if is_stop else "Go"
+        self.display(f"OSC {verb}: {len(self.osc_config)} actor{'s' if len(self.osc_config) != 1 else ''} triggered", "info")
+
+    def _send_osc_cue(self, target: str, parameter: str, value: str):
+        """Send an OSC_CUE message to a specific actor via the server."""
+        if not self.ws or not self.approved:
+            return
+        msg = format_message("OSC_CUE", target=target, parameter=parameter, value=value)
+        if msg is None:
+            return
+        try:
+            self.ws.send(msg)
+        except Exception as e:
+            self.display(f"Failed to send OSC cue: {e}", "error")
     
     # --- Pending file helpers ---
     

@@ -41,6 +41,8 @@ MSG_TYPES = {
     "ACK": "ACK|{actor}|{command}|{status}", # Command acknowledgment
     "FILE": "FILE|{sender}|{filename}|{size}", # File transfer header
     "FORGET": "FORGET|{machine_id}",        # Remove actor from approved list
+    # OSC cue triggers
+    "OSC_CUE": "OSC_CUE|{target}|{parameter}|{value}",  # Director → Actor: trigger OSC param
     # File transfer protocol
     "FILEREQ": "FILEREQ|{sender}|{target}|{filename}|{size}|{checksum}",
     "FILEACK": "FILEACK|{filename}|{accept}|{save_dir}",
@@ -265,5 +267,12 @@ def parse_message(data):
 
     elif msg_type == "REFRESH":
         return msg_type, {}
+    
+    elif msg_type == "OSC_CUE" and len(parts) >= 4:
+        return msg_type, {
+            "target": parts[1],
+            "parameter": parts[2],
+            "value": parts[3]
+        }
     
     return msg_type, {"raw": data}

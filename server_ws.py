@@ -629,6 +629,18 @@ async def websocket_endpoint(
                 await send_user_list()
                 if client.role == "director":
                     await send_pending_list()
+            
+            # OSC cue triggers - route to specific actor
+            elif msg_type == "OSC_CUE":
+                target = msg_data.get("target", "")
+                if target:
+                    for ws, c in clients.items():
+                        if c.name == target and c.approved and c.role == "actor":
+                            try:
+                                await ws.send_text(data)
+                            except:
+                                pass
+                            break
     
     except WebSocketDisconnect:
         log(f"Client disconnected: {client.name}")
