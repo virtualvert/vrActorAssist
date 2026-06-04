@@ -186,8 +186,8 @@ class ActorClient:
         """Prompt for initial configuration."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Actor Setup")
-        dialog.geometry("450x420")
-        dialog.minsize(450, 420)
+        dialog.geometry("450x520")
+        dialog.minsize(450, 520)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -301,8 +301,8 @@ class ActorClient:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Config")
-        dialog.geometry("450x420")
-        dialog.minsize(450, 420)
+        dialog.geometry("450x520")
+        dialog.minsize(450, 520)
         dialog.transient(self.root)
         dialog.grab_set()
         
