@@ -49,6 +49,9 @@ class ActorClient:
             if "auto_accept_files" not in self.config:
                 self.config["auto_accept_files"] = False
                 changed = True
+            if "soundpad_enabled" not in self.config:
+                self.config["soundpad_enabled"] = True
+                changed = True
             # OSC config migration
             if "osc_enabled" not in self.config:
                 self.config["osc_enabled"] = True
@@ -236,6 +239,11 @@ class ActorClient:
         auto_accept_var = tk.BooleanVar(value=False)
         tk.Checkbutton(frame, text="Auto-accept incoming files", variable=auto_accept_var).pack(anchor='w')
         
+        # Soundpad enable toggle
+        soundpad_enabled_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(frame, text="Enable Soundpad commands (disable if you don't own Soundpad)",
+                       variable=soundpad_enabled_var).pack(anchor='w')
+        
         # OSC settings
         osc_frame = tk.LabelFrame(frame, text="VRChat OSC")
         osc_frame.pack(fill=tk.X, pady=(10, 5))
@@ -261,6 +269,7 @@ class ActorClient:
                 "actor_name": name_entry.get().strip() or "Actor",
                 "receive_dir": dir_entry.get().strip(),
                 "auto_accept_files": auto_accept_var.get(),
+                "soundpad_enabled": soundpad_enabled_var.get(),
                 "osc_enabled": osc_enabled_var.get(),
                 "vrchat_osc_host": osc_host_entry.get().strip() or OSC_DEFAULT_HOST,
                 "vrchat_osc_port": int(osc_port_entry.get().strip() or str(OSC_DEFAULT_PORT))
@@ -287,8 +296,8 @@ class ActorClient:
         
         dialog = tk.Toplevel(self.root)
         dialog.title("Edit Config")
-        dialog.geometry("450x350")
-        dialog.minsize(450, 350)
+        dialog.geometry("450x420")
+        dialog.minsize(450, 420)
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -346,6 +355,10 @@ class ActorClient:
         auto_accept_var = tk.BooleanVar(value=self.config.get("auto_accept_files", False))
         tk.Checkbutton(frame, text="Auto-accept incoming files", variable=auto_accept_var).pack(anchor='w')
         
+        # Soundpad enable toggle
+        soundpad_enabled_var = tk.BooleanVar(value=self.config.get("soundpad_enabled", True))
+        tk.Checkbutton(frame, text="Enable Soundpad commands", variable=soundpad_enabled_var).pack(anchor='w')
+        
         # OSC settings
         osc_frame = tk.LabelFrame(frame, text="VRChat OSC")
         osc_frame.pack(fill=tk.X, pady=(10, 5))
@@ -370,6 +383,7 @@ class ActorClient:
             self.config["actor_name"] = name_entry.get().strip() or "Actor"
             self.config["receive_dir"] = dir_entry.get().strip()
             self.config["auto_accept_files"] = auto_accept_var.get()
+            self.config["soundpad_enabled"] = soundpad_enabled_var.get()
             self.config["osc_enabled"] = osc_enabled_var.get()
             self.config["vrchat_osc_host"] = osc_host_entry.get().strip() or OSC_DEFAULT_HOST
             try:
@@ -585,8 +599,12 @@ class ActorClient:
             text = msg_data.get("text", "")
             self.root.after(0, lambda: self.display(f"[Private] {sender}: {text}"))
             
-            # Execute as command (same as CMD)
-            success, error_msg = execute_command(text, "")
+            # Execute as command (same as CMD) — skip if Soundpad disabled
+            soundpad_ok = self.config.get("soundpad_enabled", True) if self.config else True
+            if soundpad_ok and text.startswith("*"):
+                success, error_msg = execute_command(text, "")
+            else:
+                success, error_msg = True, None
             if success:
                 ack_msg = format_message("ACK", 
                     actor=self.config.get("actor_name", "Unknown"),
@@ -609,8 +627,12 @@ class ActorClient:
             if command in ("stop", "*stop"):
                 self._cancel_osc_timers()
             
-            # Execute Soundpad command
-            success, error_msg = execute_command(command, args)
+            # Execute Soundpad command (unless disabled)
+            soundpad_ok = self.config.get("soundpad_enabled", True) if self.config else True
+            if soundpad_ok:
+                success, error_msg = execute_command(command, args)
+            else:
+                success, error_msg = True, None  # Silently skip, still ACK
             if success:
                 ack_msg = format_message("ACK", 
                     actor=self.config.get("actor_name", "Unknown"),
