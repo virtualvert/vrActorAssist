@@ -6,12 +6,55 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$SCRIPT_DIR/logs"
 SERVER_PID="$SCRIPT_DIR/server.pid"
 FUNNEL_PID="$SCRIPT_DIR/funnel.pid"
+VENV_DIR="$SCRIPT_DIR/venv"
+PYTHON="$VENV_DIR/bin/python"
+PIP="$VENV_DIR/bin/pip"
+
+# Core server dependencies (actor clients have their own)
+REQUIRED_PACKAGES=("fastapi" "uvicorn" "websockets")
 
 # Ask for sudo upfront so we don't hang mid-start
 ensure_sudo() {
     if ! sudo -n true 2>/dev/null; then
         echo "Funnel requires sudo — entering password now so it doesn't interrupt later."
         sudo -v || { echo "✗ sudo required for Tailscale funnel"; exit 1; }
+    fi
+}
+
+# --- Virtual environment management ---
+
+setup_venv() {
+    echo "Checking virtual environment..."
+
+    # Create venv if it doesn't exist
+    if [ ! -d "$VENV_DIR" ] || [ ! -f "$PYTHON" ]; then
+        echo "  Creating Python virtual environment..."
+        python3 -m venv "$VENV_DIR"
+        if [ $? -ne 0 ]; then
+            echo "✗ Failed to create venv — is python3-venv installed?"
+            exit 1
+        fi
+        echo "  ✓ venv created at $VENV_DIR"
+    fi
+
+    # Check if required packages are installed
+    MISSING=()
+    for pkg in "${REQUIRED_PACKAGES[@]}"; do
+        if ! "$PYTHON" -c "import $pkg" 2>/dev/null; then
+            MISSING+=("$pkg")
+        fi
+    done
+
+    if [ ${#MISSING[@]} -gt 0 ]; then
+        echo "  Installing missing packages: ${MISSING[*]}..."
+        "$PIP" install --quiet "${MISSING[@]}"
+        if [ $? -ne 0 ]; then
+            echo "✗ Failed to install packages"
+            exit 1
+        fi
+        echo "  ✓ Installed: ${MISSING[*]}"
+    else
+        echo "  ✓ All dependencies satisfied"
     fi
 }
 
@@ -49,7 +92,7 @@ stop_existing() {
     fi
     
     # Kill any orphaned server_ws.py processes
-    ORPHANS=$(pgrep -f "python3.*server_ws.py" 2>/dev/null)
+    ORPHANS=$(pgrep -f "server_ws.py" 2>/dev/null)
     if [ -n "$ORPHANS" ]; then
         echo "  Killing orphaned server processes: $ORPHANS"
         echo "$ORPHANS" | xargs kill 2>/dev/null
@@ -76,6 +119,9 @@ start() {
     # Always clean up existing processes first
     stop_existing
     
+    # Ensure virtual environment is ready
+    setup_venv
+    
     # Prompt for server secret
     read -s -p "Enter server secret: " SECRET
     echo
@@ -92,7 +138,7 @@ start() {
     
     # Start Python server (as current user, not root)
     echo "Starting server..."
-    python3 "$SCRIPT_DIR/server_ws.py" --secret "$SECRET" >> "$LOG_DIR/server.log" 2>&1 &
+    "$PYTHON" "$SCRIPT_DIR/server_ws.py" --secret "$SECRET" >> "$LOG_DIR/server.log" 2>&1 &
     echo $! > "$SERVER_PID"
     
     # Give server a moment to bind
