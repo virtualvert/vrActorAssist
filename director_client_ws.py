@@ -16,6 +16,7 @@ import urllib.request
 import tempfile
 import subprocess
 import sys
+import ssl
 from pathlib import Path
 
 from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path, APP_VERSION, get_platform_id
@@ -419,7 +420,7 @@ class DirectorClient:
                 )
                 
                 # Run with ping enabled
-                self.ws.run_forever(ping_interval=30, ping_timeout=10)
+                self.ws.run_forever(ping_interval=30, ping_timeout=10, sslopt={"cert_reqs": ssl.CERT_NONE})
                 
                 if not self.should_reconnect:
                     break
