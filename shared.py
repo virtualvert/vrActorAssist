@@ -9,7 +9,7 @@ import hashlib
 from pathlib import Path
 
 # Application version (semver)
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 
 
 def get_platform_id():
