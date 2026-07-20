@@ -13,7 +13,8 @@
 | **v0.2.1** | Released | Configurable Soundpad path, duplicate actor fix |
 | **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
 || **v0.3.0** | Released | Multi-file transfer, character routing, batch protocol, overwrite dialog, cancel batch, protocol versioning, auto-updater, About dialog |
-|| **v0.4.0** | Planned | Director client PySide6 migration, OSC cue editor with audio player |
+| **v0.3.3** | Released | SSL cert fix for Windows PyInstaller builds |
+|| **v0.4.0** | Planned | Tauri v2 + Svelte migration (replaces both Python clients) |
 
 ## v0.3.0 Features (Planned)
 
@@ -405,45 +406,31 @@ Each release includes:
 
 ---
 
-## v0.4.0 Features (Planned) — PySide6 Migration + OSC Cue Editor
+## v0.4.0 Features (Planned) — Tauri v2 + Svelte Migration
 
-### Migration Decision: PySide6 Over Tauri
+### Migration Decision: Tauri Over PySide6
 
-We evaluated Tauri + Svelte (Rust + Web) vs PySide6 (Qt) for the v0.4.0 client rewrite. PySide6 wins for this project because:
+After evaluating PySide6 (Qt) vs Tauri v2 + Svelte for the v0.4.0 client rewrite, we chose **Tauri**:
 
-1. **Soundpad integration stays intact** — `soundpad.py` is Windows-only CLI. Moving to Rust would require rewriting or sidecar-ing this integration.
-2. **Business logic is already Python** — ~1,100 lines of director client and ~700 lines of actor client are pure Python (WebSocket, file transfer, auto-updater). Porting to Rust would be a full rewrite.
-3. **Qt Multimedia unlocks the audio cue timeline** — `QMediaPlayer` + `QSlider` + `QPainter` handles the waveform editor natively. No need for Web Audio API in a WebView.
-4. **Thread safety** — Qt Signals replace `root.after()` lambda gymnastics, eliminating the most fragile part of the current clients.
-5. **Same delivery method** — PyInstaller still produces single binaries. Binary size increases to ~80-150MB but launch remains reasonable.
+1. **Cross-platform UI** — Svelte + WebView gives native-looking polished UI on Windows, Linux, and macOS with a single codebase. No Qt styling complexity.
+2. **Rust backend performance** — WebSocket, file chunking, and OSC are well-suited to Rust's async model. No GIL, no threading issues.
+3. **Smaller binaries** — Tauri apps are ~5-10MB vs PySide6's ~80-150MB with PyInstaller.
+4. **Modern developer experience** — HMR during development, Svelte reactivity, Rust's type system.
+5. **Same protocol** — The Tauri client talks to the same Python server. No server changes needed.
+6. **Better auto-update** — Tauri's built-in updater is more robust than the custom Python updater.
 
-Migration effort: ~5 days director, ~2-3 days actor. OSC cue editor builds on top of the PySide6 foundation.
+**One binary, two modes:** The Tauri app launches with a mode selector (Director or Actor). Single distribution, switchable at any time.
 
-### GUI Widget Mapping (tkinter → PySide6)
+**Soundpad integration:** Handled via Rust's `std::process::Command` on Windows, same CLI interface.
 
-| tkinter | PySide6 Equivalent | Notes |
-|---------|-------------------|-------|
-| `tk.Tk()` | `QMainWindow` | Set title, min size similarly |
-| `tk.Frame` + `pack()` | `QWidget` + `QHBoxLayout/QVBoxLayout` | Actually easier with Qt layouts |
-| `tk.Canvas` inner-frame for scroll | `QScrollArea` with `QWidget` + `QVBoxLayout` | **Major win** — no manual scrollregion math |
-| `tk.Label` | `QLabel` | Direct |
-| `tk.Button` | `QPushButton` + stylesheet | Drop font hacks for VR |
-| `tk.Entry` | `QLineEdit` | Direct |
-| `scrolledtext.ScrolledText` | `QTextEdit` | `append()` with HTML colors |
-| `tk.Listbox` | `QListWidget` | Direct |
-| `tk.OptionMenu` + `StringVar` | `QComboBox` + `currentText()` | Cleaner |
-| `tk.Checkbutton` + `BooleanVar` | `QCheckBox` + `isChecked()` | Direct |
-| `filedialog.ask*()` | `QFileDialog` | Direct |
-| `messagebox.*` | `QMessageBox` | Direct |
-| `tk.Toplevel` + `grab_set()` | `QDialog` + `exec()` | Native modality |
+### Feature Set (v0.4.0)
 
-### Actor Client: Linux Builds Suspended
-
-As of v0.3.0, Linux actor binaries are **not distributed**. Rationale:
-- **Soundpad is Windows-only** — the actor's primary function is Soundpad cues, which have no Linux equivalent.
-- **No actors run VR on Linux** today.
-- **Source still runs on Linux** — actors can `python actor_client_ws.py` if needed for chat/file receive.
-- **Future:** A Pipewire soundboard backend (`python-pulsectl` / `pw-play`) can replace `soundpad.py` on Linux without changing the GUI. Once built, Linux binaries will be re-enabled.
+- [ ] **Tauri scaffold** — Project setup with Svelte, Rust modules, config persistence
+- [ ] **Shared UI** — Connection panel, chat, settings dialog, status bar
+- [ ] **Director mode** — Actor list with latency dots, cue buttons (Go/Stop/Countdown), file sender with character routing, approve/deny actors
+- [ ] **Actor mode** — File receiver with chunk assembly, Soundpad integration (Windows), VRChat OSC integration
+- [ ] **Auto-update** — Tauri built-in updater
+- [ ] **OSC cue editor** — Timed VRChat parameter triggers synced to Play command (post-migration)
 
 ### Feature: OSC Cue List
 

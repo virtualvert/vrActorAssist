@@ -1,6 +1,6 @@
 # vrActorAssist Roadmap
 
-*Last updated: 2026-04-23*
+*Last updated: 2026-07-20*
 
 ---
 
@@ -39,43 +39,29 @@
   - Platform-aware: `windows-x64`, `linux-x64` (AppImage) ✅
   - Director and Actor clients update independently ✅
 
-### Priority 1.5: v0.3.1 — Last tkinter Polish
+### Priority 1.5: v0.3.3 — SSL Fix (Released ✅)
 
-- [ ] **Multiple director support** *(deferred from v0.3.0)* — Allow multiple directors with different names and permissions:
-  - Main director (full control)
-  - Assistant director (limited commands)
-  - Each director has their own identity/name
+- [x] **SSL certificate fix** — SSL `cert_reqs: CERT_NONE` unreliable in PyInstaller builds:
+  - Added `certifi` + `_ssl` as hidden imports in `build_exe.py`
+  - Replaced `sslopt` dict with explicit `ssl.SSLContext` using `certifi.where()`
+  - Bump to v0.3.3
 
-- [ ] **Ping compensation / delay** *(deferred from v0.3.0)* — Add millisecond delay per actor:
-  - Director can set delay per actor (e.g., Actor A: +50ms, Actor B: +100ms)
-  - Manual adjustment, tested quickly with Go command
-  - Stored in actor config, applied server-side
-  - Helps compensate for network latency differences
+### Priority 2: v0.4.0 — Tauri v2 + Svelte Migration
 
-- [ ] **Actor display names** — *(deferred to v0.4.0 — will be built in PySide6 instead of tkinter)*
-  - Right-click actor → "Set Display Name"
-  - Shows character name instead of actor name on director's client
-  - Display name is temporary (cleared when director disconnects)
-  - Original actor name preserved and still shows on hover/tooltip
-  - No server state needed — stored only in director client memory
-  - Useful for mapping actors to character names during production
+- [ ] **Tauri scaffold** — Project setup with Svelte frontend + Rust backend:
+  - Mode selector (Director/Actor) at launch
+  - Single binary, switchable at any time
+  - See `docs/superpowers/plans/2026-07-20-ssl-fix-and-tauri-migration.md`
 
-### Priority 2.5: v0.4.0 — PySide6 Migration + OSC Cue Editor
+- [ ] **Shared UI** — Connection panel, chat, settings, status bar (Svelte)
 
-- [ ] **Director client → PySide6** — Migrated from tkinter to PySide6 (Qt):
-  - All existing director features ported (actor panel, checkboxes, chat, file transfer, etc.)
-  - Thread-safe signals replace `root.after()` patterns
-  - QScrollArea replaces canvas scroll hack for actor list
-  - QMediaPlayer + QPainter enables the OSC audio cue timeline
-  - Same protocol — talks to the same Python server
-  - Single PyInstaller binary (~80-150MB), same delivery method
+- [ ] **Director mode** — Actor list with latency dots, cue buttons, file sender with character routing, approve/deny
 
-- [ ] **Actor client → PySide6** — Same migration for consistency:
-  - Simpler UI than director — main window, chat, file receive
-  - Soundpad integration unchanged (Windows-only)
-  - Auto-updater, overwrite dialog, file receive all port cleanly
+- [ ] **Actor mode** — File receiver, Soundpad integration (Windows), VRChat OSC integration
 
-- [ ] **OSC cue list** — Timed VRChat parameter triggers synced to Play command:
+- [ ] **Auto-update** — Tauri built-in updater
+
+- [ ] **OSC cue list** — Timed VRChat parameter triggers synced to Play command (post-migration):
   - Director creates list of "at X ms after Play, set parameter to value" cues
   - Supports bool values (true/false) and float values (0.0-1.0) for blend shapes
   - Actor client runs local timers — no network jitter on OSC sends
@@ -141,6 +127,7 @@
 
 ## Completed ✅
 
+- [x] v0.3.3 release — SSL cert fix for Windows PyInstaller builds
 - [x] WebSocket migration (from raw TCP)
 - [x] Director approval system
 - [x] Auto-reconnect with keepalive
