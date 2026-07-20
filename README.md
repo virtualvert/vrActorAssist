@@ -40,7 +40,7 @@ See [GitHub Releases](https://github.com/virtualvert/vrActorAssist/releases) for
 | v0.2.0 | Selective actor triggering, file transfer, status indicators, VR-friendly buttons |
 | v0.2.1 | Configurable Soundpad path, duplicate actor fix |
 | v0.2.2 | Forget Actor flow, cross-platform builds, code cleanup |
-|| v0.3.0 | Multi-file batch transfer, character routing, protocol versioning, auto-updater, cancel batch, overwrite dialog |
+| v0.3.0 | Multi-file batch transfer, character routing, protocol versioning, auto-updater, cancel batch, overwrite dialog |
 | v0.3.3 | SSL cert fix for Windows PyInstaller builds — explicit SSLContext + certifi |
 
 ## Commands
