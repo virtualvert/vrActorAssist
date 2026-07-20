@@ -38,7 +38,7 @@ def clean_build():
         if os.path.exists(path):
             os.remove(path)
 
-def run_pyinstaller(script_name, exe_name, extra_data=None):
+def run_pyinstaller(script_name, exe_name, extra_data=None, extra_hiddenimports=None):
     """Run PyInstaller as a subprocess to avoid state contamination between builds."""
     cmd = [
         sys.executable, '-m', 'PyInstaller',
@@ -58,6 +58,10 @@ def run_pyinstaller(script_name, exe_name, extra_data=None):
     if extra_data:
         for data in extra_data:
             cmd.extend(['--add-data', f'{data}{PATH_SEP}.'])
+    
+    if extra_hiddenimports:
+        for imp in extra_hiddenimports:
+            cmd.extend(['--hiddenimport', imp])
     
     print(f"\nRunning: {' '.join(cmd[:8])}...")
     result = subprocess.run(cmd, cwd=SCRIPT_DIR)
@@ -86,7 +90,8 @@ def build_actor():
     success = run_pyinstaller(
         'actor_client_ws.py',
         'vrActorClient',
-        extra_data=['soundpad.py']
+        extra_data=['soundpad.py'],
+        extra_hiddenimports=['pythonosc', 'certifi', '_ssl']
     )
     
     exe_ext = '.exe' if IS_WINDOWS else ''
@@ -110,7 +115,8 @@ def build_director():
     
     success = run_pyinstaller(
         'director_client_ws.py',
-        'vrDirectorClient'
+        'vrDirectorClient',
+        extra_hiddenimports=['certifi', '_ssl']
     )
     
     exe_ext = '.exe' if IS_WINDOWS else ''

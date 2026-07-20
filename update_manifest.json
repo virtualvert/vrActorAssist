@@ -1,6 +1,6 @@
 {
-  "latest_version": "0.3.0",
-  "release_notes": "Multi-file batch transfer, character routing, protocol versioning, auto-updater",
+  "latest_version": "0.3.3",
+  "release_notes": "Fix SSL certificate verification errors on Windows PyInstaller builds",
   "assets": {
     "actor-windows-x64": {
       "url": "",

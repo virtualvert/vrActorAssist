@@ -40,7 +40,8 @@ See [GitHub Releases](https://github.com/virtualvert/vrActorAssist/releases) for
 | v0.2.0 | Selective actor triggering, file transfer, status indicators, VR-friendly buttons |
 | v0.2.1 | Configurable Soundpad path, duplicate actor fix |
 | v0.2.2 | Forget Actor flow, cross-platform builds, code cleanup |
-|| v0.3.0 | Multi-file batch transfer, character routing, protocol versioning, auto-updater, cancel batch, overwrite dialog |
+| v0.3.0 | Multi-file batch transfer, character routing, protocol versioning, auto-updater, cancel batch, overwrite dialog |
+| v0.3.3 | SSL cert fix for Windows PyInstaller builds — explicit SSLContext + certifi |
 
 ## Commands
 
@@ -59,7 +60,8 @@ Director can send:
 |----------|------------|
 | Local network | `ws://192.168.1.100:5555/ws` |
 | Tailscale tailnet | `ws://100.104.39.106:5555/ws` |
-| Public domain | `wss://actor.yourdomain.com/ws` |
+| Tailscale Funnel (public) | `wss://<tailscale-dns-name>/ws` |
+| Public domain (Caddy) | `wss://actor.yourdomain.com/ws` |
 
 ### Public Domain Setup (Optional)
 
@@ -139,14 +141,20 @@ Output:
 ```
 vrActorAssist/
 ├── server_ws.py          # WebSocket server (FastAPI)
-├── director_client_ws.py # Director GUI
-├── actor_client_ws.py    # Actor GUI with Soundpad
+├── director_client_ws.py # Director GUI (Python/tkinter)
+├── actor_client_ws.py    # Actor GUI with Soundpad (Python/tkinter)
 ├── shared.py             # Protocol utilities
 ├── soundpad.py           # Soundpad CLI integration
 ├── build_exe.py          # PyInstaller build script
 ├── requirements.txt      # Dependencies
 ├── FEATURES-PLANNED.md   # Planned features
 ├── ROADMAP.md            # Future roadmap
+│
+├── client/               # Tauri v2 + Svelte app (replaces both clients)
+│   ├── src/              #   Svelte frontend
+│   └── src-tauri/        #   Rust backend
+│
+├── docs/superpowers/     # Design specs and implementation plans
 │
 ├── legacy/               # TCP socket version (reference)
 │   ├── server.py
@@ -179,9 +187,10 @@ vrActorAssist/
 ## Future
 
 See [ROADMAP.md](ROADMAP.md) for planned features:
+- **Tauri v2 + Svelte migration** — Replacing Python/tkinter clients with a modern desktop app
+- OSC cue editor with audio player
 - Multiple director support
 - Ping compensation/delay
-- OSC cue editor with audio player
 - OpenVR/OpenXR overlay
 - Web dashboard for server admin
 
@@ -194,4 +203,4 @@ See [ROADMAP.md](ROADMAP.md) for planned features:
 | **Director** | ✅ Full feature | ✅ Full feature | Cross-platform, no OS-specific dependencies |
 | **Actor** | ✅ Full feature | ⛔ Build not distributed | Soundpad.exe Windows-only; source still runs on Linux for chat/file receive |
 
-We are migrating both clients from **tkinter** to **PySide6** in v0.4.0 to unlock the OSC cue editor (audio timeline, waveform markers) and eliminate tkinter's threading frailties. See [ROADMAP.md](ROADMAP.md) for details.
+We are migrating both clients from **Python/tkinter** to **Tauri v2 + Svelte** in v0.4.0 for a modern, cross-platform desktop app with a Rust backend. The Python server stays unchanged. See [ROADMAP.md](ROADMAP.md) for details.
