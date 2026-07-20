@@ -91,7 +91,7 @@ def build_actor():
         'actor_client_ws.py',
         'vrActorClient',
         extra_data=['soundpad.py'],
-        extra_hiddenimports=['pythonosc']
+        extra_hiddenimports=['pythonosc', 'certifi', '_ssl']
     )
     
     exe_ext = '.exe' if IS_WINDOWS else ''
@@ -115,7 +115,8 @@ def build_director():
     
     success = run_pyinstaller(
         'director_client_ws.py',
-        'vrDirectorClient'
+        'vrDirectorClient',
+        extra_hiddenimports=['certifi', '_ssl']
     )
     
     exe_ext = '.exe' if IS_WINDOWS else ''

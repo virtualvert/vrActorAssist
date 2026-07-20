@@ -17,6 +17,7 @@ import tempfile
 import subprocess
 import sys
 import ssl
+import certifi
 from pathlib import Path
 
 from shared import parse_message, format_message, get_machine_id, load_config, save_config, get_default_config_path, APP_VERSION, get_platform_id
@@ -420,7 +421,10 @@ class DirectorClient:
                 )
                 
                 # Run with ping enabled
-                self.ws.run_forever(ping_interval=30, ping_timeout=10, sslopt={"cert_reqs": ssl.CERT_NONE})
+                ssl_context = ssl.create_default_context(cafile=certifi.where())
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                self.ws.run_forever(ping_interval=30, ping_timeout=10, ssl=ssl_context)
                 
                 if not self.should_reconnect:
                     break
