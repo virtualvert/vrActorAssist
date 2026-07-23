@@ -185,4 +185,38 @@ mod tests {
         let loaded = Config::load(&path);
         assert_eq!(loaded, Config::default());
     }
+
+    #[test]
+    fn is_portable_false_when_uninstaller_present_windows_only() {
+        if !cfg!(target_os = "windows") {
+            return; // this check only applies on Windows; see APPIMAGE branch for Linux
+        }
+        let dir = std::env::temp_dir().join(format!("vractest-installed-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("uninstall.exe"), b"").unwrap();
+        assert!(!is_portable(&dir));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn is_portable_true_when_no_uninstaller_windows_only() {
+        if !cfg!(target_os = "windows") {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("vractest-portable-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(is_portable(&dir));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn is_portable_false_when_appimage_env_set_linux_only() {
+        if cfg!(target_os = "windows") {
+            return;
+        }
+        std::env::set_var("APPIMAGE", "/tmp/fake.AppImage");
+        let dir = std::env::temp_dir();
+        assert!(!is_portable(&dir));
+        std::env::remove_var("APPIMAGE");
+    }
 }
