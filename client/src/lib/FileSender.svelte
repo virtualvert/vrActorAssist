@@ -40,7 +40,7 @@
 </div>
 
 <style>
-  .file-sender { padding: 0.5rem; border: 1px solid var(--border-color, #444); border-radius: 4px; }
-  h3 { margin: 0 0 0.5rem 0; font-size: 0.9rem; }
-  select, button { width: 100%; margin-bottom: 0.25rem; }
+  .file-sender { display: flex; flex-direction: column; gap: 0.5rem; }
+  h3 { margin: 0; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+  select, button { width: 100%; box-sizing: border-box; }
 </style>

@@ -36,9 +36,13 @@
 </div>
 
 <style>
-  .mode-selector { display: flex; flex-direction: column; align-items: center; gap: 1rem; padding: 3rem 1rem; }
-  .buttons { display: flex; gap: 1.5rem; }
-  .mode-btn { display: flex; flex-direction: column; gap: 0.4rem; padding: 1.5rem 2rem; border-radius: 8px; cursor: pointer; }
-  .label { font-size: 1.2rem; font-weight: 600; }
-  .desc { font-size: 0.85rem; opacity: 0.75; }
+  .mode-selector { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.25rem; padding: 3rem 1rem; }
+  .mode-selector h1 { margin: 0; font-size: 2rem; color: var(--accent); }
+  .subtitle { margin: 0; color: var(--text-secondary); }
+  .buttons { display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center; }
+  .mode-btn { display: flex; flex-direction: column; gap: 0.4rem; padding: 1.5rem 2rem; border-radius: 10px; cursor: pointer; background: var(--bg-secondary); border: 1px solid var(--border); min-width: 220px; text-align: left; transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease; }
+  .mode-btn:hover:not(:disabled) { background: var(--bg-secondary); border-color: var(--accent); box-shadow: var(--shadow); transform: translateY(-2px); }
+  .mode-btn .label { font-size: 1.2rem; font-weight: 600; color: var(--text-primary); }
+  .mode-btn .desc { font-size: 0.85rem; color: var(--text-secondary); }
+  .remember { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--text-secondary); cursor: pointer; }
 </style>

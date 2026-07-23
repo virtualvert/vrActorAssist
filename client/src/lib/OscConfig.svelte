@@ -21,9 +21,8 @@
 {/if}
 
 <style>
-  .osc-config { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.5rem; border: 1px solid var(--border-color, #444); border-radius: 4px; }
-  h3 { margin: 0; font-size: 0.9rem; }
+  .osc-config { display: flex; flex-direction: column; gap: 0.5rem; }
+  h3 { margin: 0; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
   label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
-  .toggle { font-size: 0.85rem; }
-  input[type="text"], input[type="number"] { flex: 1; }
+  input[type="text"], input[type="number"] { flex: 1; min-width: 0; }
 </style>

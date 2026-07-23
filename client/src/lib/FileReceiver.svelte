@@ -46,9 +46,10 @@
 </div>
 
 <style>
-  .file-receiver { padding: 0.5rem; border: 1px solid var(--border-color, #444); border-radius: 4px; }
-  h3 { margin: 0 0 0.5rem 0; font-size: 0.9rem; }
-  .incoming { display: flex; flex-direction: column; gap: 0.25rem; }
-  .hint { color: #888; font-style: italic; font-size: 0.85rem; }
+  .file-receiver { display: flex; flex-direction: column; gap: 0.5rem; }
+  h3 { margin: 0; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+  .incoming { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.5rem; border: 1px solid var(--accent-yellow); border-radius: 6px; background: var(--bg-primary); }
+  .incoming p { margin: 0; font-size: 0.85rem; word-break: break-word; }
+  .hint { margin: 0; color: var(--text-secondary); font-style: italic; font-size: 0.85rem; }
   button { width: 100%; }
 </style>

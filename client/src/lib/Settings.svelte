@@ -23,7 +23,7 @@
 
 <style>
   .settings { display: flex; flex-direction: column; gap: 0.5rem; }
-  .settings h3 { margin: 0; font-size: 1.1rem; }
-  .settings label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; }
-  .settings input, .settings select { flex: 1; }
+  .settings h3 { margin: 0; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+  .settings label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; }
+  .settings input, .settings select { flex: 1; min-width: 0; }
 </style>

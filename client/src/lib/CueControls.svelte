@@ -46,23 +46,28 @@
   <div class="cue-buttons">
     <button onclick={sendGo} class="cue go">Go</button>
     <button onclick={sendStop} class="cue stop">Stop</button>
-    <div class="countdown-group">
-      <button onclick={playInCountdown} class="cue countdown">
-        Play in {countdownSeconds}s {countdownLabel}
-      </button>
-      <select bind:value={countdownSeconds}>
-        <option value={3}>3s</option>
-        <option value={5}>5s</option>
-        <option value={10}>10s</option>
-      </select>
-    </div>
+  </div>
+  <div class="countdown-group">
+    <button onclick={playInCountdown} class="cue countdown" disabled={countdownTimer !== null}>
+      Play in {countdownSeconds}s {countdownLabel}
+    </button>
+    <select bind:value={countdownSeconds}>
+      <option value={3}>3s</option>
+      <option value={5}>5s</option>
+      <option value={10}>10s</option>
+    </select>
   </div>
 </div>
 
 <style>
-  .cue-buttons { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
-  .cue { font-size: 1.1rem; padding: 0.75rem 1.5rem; border-radius: 8px; border: none; cursor: pointer; }
-  .cue.go { background: #2ecc71; }
-  .cue.stop { background: #e74c3c; }
-  .countdown-group { display: flex; gap: 0.25rem; align-items: center; }
+  .cue-controls { display: flex; flex-direction: column; gap: 0.6rem; }
+  .cue-buttons { display: flex; gap: 0.5rem; }
+  .cue { font-size: 1rem; font-weight: 600; padding: 0.6rem 1rem; border-radius: 8px; border: none; cursor: pointer; flex: 1; }
+  .cue.go { background: var(--accent-green); color: #0b1f13; }
+  .cue.stop { background: var(--accent-red); color: #fff; }
+  .cue.go:hover:not(:disabled) { background: var(--accent-green); }
+  .cue.stop:hover:not(:disabled) { background: var(--accent-red); }
+  .countdown-group { display: flex; gap: 0.5rem; align-items: center; }
+  .cue.countdown { flex: 1; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); font-weight: 500; }
+  .countdown-group select { width: 4.5rem; }
 </style>

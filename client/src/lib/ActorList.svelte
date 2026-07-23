@@ -28,6 +28,9 @@
 
 <div class="actor-list">
   <h2>Actors</h2>
+  {#if actors.length === 0}
+    <p class="hint">No actors connected</p>
+  {/if}
   {#each actors as actor}
     <div class="actor-row">
       <span class="status-dot {latencyClass(actor.latency_ms)}"></span>
@@ -46,10 +49,15 @@
 
 <style>
   .actor-list { display: flex; flex-direction: column; gap: 0.25rem; }
-  .actor-list h2 { margin: 0 0 0.5rem 0; font-size: 1.1rem; }
-  .actor-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0; }
-  .status-dot { width: 10px; height: 10px; border-radius: 50%; }
-  .status-dot.green { background: #2ecc71; }
-  .status-dot.yellow { background: #f1c40f; }
-  .status-dot.red { background: #e74c3c; }
+  .actor-list h2 { margin: 0 0 0.5rem 0; font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+  .hint { margin: 0; color: var(--text-secondary); font-style: italic; font-size: 0.85rem; }
+  .actor-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.25rem; border-radius: 4px; }
+  .actor-row:hover { background: var(--bg-primary); }
+  .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .latency { font-family: var(--mono); font-size: 0.75rem; color: var(--text-secondary); }
+  .actor-row button { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.green { background: var(--accent-green); }
+  .status-dot.yellow { background: var(--accent-yellow); }
+  .status-dot.red { background: var(--accent-red); }
 </style>

@@ -42,5 +42,5 @@
 {/if}
 
 <style>
-  .update-banner { display: flex; gap: 1rem; align-items: center; padding: 0.5rem 1rem; background: #2c3e50; color: white; }
+  .update-banner { display: flex; gap: 1rem; align-items: center; justify-content: center; padding: 0.5rem 1rem; background: var(--bg-tertiary); color: var(--text-primary); border-bottom: 1px solid var(--border); font-size: 0.9rem; }
 </style>

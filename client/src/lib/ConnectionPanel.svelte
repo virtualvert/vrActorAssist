@@ -43,12 +43,17 @@
 <div class="connection-panel">
   <input type="text" bind:value={serverUrl} placeholder="wss://vra.dannygreyproductions.com/ws" disabled={isBusy} />
   <button onclick={toggleConnection} disabled={isBusy}>{label}</button>
-  <span class="status-dot" class:connected={$connectionState === "Connected"}></span>
+  <span
+    class="status-dot"
+    class:connected={$connectionState === "Connected"}
+    class:connecting={$connectionState === "Connecting"}
+  ></span>
 </div>
 
 <style>
   .connection-panel { display: flex; align-items: center; gap: 0.5rem; }
-  input { flex: 1; }
-  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; }
-  .status-dot.connected { background: #2ecc71; }
+  input { flex: 1; min-width: 0; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-secondary); flex-shrink: 0; transition: background 0.2s ease; }
+  .status-dot.connected { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+  .status-dot.connecting { background: var(--accent-yellow); box-shadow: 0 0 6px var(--accent-yellow); }
 </style>
