@@ -145,18 +145,28 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                 Message::Priv { target, text, .. } => {
                     if *target == cfg_actor_name && cfg_mode == "actor" {
                         if cfg_soundpad_enabled {
-                            if let Err(e) = soundpad::send_command(text, &cfg_soundpad_path) {
-                                log::warn!("Soundpad error: {}", e);
-                            }
+                            let cmd = text.clone();
+                            let sp = cfg_soundpad_path.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = soundpad::send_command(&cmd, &sp) {
+                                    log::warn!("Soundpad error: {}", e);
+                                }
+                            });
                         }
                     }
                 }
                 Message::OscCue { target, parameter, value } => {
                     if *target == cfg_actor_name && cfg_mode == "actor" {
                         if cfg_osc_enabled {
-                            if let Err(e) = osc::send_param(&cfg_osc_host, cfg_osc_port, parameter, value) {
-                                log::warn!("OSC error: {}", e);
-                            }
+                            let host = cfg_osc_host.clone();
+                            let port = cfg_osc_port;
+                            let param = parameter.clone();
+                            let val = value.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = osc::send_param(&host, port, &param, &val) {
+                                    log::warn!("OSC error: {}", e);
+                                }
+                            });
                         }
                     }
                 }
