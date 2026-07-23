@@ -27,3 +27,6 @@ start-server.sh
 
 # Misc
 .openclaw/
+
+# Worktrees (SDD scratch)
+.worktrees/
