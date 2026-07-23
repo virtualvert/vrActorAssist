@@ -7,8 +7,9 @@
   let inputText = $state("");
   let listEl: HTMLDivElement | undefined = $state();
 
-  onMount(async () => {
-    await listen<any>("protocol-message", (event) => {
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+    listen<any>("protocol-message", (event) => {
       const msg = event.payload;
       if (msg.Msg) {
         chatMessages.update((m) => [...m, {
@@ -17,7 +18,9 @@
         }]);
         queueScroll();
       }
-    });
+    }).then((fn) => { unlisten = fn; });
+
+    return () => { unlisten?.(); };
   });
 
   function queueScroll() {

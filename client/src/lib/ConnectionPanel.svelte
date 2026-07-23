@@ -6,14 +6,17 @@
 
   let serverUrl = $state("");
 
-  onMount(async () => {
-    const cfg = await invoke<any>("get_config");
-    appConfig.set(cfg);
-    serverUrl = cfg.server_url;
+  onMount(() => {
+    if ($appConfig) {
+      serverUrl = $appConfig.server_url;
+    }
 
-    await listen<ConnectionState>("connection-state", (event) => {
+    let unlisten: (() => void) | undefined;
+    listen<ConnectionState>("connection-state", (event) => {
       connectionState.set(event.payload);
-    });
+    }).then((fn) => { unlisten = fn; });
+
+    return () => { unlisten?.(); };
   });
 
   async function toggleConnection() {

@@ -7,7 +7,7 @@
   let rememberChoice = $state(false);
 
   async function selectMode(mode: "director" | "actor") {
-    if (rememberChoice) {
+    if (rememberChoice && $appConfig) {
       const cfg = { ...$appConfig, mode, remember_mode: true };
       await invoke("save_config", { newConfig: cfg });
       appConfig.set(cfg as any);
