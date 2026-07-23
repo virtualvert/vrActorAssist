@@ -176,6 +176,10 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                             if let Ok(mut reg) = actors_for_msg.lock() {
                                 reg.actors.remove(name);
                             }
+                        } else if let Some(name) = text.strip_suffix(" joined") {
+                            if let Ok(mut reg) = actors_for_msg.lock() {
+                                reg.upsert_from_status(name, 0);
+                            }
                         }
                     }
                 }
@@ -292,6 +296,11 @@ async fn play_soundpad(state: State<'_, AppState>, command: String) -> Result<()
 }
 
 #[tauri::command]
+fn detect_soundpad() -> Option<String> {
+    soundpad::detect_soundpad()
+}
+
+#[tauri::command]
 async fn send_osc(state: State<'_, AppState>, parameter: String, value: String) -> Result<(), String> {
     let cfg = state.config.lock().await.clone();
     if !cfg.osc_enabled {
@@ -378,6 +387,7 @@ pub fn run() {
             send_file,
             respond_to_file_request,
             play_soundpad,
+            detect_soundpad,
             send_osc,
             check_for_update,
             install_update,

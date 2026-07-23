@@ -1,3 +1,27 @@
+/// Attempts to locate Soundpad.exe in common Steam installation paths.
+/// Returns `None` on non-Windows or if not found.
+pub fn detect_soundpad() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        let candidates = [
+            r"C:\Program Files (x86)\Steam\steamapps\common\Soundpad\Soundpad.exe",
+            r"C:\Program Files\Steam\steamapps\common\Soundpad\Soundpad.exe",
+            "Soundpad.exe",
+        ];
+        for path in &candidates {
+            if std::path::Path::new(path).exists() {
+                return Some(path.to_string());
+            }
+        }
+        None
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
 /// Sends a command to Soundpad's command-line interface. Windows-only — Soundpad
 /// does not run on Linux/macOS, matching soundpad.py's Windows-only design.
 pub fn send_command(command: &str, soundpad_path: &str) -> Result<String, String> {

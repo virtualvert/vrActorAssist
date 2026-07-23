@@ -1,12 +1,24 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { open } from "@tauri-apps/plugin-dialog";
+  import { onMount } from "svelte";
   import { appConfig } from "./stores";
 
   async function save() {
     if (!$appConfig) return;
     await invoke("save_config", { newConfig: $appConfig });
   }
+
+  onMount(async () => {
+    if ($appConfig && !$appConfig.soundpad_path) {
+      const detected = await invoke<string | null>("detect_soundpad");
+      if (detected) {
+        $appConfig.soundpad_path = detected;
+        await invoke("save_config", { newConfig: $appConfig });
+        appConfig.set({ ...$appConfig } as any);
+      }
+    }
+  });
 
   async function browseSoundpad() {
     const path = await open({
