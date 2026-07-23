@@ -40,5 +40,16 @@
         "installMode": "currentUser"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWSG4BTyDYO8X7umGq5Qz30RCZk0XJ522h9PGFp+KUBWYu0z5hEW4BRn",
+      "endpoints": [
+        "https://github.com/virtualvert/vrActorAssist/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

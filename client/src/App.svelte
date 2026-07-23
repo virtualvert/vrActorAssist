@@ -4,6 +4,7 @@
   import ModeSelector from "./lib/ModeSelector.svelte";
   import DirectorView from "./lib/DirectorView.svelte";
   import ActorView from "./lib/ActorView.svelte";
+  import UpdateNotifier from "./lib/UpdateNotifier.svelte";
   import { appConfig } from "./lib/stores";
 
   let mode = $state<"director" | "actor" | null>(null);
@@ -18,6 +19,7 @@
 </script>
 
 <main>
+  <UpdateNotifier />
   {#if !mode}
     <ModeSelector onSelect={(m) => (mode = m)} />
   {:else if mode === "director"}

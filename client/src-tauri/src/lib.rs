@@ -13,6 +13,7 @@ use protocol::Message;
 use state::AppState;
 #[allow(unused_imports)]
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_updater::UpdaterExt;
 use ws_client::ConnectionState;
 
 #[tauri::command]
@@ -291,6 +292,44 @@ async fn send_osc(state: State<'_, AppState>, parameter: String, value: String) 
     osc::send_param(&cfg.osc_host, cfg.osc_port, &parameter, &value)
 }
 
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    available: bool,
+    version: String,
+    notes: String,
+    portable: bool,
+}
+
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, String> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(std::env::temp_dir);
+    let portable = config::is_portable(&exe_dir);
+
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(UpdateInfo {
+            available: true,
+            version: update.version.clone(),
+            notes: update.body.clone().unwrap_or_default(),
+            portable,
+        }),
+        Ok(None) => Ok(UpdateInfo { available: false, version: String::new(), notes: String::new(), portable }),
+        Err(e) => Err(format!("Update check failed: {}", e)),
+    }
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    if let Ok(Some(update)) = updater.check().await {
+        update.download_and_install(|_chunk, _total| {}, || {}).await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let exe_dir = std::env::current_exe()
@@ -304,6 +343,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -331,6 +371,8 @@ pub fn run() {
             respond_to_file_request,
             play_soundpad,
             send_osc,
+            check_for_update,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
