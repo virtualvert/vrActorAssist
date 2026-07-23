@@ -3,6 +3,7 @@
 
 mod config;
 mod protocol;
+mod ws_client;
 
 fn main() {
   app_lib::run();
