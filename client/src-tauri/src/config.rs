@@ -105,14 +105,18 @@ impl Config {
     /// Converts the configured server URL (http/https/bare host) into a ws(s):// + /ws URL.
     pub fn get_ws_url(&self) -> String {
         let base = self.server_url.trim_end_matches('/');
+        let needs_suffix = !base.ends_with("/ws");
+        let with_path = |url: &str, suffix: &str| {
+            if needs_suffix { format!("{}{}", url, suffix) } else { url.to_string() }
+        };
         if base.starts_with("https://") {
-            format!("{}/ws", base.replacen("https://", "wss://", 1))
+            with_path(&base.replacen("https://", "wss://", 1), "/ws")
         } else if base.starts_with("http://") {
-            format!("{}/ws", base.replacen("http://", "ws://", 1))
+            with_path(&base.replacen("http://", "ws://", 1), "/ws")
         } else if base.starts_with("wss://") || base.starts_with("ws://") {
-            format!("{}/ws", base)
+            with_path(base, "/ws")
         } else {
-            format!("wss://{}/ws", base)
+            with_path(&format!("wss://{}", base), "/ws")
         }
     }
 }
@@ -161,6 +165,27 @@ mod tests {
         let mut c = Config::default();
         c.server_url = "wss://vra.dannygreyproductions.com".to_string();
         assert_eq!(c.get_ws_url(), "wss://vra.dannygreyproductions.com/ws");
+    }
+
+    #[test]
+    fn ws_url_idempotent_when_already_has_ws() {
+        let mut c = Config::default();
+        c.server_url = "wss://vra.dannygreyproductions.com/ws".to_string();
+        assert_eq!(c.get_ws_url(), "wss://vra.dannygreyproductions.com/ws");
+    }
+
+    #[test]
+    fn ws_url_localhost_127_0_0_1() {
+        let mut c = Config::default();
+        c.server_url = "ws://127.0.0.1:5555".to_string();
+        assert_eq!(c.get_ws_url(), "ws://127.0.0.1:5555/ws");
+    }
+
+    #[test]
+    fn ws_url_localhost_with_ws_already() {
+        let mut c = Config::default();
+        c.server_url = "ws://127.0.0.1:5555/ws".to_string();
+        assert_eq!(c.get_ws_url(), "ws://127.0.0.1:5555/ws");
     }
 
     #[test]
