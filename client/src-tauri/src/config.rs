@@ -53,8 +53,8 @@ pub fn compute_machine_id() -> String {
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, hostname.as_bytes()).to_string()
 }
 
-/// True if running from an installed location (uninstall.exe / AppImage present),
-/// false if running as a bare portable executable.
+/// True if running as a portable executable (no uninstall.exe sibling / no APPIMAGE env var),
+/// false if running from an installed location.
 pub fn is_portable(exe_dir: &std::path::Path) -> bool {
     if cfg!(target_os = "windows") {
         !exe_dir.join("uninstall.exe").exists()
