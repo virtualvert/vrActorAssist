@@ -75,7 +75,11 @@ impl WsClient {
                                     break;
                                 }
                             }
-                            None => break,
+                            None => {
+                                let _ = write.close().await;
+                                on_state(ConnectionState::Disconnected);
+                                break;
+                            }
                         }
                     }
                 }

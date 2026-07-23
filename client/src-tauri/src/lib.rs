@@ -170,6 +170,15 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                         }
                     }
                 }
+                Message::Msg { sender, text } => {
+                    if sender == "SERVER" {
+                        if let Some(name) = text.strip_suffix(" left") {
+                            if let Ok(mut reg) = actors_for_msg.lock() {
+                                reg.actors.remove(name);
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
             let _ = app_for_msg.emit("protocol-message", &msg);
