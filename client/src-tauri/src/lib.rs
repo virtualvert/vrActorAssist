@@ -63,6 +63,7 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                         if let Ok(mut reg) = actors_for_msg.lock() {
                             for e in entries {
                                 reg.set_latency(&e.name, e.latency_ms);
+                                reg.mark_approved(&e.name);
                             }
                         }
                     }
@@ -71,6 +72,15 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                     // Server confirms an actor's approval only to that actor's own
                     // connection; the director learns of it via the next Pending/Status
                     // broadcast, so no registry update is needed on this branch.
+                }
+                Message::Denied { reason: _ } => {
+                    let _ = app_for_msg.emit("protocol-message", &msg);
+                }
+                Message::Forget { machine_id } => {
+                    if let Ok(mut reg) = actors_for_msg.lock() {
+                        reg.actors.retain(|_, a| &a.machine_id != machine_id);
+                    }
+                    let _ = app_for_msg.emit("protocol-message", &msg);
                 }
                 _ => {}
             }
