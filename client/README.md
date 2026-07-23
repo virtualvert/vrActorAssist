@@ -45,3 +45,30 @@ If you have state that's important to retain within a component, consider creati
 import { writable } from 'svelte/store'
 export default writable(0)
 ```
+
+## Development
+
+Prerequisites: Node.js 20+, Rust stable, and (Linux only) `libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev`.
+
+```bash
+cd client
+npm install
+npm run tauri dev
+```
+
+This starts the Vite dev server and launches the Tauri window with hot reload. Point the client at a locally running server (`python server_ws.py --port 5555 --secret <secret>`) using `ws://127.0.0.1:5555/ws` in the connection panel.
+
+Run Rust unit tests with:
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+## Releasing a new version
+
+1. Bump `version` in `client/src-tauri/tauri.conf.json` and `client/package.json` to the new semver.
+2. Commit: `git commit -am "chore: bump version to vX.Y.Z"`
+3. Tag: `git tag vX.Y.Z && git push origin vX.Y.Z`
+4. GitHub Actions builds Windows (installer + portable) and Linux (AppImage), publishing a **draft** release with `latest.json`.
+5. Review the draft release on GitHub, edit release notes, then click "Publish release".
+6. Existing installed/AppImage clients will detect the update within their next launch's `check_for_update` call. Portable clients see the notify banner and must download manually.

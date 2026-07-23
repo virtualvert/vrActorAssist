@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v0.4.*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install frontend deps
+        working-directory: client
+        run: npm install
+      - name: Build NSIS installer + signed updater artifacts
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: client
+          tagName: ${{ github.ref_name }}
+          releaseName: "vrActorAssist ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
+      - name: Build portable exe (raw binary, no installer)
+        working-directory: client
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
+      - name: Rename portable exe
+        run: Copy-Item client/src-tauri/target/release/vrActorAssist.exe vrActorAssist_${{ github.ref_name }}_portable.exe
+        shell: pwsh
+      - name: Upload portable exe to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ github.ref_name }} vrActorAssist_${{ github.ref_name }}_portable.exe --clobber
+        shell: bash
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Install frontend deps
+        working-directory: client
+        run: npm install
+      - name: Build AppImage + signed updater artifacts
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: client
+          tagName: ${{ github.ref_name }}
+          releaseName: "vrActorAssist ${{ github.ref_name }}"
+          releaseDraft: true
+          prerelease: false
