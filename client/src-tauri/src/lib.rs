@@ -1,7 +1,9 @@
 mod config;
 mod director;
 mod file_transfer;
+mod osc;
 mod protocol;
+mod soundpad;
 mod state;
 mod ws_client;
 
@@ -46,6 +48,12 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
     let buffers_for_msg = state.receive_buffers.clone();
     let cfg_mode = cfg.mode.clone();
     let cfg_receive_dir = cfg.receive_dir.clone();
+    let cfg_actor_name = cfg.actor_name.clone();
+    let cfg_soundpad_enabled = cfg.soundpad_enabled;
+    let cfg_soundpad_path = cfg.soundpad_path.clone();
+    let cfg_osc_enabled = cfg.osc_enabled;
+    let cfg_osc_host = cfg.osc_host.clone();
+    let cfg_osc_port = cfg.osc_port;
 
     let app_for_msg = app.clone();
     let app_for_state = app.clone();
@@ -130,6 +138,24 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                                         });
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+                Message::Priv { target, text, .. } => {
+                    if *target == cfg_actor_name && cfg_mode == "actor" {
+                        if cfg_soundpad_enabled {
+                            if let Err(e) = soundpad::send_command(text, &cfg_soundpad_path) {
+                                log::warn!("Soundpad error: {}", e);
+                            }
+                        }
+                    }
+                }
+                Message::OscCue { target, parameter, value } => {
+                    if *target == cfg_actor_name && cfg_mode == "actor" {
+                        if cfg_osc_enabled {
+                            if let Err(e) = osc::send_param(&cfg_osc_host, cfg_osc_port, parameter, value) {
+                                log::warn!("OSC error: {}", e);
                             }
                         }
                     }
@@ -237,6 +263,24 @@ async fn respond_to_file_request(state: State<'_, AppState>, filename: String, a
     }
 }
 
+#[tauri::command]
+async fn play_soundpad(state: State<'_, AppState>, command: String) -> Result<(), String> {
+    let cfg = state.config.lock().await.clone();
+    if !cfg.soundpad_enabled {
+        return Ok(());
+    }
+    soundpad::send_command(&command, &cfg.soundpad_path).map(|_| ())
+}
+
+#[tauri::command]
+async fn send_osc(state: State<'_, AppState>, parameter: String, value: String) -> Result<(), String> {
+    let cfg = state.config.lock().await.clone();
+    if !cfg.osc_enabled {
+        return Ok(());
+    }
+    osc::send_param(&cfg.osc_host, cfg.osc_port, &parameter, &value)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let exe_dir = std::env::current_exe()
@@ -275,6 +319,8 @@ pub fn run() {
             list_actors,
             send_file,
             respond_to_file_request,
+            play_soundpad,
+            send_osc,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
