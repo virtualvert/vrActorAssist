@@ -1,4 +1,5 @@
 mod config;
+mod director;
 mod protocol;
 mod state;
 mod ws_client;
@@ -22,11 +23,24 @@ async fn save_config(state: State<'_, AppState>, new_config: Config) -> Result<(
     Ok(())
 }
 
+#[derive(serde::Deserialize)]
+struct PendingEntry {
+    machine_id: String,
+    name: String,
+}
+
+#[derive(serde::Deserialize)]
+struct StatusEntry {
+    name: String,
+    latency_ms: u32,
+}
+
 #[tauri::command]
 async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let cfg = state.config.lock().await.clone();
     let url = cfg.get_ws_url();
     let ws = state.ws.clone();
+    let actors_for_msg = state.actors.clone();
 
     let app_for_msg = app.clone();
     let app_for_state = app.clone();
@@ -34,6 +48,32 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
     ws.connect(
         &url,
         move |msg: Message| {
+            match &msg {
+                Message::Pending { actors_json } => {
+                    if let Ok(entries) = serde_json::from_str::<Vec<PendingEntry>>(actors_json) {
+                        if let Ok(mut reg) = actors_for_msg.lock() {
+                            for e in entries {
+                                reg.upsert_pending(&e.name, &e.machine_id);
+                            }
+                        }
+                    }
+                }
+                Message::Status { actors_json } => {
+                    if let Ok(entries) = serde_json::from_str::<Vec<StatusEntry>>(actors_json) {
+                        if let Ok(mut reg) = actors_for_msg.lock() {
+                            for e in entries {
+                                reg.set_latency(&e.name, e.latency_ms);
+                            }
+                        }
+                    }
+                }
+                Message::Approved => {
+                    // Server confirms an actor's approval only to that actor's own
+                    // connection; the director learns of it via the next Pending/Status
+                    // broadcast, so no registry update is needed on this branch.
+                }
+                _ => {}
+            }
             let _ = app_for_msg.emit("protocol-message", &msg);
         },
         move |st: ConnectionState| {
@@ -42,7 +82,6 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
     )
     .await?;
 
-    // Register immediately after connecting.
     let register = Message::Register {
         name: if cfg.mode == "actor" { cfg.actor_name.clone() } else { "Director".to_string() },
         machine_id: cfg.machine_id.clone(),
@@ -76,6 +115,33 @@ async fn send_command(state: State<'_, AppState>, command: String, targets: Vec<
     Ok(())
 }
 
+#[tauri::command]
+async fn approve_actor(state: State<'_, AppState>, machine_id: String) -> Result<(), String> {
+    state.ws.send(&Message::Approve { machine_id }).await
+}
+
+#[tauri::command]
+async fn deny_actor(state: State<'_, AppState>, machine_id: String) -> Result<(), String> {
+    state.ws.send(&Message::Deny { machine_id }).await
+}
+
+#[tauri::command]
+async fn forget_actor(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    state.actors.lock().map_err(|e| e.to_string())?.remove(&name);
+    state.ws.send(&Message::ForgetName { name }).await
+}
+
+#[tauri::command]
+async fn set_actor_enabled(state: State<'_, AppState>, name: String, enabled: bool) -> Result<(), String> {
+    state.actors.lock().map_err(|e| e.to_string())?.set_enabled(&name, enabled);
+    Ok(())
+}
+
+#[tauri::command]
+async fn list_actors(state: State<'_, AppState>) -> Result<Vec<crate::director::ActorInfo>, String> {
+    Ok(state.actors.lock().map_err(|e| e.to_string())?.all())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let exe_dir = std::env::current_exe()
@@ -107,6 +173,11 @@ pub fn run() {
             disconnect,
             send_chat,
             send_command,
+            approve_actor,
+            deny_actor,
+            forget_actor,
+            set_actor_enabled,
+            list_actors,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -11,6 +11,7 @@ export interface ChatMessage {
 
 export interface AppConfig {
   server_url: string;
+  secret: string;
   mode: string;
   remember_mode: boolean;
   machine_id: string;
