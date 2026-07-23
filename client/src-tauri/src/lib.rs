@@ -1,5 +1,6 @@
 mod config;
 mod director;
+mod file_transfer;
 mod protocol;
 mod state;
 mod ws_client;
