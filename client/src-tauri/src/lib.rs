@@ -90,7 +90,7 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                 }
                 Message::FileChunk { filename, chunk_num, data } => {
                     if cfg_mode == "actor" {
-                        if let Ok(mut buffers) = buffers_for_msg.try_lock() {
+                        if let Ok(mut buffers) = buffers_for_msg.lock() {
                             let buf = buffers.entry(filename.clone()).or_default();
                             let _ = buf.add_chunk(*chunk_num, data);
                         }
@@ -98,7 +98,7 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                 }
                 Message::FileEnd { filename, checksum } => {
                     if cfg_mode == "actor" {
-                        if let Ok(mut buffers) = buffers_for_msg.try_lock() {
+                        if let Ok(mut buffers) = buffers_for_msg.lock() {
                             if let Some(buf) = buffers.remove(filename) {
                                 match buf.finalize(checksum) {
                                     Ok(bytes) => {

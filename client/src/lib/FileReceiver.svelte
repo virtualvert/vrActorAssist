@@ -6,13 +6,15 @@
 
   let incoming = $state<{ filename: string; size: number } | null>(null);
 
-  onMount(async () => {
-    await listen<any>("protocol-message", (event) => {
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+    listen<any>("protocol-message", (event) => {
       const msg = event.payload;
       if (msg.FileReq) {
         incoming = { filename: msg.FileReq.filename, size: msg.FileReq.size };
       }
-    });
+    }).then((fn) => { unlisten = fn; });
+    return () => { unlisten?.(); };
   });
 
   async function accept() {

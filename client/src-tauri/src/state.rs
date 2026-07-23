@@ -11,7 +11,7 @@ pub struct AppState {
     pub config_path: std::path::PathBuf,
     pub ws: Arc<WsClient>,
     pub actors: Arc<Mutex<ActorRegistry>>,
-    pub receive_buffers: Arc<TokioMutex<HashMap<String, FileReceiveBuffer>>>,
+    pub receive_buffers: Arc<Mutex<HashMap<String, FileReceiveBuffer>>>,
 }
 
 impl AppState {
@@ -21,7 +21,7 @@ impl AppState {
             config_path,
             ws: Arc::new(WsClient::new()),
             actors: Arc::new(Mutex::new(ActorRegistry::default())),
-            receive_buffers: Arc::new(TokioMutex::new(HashMap::new())),
+            receive_buffers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
