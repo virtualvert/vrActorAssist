@@ -4,6 +4,7 @@
   import Chat from "./Chat.svelte";
   import ActorList from "./ActorList.svelte";
   import CueControls from "./CueControls.svelte";
+  import FileSender from "./FileSender.svelte";
   import Settings from "./Settings.svelte";
 </script>
 
@@ -16,6 +17,7 @@
     <aside class="left-panel">
       <ActorList />
       <CueControls />
+      <FileSender />
       <Settings />
     </aside>
     <section class="chat-area">
