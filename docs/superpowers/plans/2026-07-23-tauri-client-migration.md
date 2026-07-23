@@ -34,7 +34,7 @@
 - Modify: `README.md`
 
 **Interfaces:**
-- Produces: `tauri` branch checked out and active; all deployment scripts and docs reference `vra.dannygreyproductions.com` instead of `relay.dannygreyproductions.com`
+- Produces: `tauri` branch checked out and active; all deployment scripts and docs reference `vra.dannygreyproductions.com` instead of `vra.dannygreyproductions.com`
 
 - [ ] **Step 1: Create and switch to the tauri branch**
 
@@ -51,13 +51,13 @@ Expected: `git branch --show-current` prints `tauri`
 
 ```bash
 cd /home/danny/vrActorAssist
-grep -rl "relay.dannygreyproductions.com" --include="*.sh" --include="*.md" . | xargs sed -i 's/relay\.dannygreyproductions\.com/vra.dannygreyproductions.com/g'
+grep -rl "vra.dannygreyproductions.com" --include="*.sh" --include="*.md" . | xargs sed -i 's/relay\.dannygreyproductions\.com/vra.dannygreyproductions.com/g'
 ```
 
 - [ ] **Step 3: Verify no old domain references remain in scripts/docs**
 
 ```bash
-grep -rn "relay.dannygreyproductions.com" --include="*.sh" --include="*.md" .
+grep -rn "vra.dannygreyproductions.com" --include="*.sh" --include="*.md" .
 ```
 
 Expected: no output (empty). If `update_manifest.json` or Python client source files match, leave those untouched — they belong to the frozen v0.3.3 Python client and must keep working against whatever domain is live for existing users until cutover. Only scripts/docs should change here.

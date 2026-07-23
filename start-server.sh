@@ -9,7 +9,7 @@ VENV_DIR="$SCRIPT_DIR/venv"
 PYTHON="$VENV_DIR/bin/python"
 PIP="$VENV_DIR/bin/pip"
 CADDYFILE="/etc/caddy/Caddyfile"
-DOMAIN="relay.dannygreyproductions.com"
+DOMAIN="vra.dannygreyproductions.com"
 SERVER_PORT="5555"
 
 # Core server dependencies (actor clients have their own)

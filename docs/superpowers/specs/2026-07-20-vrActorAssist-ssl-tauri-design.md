@@ -226,7 +226,7 @@ One codebase, three artifacts per release:
 
 ### 4.13 Deployment & Domain
 
-- **Primary:** VPS with Caddy reverse proxy, domain **`vra.dannygreyproductions.com`** (replaces `relay.dannygreyproductions.com` — old domain retired). Caddy terminates TLS; server listens on `localhost:5555`.
+- **Primary:** VPS with Caddy reverse proxy, domain **`vra.dannygreyproductions.com`** (replaces `vra.dannygreyproductions.com` — old domain retired). Caddy terminates TLS; server listens on `localhost:5555`.
 - **Alternative:** Tailscale Funnel (public HTTPS through Tailscale) via `start-server-ts.sh` — unchanged mechanism.
 - **Client default server URL:** `wss://vra.dannygreyproductions.com/ws`.
 - **Server code:** unchanged. Only `start-server.sh` (Caddy domain) and documentation change.

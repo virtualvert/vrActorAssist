@@ -655,7 +655,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            server_url: "wss://relay.dannygreyproductions.com".to_string(),
+            server_url: "wss://vra.dannygreyproductions.com".to_string(),
             mode: "director".to_string(),
             remember_mode: false,
             actor_name: "Actor".to_string(),
@@ -878,7 +878,7 @@ git commit -m "feat: implement config persistence and connection manager"
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
 
-  let serverUrl = "wss://relay.dannygreyproductions.com";
+  let serverUrl = "wss://vra.dannygreyproductions.com";
   let status = "Disconnected";
   let isConnecting = false;
 
