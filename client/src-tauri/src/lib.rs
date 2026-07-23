@@ -67,9 +67,7 @@ async fn send_chat(state: State<'_, AppState>, text: String) -> Result<(), Strin
     state.ws.send(&Message::Msg { sender, text }).await
 }
 
-/// Sends a command (e.g. "*go", "*stop", "*play:3") to one actor ("target") or,
-/// if target is None, to every name in `all_actors` individually — mirrors
-/// director_client_ws.py's per-actor PRIV loop (there is no broadcast CMD in practice).
+/// Sends a command (e.g. "*go") to each target via PRIV. If targets is empty, this is a no-op.
 #[tauri::command]
 async fn send_command(state: State<'_, AppState>, command: String, targets: Vec<String>) -> Result<(), String> {
     for target in targets {
