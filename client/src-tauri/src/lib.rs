@@ -77,8 +77,7 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                     if let Ok(entries) = serde_json::from_str::<Vec<StatusEntry>>(actors_json) {
                         if let Ok(mut reg) = actors_for_msg.lock() {
                             for e in entries {
-                                reg.set_latency(&e.name, e.latency_ms);
-                                reg.mark_approved(&e.name);
+                                reg.upsert_from_status(&e.name, e.latency_ms);
                             }
                         }
                     }

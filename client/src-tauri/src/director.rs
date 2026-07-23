@@ -28,10 +28,27 @@ impl ActorRegistry {
         });
     }
 
+    #[allow(dead_code)]
     pub fn mark_approved(&mut self, name: &str) {
         if let Some(a) = self.actors.get_mut(name) {
             a.approved = true;
         }
+    }
+
+    /// Updates latency for an approved actor (from STATUS broadcast).
+    /// Inserts the actor if not already known, with a placeholder machine_id.
+    /// STATUS messages don't carry machine_id — the placeholder is only used
+    /// until a PENDING or broadcast fills in the real machine_id.
+    pub fn upsert_from_status(&mut self, name: &str, latency_ms: u32) {
+        let entry = self.actors.entry(name.to_string()).or_insert(ActorInfo {
+            name: name.to_string(),
+            machine_id: String::new(),
+            latency_ms,
+            approved: true,
+            enabled: true,
+        });
+        entry.latency_ms = latency_ms;
+        entry.approved = true;
     }
 
     pub fn remove(&mut self, name: &str) {
@@ -48,6 +65,7 @@ impl ActorRegistry {
         self.actors.values().filter(|a| a.approved && a.enabled).map(|a| a.name.clone()).collect()
     }
 
+    #[allow(dead_code)]
     pub fn set_latency(&mut self, name: &str, latency_ms: u32) {
         if let Some(a) = self.actors.get_mut(name) {
             a.latency_ms = latency_ms;
@@ -98,5 +116,14 @@ mod tests {
         reg.set_latency("NoSuchActor", 999); // must not panic or create an entry
         assert_eq!(reg.actors["Actor1"].latency_ms, 42);
         assert_eq!(reg.actors.len(), 1);
+    }
+
+    #[test]
+    fn upsert_from_status_inserts_unknown_and_sets_approved() {
+        let mut reg = ActorRegistry::default();
+        reg.upsert_from_status("Actor1", 42);
+        let a = &reg.actors["Actor1"];
+        assert!(a.approved);
+        assert_eq!(a.latency_ms, 42);
     }
 }
