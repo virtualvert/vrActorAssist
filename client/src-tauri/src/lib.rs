@@ -147,9 +147,14 @@ async fn connect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<()
                         if cfg_soundpad_enabled {
                             let cmd = text.clone();
                             let sp = cfg_soundpad_path.clone();
+                            let app = app_for_msg.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = soundpad::send_command(&cmd, &sp) {
                                     log::warn!("Soundpad error: {}", e);
+                                    let _ = app.emit("protocol-message", &Message::FileErr {
+                                        filename: "Soundpad".to_string(),
+                                        error: e,
+                                    });
                                 }
                             });
                         }
