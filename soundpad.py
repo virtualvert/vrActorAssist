@@ -167,11 +167,15 @@ def stop():
 
 
 def set_volume(volume):
-    """Set Soundpad volume (0.0 to 1.0)."""
-    if volume < 0.0 or volume > 1.0:
+    """Set Soundpad volume (0.0 to 1.0).
+    
+    Soundpad's remote-control SetVolume takes an integer percentage (0-100),
+    so the 0.0-1.0 value is scaled before sending.
+    """
+    if not 0.0 <= volume <= 1.0:  # also rejects NaN
         print("[Soundpad] Volume must be between 0.0 and 1.0")
         return (False, "Volume must be between 0.0 and 1.0")
-    return run_soundpad_command(f"SetVolume({volume})")
+    return run_soundpad_command(f"SetVolume({round(volume * 100)})")
 
 
 def execute_command(command, args=""):
