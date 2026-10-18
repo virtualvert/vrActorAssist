@@ -1,0 +1,1188 @@
+# vrcActorSync: Desktop Web UI + Local Agent Design
+
+**Date:** 2026-10-17 (revised 2026-10-18)
+**Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
+**Version:** 0.3
+**Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.3
+
+- Project renamed **vrcActorSync** (was vrActorAssist). Env vars `VRCAS_*`, Python package `vrcas_protocol`.
+- The new app also speaks the **v0.3 protocol** to today's relay ("compatibility mode", §5.6, §11.3), so it's usable before the v2 relay exists.
+- First implementation slice built and tested (§20): web UI, desktop agent, compatibility mode.
+- §17 gains #9 (the relay offers "updates" to newer clients).
+
+### Changes in v0.2
+
+- **Desktop window via pywebview** (§4.3). The same UI is also reachable from any browser.
+- **Full Soundpad control through its named-pipe API** (§8.1, Appendix A): play a specific file, speakers-only / mic-only / both, volume, mute, pause, seek, live position and sound list.
+- **Timing and delay compensation** (§8.2): server-synced scheduled starts, per-actor offsets, measured Soundpad start latency.
+- **OSC timeline editor** (§8.3): waveform, one lane per actor, cues with one or more parameters, anchored to Soundpad's playback position.
+- **Installed and portable builds** (§10). The installed build updates itself; the portable build only notifies.
+- **Legacy `/ws` clients supported with no removal date** (§11). This includes server-side emulation of scheduling for old actors.
+- **Windows test plan and a Soundpad probe script** (`tools/soundpad_probe.py`, Appendix B).
+- Linux is limited to directors; Linux actor features are out of scope.
+
+---
+
+## 1. Summary
+
+The tkinter clients are replaced by one **desktop app**: a small Python **agent** with a **pywebview** window. The window shows a web UI that the agent serves on `127.0.0.1`.
+- The same UI opens in any browser through **Open in browser**.
+- The relay server also hosts the UI, so a director can work with no install.
+- Tauri and Electron are not used.
+
+- **Actors and camera operators** run the desktop app. The agent holds the relay connection and owns local hardware: Soundpad (named-pipe API), VRChat OSC, the file system and OBS (obs-websocket).
+- **Directors** use either the desktop app or `https://<relay>/` in a browser.
+- **Features are addons:** `soundpad`, `osc`, `files`, `obs`, and later `stream`. A new addon needs no relay server change.
+- **Protocol v2** is a typed JSON envelope with namespaced message types. Server and agent share one Python schema package, and the UI's TypeScript types are generated from it.
+- **Old v0.3.x clients keep working** on `/ws` through a bridge, with no removal date.
+- **Distribution:** a per-user Windows installer with auto-update, plus a single-file portable exe.
+
+---
+
+## 2. Goals and Non-Goals
+
+### 2.1 Goals
+
+| # | Goal |
+|---|------|
+| G1 | Feature parity with the v0.3.3 Python clients (§13) |
+| G2 | No Tauri, no Electron. A pywebview desktop window by default; the same UI also works in a normal browser |
+| G3 | Modular: each feature is an addon. New addons need no relay server change |
+| G4 | Stable: closing the window never drops a session. The protocol is typed and shared. Faults stay inside one addon |
+| G5 | Full Soundpad control: play a specific file, choose the output line, volume, mute, pause, seek, report status |
+| G6 | Delay compensation: scheduled starts with per-actor offsets |
+| G7 | OSC timeline editor: one or more VRChat parameters per cue, for chosen actors, at chosen points in a sound |
+| G8 | Camera-operator addon: sync OBS settings, start and stop recording together, report status |
+| G9 | Installed build with auto-update, and a portable build |
+| G10 | Backward compatibility with v0.3.x WebSocket clients, with no removal date |
+| G11 | Leave room for P2P video between camera operators and the director (designed, built later) |
+
+### 2.2 Non-Goals
+
+- Replacing the Python relay server
+- A Linux soundboard or Linux actor features (ROADMAP Priority 3 stays deferred)
+- macOS builds
+- Loading third-party addons from outside the repo (the interface allows it later)
+- Frame-accurate genlock across cameras
+
+---
+
+## 3. Why a Local Agent
+
+| Capability | Plain web page can do it? | Needed by |
+|---|---|---|
+| Talk to Soundpad's named pipe `\\.\pipe\sp_remote_control` | No | Actor |
+| Send UDP OSC to `127.0.0.1:9000` | No. Browsers have no UDP | Actor |
+| Save to a chosen folder by path, with overwrite checks | Partly. The File System Access API is Chromium-only and asks permission each session | Actor |
+| Connect to obs-websocket with a stored password | Awkward: the password would live in the page | Camera op |
+| Stay connected after the window or tab closes | No | Actor, Camera op |
+
+The agent does the local work. The UI is a view of it, and that view can be the pywebview window, a browser tab, or both at once.
+
+---
+
+## 4. Architecture
+
+### 4.1 Components
+
+```
+                ┌──────────────────────────────────────┐
+                │ Relay server (FastAPI, VPS)           │
+                │  /v2/ws   JSON router + permissions   │
+                │  /ws      legacy pipe bridge (v0.3.x) │
+                │  /        web app (static build)      │
+                │  /health  health check                │
+                │  time.*, rtc.* signaling, ICE config  │
+                │  cue lists, per-actor delays          │
+                └──────────────────┬───────────────────┘
+         ┌─────────────────────────┼──────────────────────────┐
+         │                         │                          │
+ Director: browser          Actor PC (Windows)           Camera-op PC
+ or desktop app       ┌────────────────────────┐   ┌────────────────────────┐
+                      │ vrcActorSync app      │   │ vrcActorSync app      │
+                      │ ┌────────────────────┐ │   │  agent + addons:       │
+                      │ │ pywebview window   │ │   │  obs, (stream)         │
+                      │ └─────────┬──────────┘ │   └──────────┬─────────────┘
+                      │   http://127.0.0.1     │       obs-websocket :4455
+                      │ ┌─────────▼──────────┐ │       → local OBS Studio
+                      │ │ agent + addons:    │ │
+                      │ │ soundpad, osc,     │ │
+                      │ │ files              │ │
+                      │ └──┬──────────┬──────┘ │
+                      └────┼──────────┼────────┘
+                 named pipe│          │UDP OSC
+                       Soundpad     VRChat
+```
+
+| Component | Language | Role |
+|---|---|---|
+| Relay server | Python (FastAPI, evolves from `server_ws.py`) | Auth, approval, presence, routing, permissions, clock sync, signaling, storage for cue lists and delays, serves the web app |
+| Desktop app | Python: agent (FastAPI + uvicorn, asyncio) + pywebview shell | Local hardware access, holds the relay connection, serves and shows the UI |
+| Web app | Svelte 5 + Vite + TypeScript (ported from `origin/tauri` `client/src`) | All UI for every role: desktop window, browser tab, hosted mode |
+| `vrcas_protocol` | Python (pydantic v2) | Message schemas shared by server and agent; source of the generated TS types |
+
+### 4.2 Runtime Modes
+
+| Mode | Who | UI shown in | Holds relay connection |
+|---|---|---|---|
+| Desktop (default) | Actor, camera op, director | pywebview window → `http://127.0.0.1:<port>/` | Agent |
+| Desktop + browser | Same, plus a second screen, OBS dock, etc. | Window and/or any local browser tab (Open in browser) | Agent |
+| Headless | When WebView2 is missing, or `--headless` | Browser tab only | Agent |
+| Hosted | Director with nothing installed (any OS, phone, tablet) | `https://<relay>/` | Browser |
+
+### 4.3 Desktop Shell (pywebview)
+
+**Threads:**
+- pywebview requires `webview.start()` on the main thread.
+- The agent (asyncio loop with uvicorn, relay client and addons) runs in a background thread that starts first.
+- `create_window()` loads `http://127.0.0.1:<port>/?t=<token>` only once the agent reports that its UI server is ready.
+
+**Renderer (Windows):**
+- pywebview's Edge Chromium renderer needs the WebView2 Runtime and .NET Framework 4.6.2+.
+- By default pywebview falls back to MSHTML (IE11), which can't run this app. So the agent checks for WebView2 itself, using the registry key for client `{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}` under `EdgeUpdate\Clients` (HKLM and HKCU).
+  - If WebView2 is present, start pywebview.
+  - If it is missing, use headless mode, open the default browser, and show a one-line hint to install WebView2.
+  - The page also runs a startup self-check and asks the agent to switch to the browser if it detects it isn't running on Chromium.
+
+**Renderer (Linux, directors only):** headless mode is the default. A WebKitGTK window can be enabled in settings.
+
+**Close behaviour:**
+- The window's `closing` handler returns `False` and hides the window, so the agent keeps running in the tray.
+- The tray icon (`pystray`, its own thread) offers **Open window**, **Open in browser** and **Quit**.
+- A setting turns closing the window into Quit.
+
+**Browser access:**
+- **Open in browser** (tray menu and UI menu) opens the same URL with a fresh one-time token.
+- Any number of windows and tabs can be open; they all receive the same events.
+
+**Native dialogs:**
+- In the window: `window.create_file_dialog(FileDialog.OPEN / FOLDER)`.
+- In browser mode: the agent opens a `tkinter.filedialog` on one dedicated thread instead.
+
+**Window state:**
+- `private_mode=True` (pywebview's default); the per-launch token cookie lives in memory.
+- In portable mode, `storage_path` points inside the portable folder (§10.3).
+
+**Why pywebview over Tauri:** on Windows it uses the same WebView2 engine, but everything stays in Python: no Rust toolchain, one language with the server, and the UI also runs unchanged in a browser.
+
+### 4.4 Transport Abstraction (Web App)
+
+UI components never talk to a socket directly:
+
+```ts
+interface Transport {
+  state: Readable<"disconnected" | "connecting" | "ready">;
+  send(env: Envelope): void;                         // relay message
+  on<T extends MsgType>(type: T, fn: (env: EnvelopeOf<T>) => void): () => void;
+  call<R>(method: string, params?: object): Promise<R>; // agent-local call (dialogs, config)
+}
+```
+
+- `AgentTransport` connects to `ws://127.0.0.1:<port>/ui/ws` (desktop and headless modes).
+- `RelayTransport` connects to `wss://<relay>/v2/ws` (hosted mode). Agent-only calls are unavailable there, and the UI hides what depends on them.
+
+### 4.5 Example Flow: Scheduled Play with OSC Cues
+
+```
+Director UI ── osc.cue.load {cuelist, cues for A} ──► Relay ──► Actor A agent ── cue ack
+Director UI ── soundpad.play {sound:{path}, lines:"both", at:T, cuelist_id} ──► Relay ──► Actor A agent
+                                     Actor A agent: fire_at = T + delay_A − start_latency_A   (§8.2)
+                                       ├─► soundpad: DoPlaySound(i, true, true)
+                                       ├─► osc: anchor to GetPlaybackPositionInMs, fire cues (§8.3)
+                                       └─► soundpad.ack {late_ms} ──► Relay ──► Director UI
+```
+
+---
+
+## 5. Protocol v2
+
+### 5.1 Envelope
+
+```json
+{
+  "v": 2,
+  "id": "01JA9X3V7Q0K3M8Z5W2C4R6T1B",
+  "type": "soundpad.play",
+  "from": "s_8f2c",
+  "to": {"ids": ["s_a11e", "s_b72d"]},
+  "ts": 1760740000123,
+  "reply_to": null,
+  "data": {"sound": {"path": "C:\\Sounds\\EP3 Scene 4 - Diego.mp3"}, "lines": "both", "at": 1760740000423}
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `v` | int | Always `2` |
+| `id` | string | ULID, unique per message |
+| `type` | string | `namespace.action[.sub]` |
+| `from` | string | Session ID. **The server sets this field**; a client-supplied value is ignored, which prevents spoofing |
+| `to` | target | §5.2 |
+| `ts` | int | Sender's server-synced time in ms |
+| `reply_to` | string? | `id` of the request this answers |
+| `data` | object | Payload validated by the type's schema |
+
+### 5.2 Targeting
+
+`to` takes one of these forms:
+- `"server"`
+- `"all"`
+- `{"role": "camera"}`
+- `{"ids": [...]}`
+
+Session IDs come from the server and map to `machine_id`. **Display names are never used for routing.**
+
+### 5.3 Scheduling Fields
+
+Any action message (`soundpad.play`, `soundpad.stop`, `cue.go`, `osc.param`, `obs.record.start`) may carry `at`, a time in **server-clock** ms.
+- With `at`, the receiver schedules the action (§8.2).
+- Without `at`, it acts on receipt.
+
+### 5.4 Namespaces
+
+| Namespace | Owner | Examples |
+|---|---|---|
+| `hello`, `welcome`, `denied`, `error` | core | handshake, failures |
+| `presence.*` | core | `roster` (includes each actor's `delay_ms`), `latency` |
+| `approval.*` | core | `pending`, `approve`, `deny`, `forget`, `forgotten` |
+| `actor.settings` | core | `{id, delay_ms, display_name}` stored server-side |
+| `chat.*` | core | `msg`, `priv` |
+| `time.*` | core | `ping`, `pong` |
+| `update.*` | core | `available` |
+| `cue.*` | core | `go` (play selected), `stop`, `play` (index), `ack` — legacy-compatible semantics |
+| `soundpad.*` | soundpad addon | `play`, `stop`, `pause`, `seek`, `jump`, `volume`, `mute`, `list.request`, `list`, `state`, `ack`, `calibrate` |
+| `file.*` | files addon | `offer`, `accept`, `deny`, `progress`, `end`, `ok`, `err`, `batch.start/end/cancel` (+ binary frames) |
+| `osc.*` | osc addon | `param`, `cue.load`, `cue.ack`, `cue.fired`, `params` (discovered avatar parameters) |
+| `cuelist.*` | server storage | `save`, `get`, `list`, `delete` |
+| `obs.*` | obs addon | `profile.apply/status/release`, `record.start/stop/state`, `mark`, `slate`, `status` |
+| `rtc.*` | stream addon | `offer`, `answer`, `ice`, `bye` |
+
+The server understands only core namespaces and `cuelist.*`. Everything else it routes without reading `data`, applying only the permission table.
+
+### 5.5 Permission Table (Server-Enforced)
+
+Columns are the role of the **sender**.
+
+| Message type | director | assistant | actor | camera |
+|---|---|---|---|---|
+| `chat.msg`, `chat.priv` | ✅ | ✅ | ✅ | ✅ |
+| `cue.go/stop/play`, `soundpad.play/stop/pause/seek/jump/volume/mute/list.request/calibrate` | ✅ | ✅ | ❌ | ❌ |
+| `cue.ack`, `soundpad.ack/list/state` | ❌ | ❌ | ✅ | ❌ |
+| `approval.approve/deny/forget`, `actor.settings` | ✅ | ❌ | ❌ | ❌ |
+| `file.offer` + chunks | ✅ | ❌ | ❌ | ❌ |
+| `file.accept/deny/ok/err/progress` | ❌ | ❌ | ✅ | ✅ |
+| `osc.param`, `osc.cue.load` | ✅ | ✅ | ❌ | ❌ |
+| `osc.cue.ack`, `osc.cue.fired`, `osc.params` | ❌ | ❌ | ✅ | ❌ |
+| `cuelist.save/delete` | ✅ | ✅ | ❌ | ❌ |
+| `cuelist.get/list` | ✅ | ✅ | ✅ | ❌ |
+| `obs.profile.apply/release`, `obs.record.start/stop`, `obs.mark`, `obs.slate` | ✅ | ✅ | ❌ | ❌ |
+| `obs.profile.status`, `obs.record.state`, `obs.status` | ❌ | ❌ | ❌ | ✅ |
+| `rtc.*` | ✅ | ✅ | ❌ | ✅ |
+
+- The table is data in `server/permissions.py`.
+- Rejected messages get `error {code: "forbidden", reply_to}`.
+- The legacy bridge applies the same table (§11).
+
+### 5.6 Handshake
+
+```
+client → hello   {role, name, machine_id, version, platform, capabilities[], secret?}
+server → welcome {session_id, server_version, version_status, server_time, delay_ms, ice_servers[]}
+       | approval.pending {}
+       | denied {reason}
+```
+
+- `capabilities` examples: `["soundpad", "soundpad.lines", "soundpad.add", "soundpad.position", "osc"]` or `["obs.record", "obs.profile"]`. The director UI shows controls per participant based on them.
+- Directors and assistants authenticate with a secret, as today. Actors and cameras go through approval; `approved_actors.json` gains `role` and `delay_ms`.
+- `version_status` follows `compare_versions()` (major mismatch → unsupported).
+- A v0.4 app that reaches a v0.3.x server runs in **compatibility mode** (`agent/relay_legacy.py`): it registers over the pipe protocol on `/ws` and supports the cast list, approvals, Go / Play in 3s / Stop, chat, Soundpad and OSC cues. Not available there: camera operators in the roster, file transfer, scheduling, the v2 permission checks. The UI says it's on a v0.3 relay.
+
+### 5.7 File Chunks as Binary Frames
+
+```
+| 1 byte kind | 16 bytes transfer UUID | 4 bytes chunk index (BE) | payload |
+```
+
+- Transfers are keyed by transfer UUID. Chunks are 256 KiB; integrity is SHA-256 in `file.end`.
+- Flow control: at most 8 unacknowledged chunks are in flight, acknowledged with `file.progress`.
+- Batches and cancel keep their v0.3.0 semantics.
+
+### 5.8 Schema Source of Truth
+
+- `protocol/vrcas_protocol/` contains pydantic v2 models, one per message type, plus the envelope. Server and agent both import it.
+- `scripts/gen_ts_types.py` exports JSON Schema and generates `web/src/protocol/types.ts`. CI fails if it is stale.
+- The cue list file format (`cuelist.v1`, §8.3.2) is defined in the same package.
+
+---
+
+## 6. Relay Server Changes
+
+| Change | Detail |
+|---|---|
+| `/v2/ws` endpoint | Envelope parsing, validation of core types, routing by `to` |
+| Permission enforcement | §5.5 table, applied to v2 and legacy traffic |
+| Session IDs | Issued in `welcome`, mapped to `machine_id` |
+| Clock sync | Answers `time.ping` with `time.pong {t0, t1, t2}` (§8.2.1) |
+| Per-actor settings | `delay_ms` and `display_name` stored in `approved_actors.json`, included in `welcome` and `presence.roster` |
+| Cue list storage | `cuelists/<id>.json` (`cuelist.v1`), keyed by sound SHA-256 + name. `cuelist.*` messages |
+| Legacy bridge | `/ws` stays (§11), including emulated scheduling for legacy actors |
+| ICE config | `welcome.ice_servers` with STUN/TURN URLs and short-lived TURN credentials (coturn shared secret) |
+| Web app hosting | Static build at `/`. **The health JSON moves from `/` (`server_ws.py:665`) to `/health` only** |
+| Take log (optional) | `takes/YYYY-MM-DD.jsonl` from `obs.record.state` + `cue.*` / `soundpad.*` events |
+| Existing fixes | §17 |
+
+```
+server/
+├── app.py             # FastAPI app: /v2/ws, /ws, /health, static web build
+├── router.py          # v2 routing by target
+├── permissions.py     # role × message-type table
+├── legacy_bridge.py   # pipe ⇄ v2 (uses shared.py) + legacy scheduling emulation
+├── sessions.py        # session registry, approvals, per-actor settings
+├── storage.py         # cue lists, take log
+├── timesync.py
+└── updates.py         # manifest lookup (moved from server_ws.py)
+```
+
+`server_ws.py` stays as a thin entrypoint shim, so `start-server.sh` and `start-server-ts.sh` keep working unchanged.
+
+---
+
+## 7. Agent
+
+### 7.1 Responsibilities
+
+- Hold the relay connection: reconnect with backoff (1 s → 30 s cap, with jitter), clock sync, handshake
+- Run addons and route relay messages to them through the event bus
+- Serve the web app and local UI API on loopback; run the pywebview window and tray
+- Provide native dialogs
+- Updates: auto-install for installed builds, notify-only for portable builds (§10)
+
+### 7.2 Process and Lifecycle
+
+1. **Single-instance lock:** a second launch only focuses or reopens the window of the running instance.
+2. **Startup order:** load config → start addons in dependency order → start the UI server → open the window (or browser in headless mode) → connect to the relay.
+3. **Logs:** rotating file in the data dir. The UI log panel streams the same events.
+4. **Shutdown:** addons stop in reverse order.
+   - **The OBS addon never stops a recording because the app exits or loses the relay.**
+   - The soundpad addon never stops a playing sound on exit.
+
+### 7.3 Event Bus
+
+- In-process async pub/sub. Topics are the protocol `type` strings; local-only topics use the `local.` prefix.
+- Each handler runs as its own task with a timeout. An exception is logged, the addon is marked `degraded` and shown in the UI, and **nothing else stops**.
+
+### 7.4 Addon Interface
+
+```python
+class Addon(ABC):
+    id: ClassVar[str]                       # "soundpad"
+    platforms: ClassVar[set[str]] = {"win32", "linux"}
+    requires: ClassVar[list[str]] = []      # other addon ids
+    handles: ClassVar[list[str]] = []       # relay types, globs allowed: ["soundpad.*", "cue.*"]
+    config_model: ClassVar[type[BaseModel]] # pydantic → settings form drawn by the UI
+
+    async def start(self, ctx: AddonContext) -> None: ...
+    async def stop(self) -> None: ...
+    async def on_message(self, env: Envelope) -> None: ...
+    def capabilities(self) -> list[str]: return []
+    def ui_calls(self) -> dict[str, Callable]: return {}   # local calls exposed to the UI
+
+@dataclass
+class AddonContext:
+    bus: EventBus
+    relay: RelayClient          # send(), session_id, server_time(), delay_ms
+    scheduler: Scheduler        # call_at_server_time(), cancel(group) — §8.2
+    config: BaseModel
+    save_config: Callable[[BaseModel], Awaitable[None]]
+    log: Logger
+    data_dir: Path
+```
+
+- **States:** `disabled → starting → running ⇄ degraded → stopped`. An addon whose platform doesn't match is listed as unavailable.
+- **Registration:** first-party addons are listed in `agent/addons/__init__.py`. Python entry points (`vrcas.addons`) can be added later.
+
+### 7.5 Config
+
+| Build | Config and data location |
+|---|---|
+| Installed | `%APPDATA%\vrcActorSync\` (Linux: `~/.config/vrcActorSync/`) |
+| Portable | `<exe folder>\vrcActorSync-data\` (§10.3) |
+
+- **Migration:** on first run, import an existing v0.3.x `config.json` from next to the exe (`shared.py:84` behaviour). This covers old clients that auto-update into the portable build (§11.4).
+- **Structure:** `{ "core": {...}, "addons": { "<id>": {...} } }`. Each addon section is validated by its `config_model`; invalid values fall back to defaults with a warning.
+- **Machine ID:** keep the current `uuid5(NAMESPACE_DNS, hostname)` so existing approvals stay valid.
+
+### 7.6 Local UI API
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /` and static assets | Web app build |
+| `GET /api/state` | Snapshot: connection, roster, addon states, config (secrets redacted) |
+| `WS /ui/ws` | Relay envelopes both ways, plus `{"call": "<addon>.<method>", "args": {...}}` RPC |
+| `GET /overlay/*` | OBS browser-source pages (§9.4) |
+
+### 7.7 Local Security
+
+1. Bind to `127.0.0.1` only by default.
+2. Reject requests whose `Host` isn't `127.0.0.1:<port>` / `localhost:<port>` (blocks DNS rebinding).
+3. Reject WebSocket upgrades with a foreign `Origin`.
+4. One-time token per open: the window or browser loads `/?t=<token>` and exchanges it for an `HttpOnly; SameSite=Strict` cookie. Every API and WS call needs the cookie.
+5. No CORS headers.
+6. Secrets (director secret, OBS password) never reach the UI. It only sees `"set": true/false`.
+
+**LAN mode** (phone or tablet) is a later, opt-in mode with a pairing code. Tailscale is the recommended path.
+
+---
+
+## 8. Addons
+
+### 8.1 `soundpad` (Windows)
+
+Based on Leppsoft's reference client `SoundpadRemoteControl.java` (RC interface 1.1.2). Full command list: Appendix A. Assumptions marked **[probe]** are checked by `tools/soundpad_probe.py` on the test box (Appendix B).
+
+#### 8.1.1 Transport: Named Pipe
+
+- **Pipe:** `\\.\pipe\sp_remote_control`, local machine only.
+  - Requests are UTF-8 command text such as `DoPlaySound(5, true, false)`.
+  - Action commands answer with HTTP-style codes (`R-200`, `R-404`, …).
+  - Getters answer with the raw value or XML.
+- **Why the pipe replaces the CLI:**
+  - `Soundpad.exe -rc` starts a new process per command and returns nothing.
+  - The pipe returns position, status, volume and the sound list, which the status display, sound picker and cue anchoring all need.
+  - The probe measures both, to confirm.
+- **Client:**
+  - One worker thread owns the pipe handle and runs one request at a time, at least 2 ms apart. The reference client warns that back-to-back requests can break the pipe.
+  - Timeouts: 2 s, or 10 s for list calls. On a timeout or a broken pipe, the client reconnects with backoff and marks the addon `degraded`; the UI shows "Soundpad not responding".
+  - Read method, as in the reference client: block for the first byte, then read the rest of what is available (`PeekNamedPipe`). The probe uses the same method.
+- **Startup probe:** `IsAlive()`, `GetVersion()`, `GetRemoteControlVersion()`, `IsTrial()` → feature flags.
+  - `add_sound` is off in the trial version: `DoAddSound` isn't allowed there.
+  - Warn if the RC version is below 1.1.2, since some commands would be missing.
+- **Auto-launch (optional):** if the pipe is missing and `auto_launch` is on, start Soundpad.exe (path from config, else auto-detected by `soundpad.py`'s `find_soundpad_exe`) and wait up to 15 s for the pipe. This covers ROADMAP Priority 4, "Auto-start with Soundpad".
+- **CLI fallback:** if the pipe can't be opened but Soundpad.exe was found, only play-selected, play-by-index and stop work, through `-rc` as today. The addon reports `capabilities: ["soundpad"]` only.
+
+#### 8.1.2 Commands
+
+| Message | Data | Soundpad calls |
+|---|---|---|
+| `soundpad.play` | `sound` (§8.1.3), `lines`, `volume?`, `start_ms?`, `at?`, `cuelist_id?` | resolve sound → [`SetVolume(v)`] → `DoPlaySound(i, render, capture)` → [`DoSeekMs(start_ms)`] |
+| `soundpad.stop` | `at?` | `DoStopSound()`; cancels this actor's scheduled actions and cue timers |
+| `soundpad.pause` | `paused: bool` | `GetPlayStatus()`, then `DoTogglePause()` only if needed, so the command is idempotent |
+| `soundpad.seek` | `ms` | `DoSeekMs(ms)` (absolute) |
+| `soundpad.jump` | `ms` (±) | `DoJumpMs(ms)` (relative) |
+| `soundpad.volume` | `value` 0–100 | `SetVolume(value)` |
+| `soundpad.mute` | `muted: bool` | `IsMuted()`, then `DoToggleMute()` only if needed |
+| `soundpad.list.request` | — | `GetSoundlist()`, `GetCategories(false, false)` → `soundpad.list` |
+| `soundpad.calibrate` | `sound?` | Speakers-only test play to measure start latency (§8.2.3) |
+| `cue.go` / `cue.stop` | legacy semantics | `DoPlaySelectedSound()` / `DoStopSound()` |
+| `cue.play` | `index` (legacy `*play:N`) | `DoPlaySound(N)` |
+
+- `soundpad.ack {status, late_ms, error?}` answers every action.
+- Error codes: `not_found`, `not_in_soundpad`, `trial_limit`, `soundpad_offline`, `timeout`.
+- `start_ms` seeks right after starting playback. **[probe]** whether this causes an audible blip; if it does, the UI marks it as "approximate".
+
+#### 8.1.3 Sound References ("Play a Specific File")
+
+```json
+{"path": "C:\\Users\\coda\\vrActorFiles\\EP3 Scene 4 - Diego.mp3"}
+{"sha256": "9f2c…"}                    // a file received through the files addon
+{"index": 12}                          // All-sounds index (changes if the actor reorders sounds)
+{"category": "Scene 4", "position": 2}
+{"selected": true}                     // what the actor has selected (legacy Go)
+```
+
+How the actor's agent resolves a reference:
+1. `sha256` → local path, from the files addon's receive log.
+2. `path` → index, through a cached sound list.
+   - Match the `url` attribute, normalised and case-insensitive. **[probe]** the attribute names; the expected ones are `index`, `url`, `title`, `duration`.
+   - Refresh the cache when `GetSoundFileCount()` changes, or on a miss.
+3. Not in Soundpad:
+   - With `auto_add` on and the full version: `DoAddSound("<path>")`, refresh, then use the new index.
+   - In the trial: error `trial_limit` with the hint "add it to Soundpad by hand".
+4. **Index drift guard:** before playing by index, `GetSoundlist(i,i)` must still show the same `url`. Otherwise refresh and resolve again.
+5. `category` → `GetCategories` → category index → `DoPlaySoundFromCategory(cat, pos, render, capture)`.
+
+**Director sound picker:**
+- Each actor's Soundpad list (from `soundpad.list`) is searchable.
+- Picking a sound sends a `path` reference, which stays correct even if the actor reorders sounds.
+- Files sent through the files addon appear as "Sent files" and use `sha256` references, with auto-add.
+
+#### 8.1.4 Output Lines
+
+| `lines` | Soundpad args | Use |
+|---|---|---|
+| `both` (default) | `render=true, capture=true` | Normal performance |
+| `speakers` | `render=true, capture=false` | Rehearsal and checks: only the actor hears it. Also used for calibration |
+| `mic` | `render=false, capture=true` | Audience hears it, actor doesn't |
+
+The default is set per actor in config. The director can override it on each play.
+
+#### 8.1.5 Volume and Mute
+
+- `SetVolume` / `GetVolume` use **0–100**. The reference client documents them as "volume of the speakers".
+- **[probe] + listen test:** does `SetVolume` also change what others hear on the mic line?
+  - If it doesn't, the slider is labelled "Speaker volume", and audience loudness stays a Soundpad setting on the actor's machine.
+- `IsMuted()` / `DoToggleMute()` mute the speakers.
+- Today's `soundpad.py` sends 0.0–1.0 to `SetVolume`; see §17 #8.
+
+#### 8.1.6 Status Reporting
+
+- **While playing:** poll `GetPlayStatus()` and `GetPlaybackPositionInMs()` every 250 ms. Send `soundpad.state {status, position_ms, duration_ms, sound, lines, volume, muted}` to directors at most twice a second. Otherwise send on change, plus a heartbeat every 10 s.
+- **List changes:** poll `GetSoundFileCount()` every 5 s; push `soundpad.list` when the count changes.
+- **Director UI:** a mini transport per actor with status, title, progress bar and volume.
+
+#### 8.1.7 Config and Capabilities
+
+- **Config:** `enabled`, `path`, `auto_launch`, `default_lines`, `auto_add_received`, `auto_compensate_latency`.
+- **Capabilities:**
+  - `soundpad` (play/stop)
+  - `soundpad.lines`, `soundpad.position`, `soundpad.list` (pipe available)
+  - `soundpad.add` (full version)
+
+### 8.2 Timing and Delay Compensation
+
+Shared by `soundpad`, `osc` and `obs` through `ctx.scheduler`.
+
+#### 8.2.1 Clock Sync (NTP-style)
+
+- The agent sends `time.ping {t0}`; the server replies `time.pong {t0, t1, t2}`; the agent receives it at `t3`.
+- `offset = ((t1 − t0) + (t2 − t3)) / 2`
+- `rtt = (t3 − t0) − (t2 − t1)`
+- Sample every 10 s (every 1 s for the first 5 s after connecting). Keep 8 samples and use the offset of the sample with the lowest RTT.
+- The scheduler converts server time to the local monotonic clock and uses `loop.call_at`.
+
+#### 8.2.2 Scheduled Starts
+
+- The director UI sends one message to all targeted actors with `at = server_now + lead`. The default lead is 300 ms (configurable).
+  - The UI warns when any actor's one-way latency (RTT/2) approaches the lead.
+- **Play in 3s** becomes `at = now + 3000`. Every agent shows the countdown locally, and **Stop** cancels it everywhere.
+
+#### 8.2.3 Per-Actor Fire Time
+
+```
+fire_at = at + delay_ms[actor] − start_latency_ms[actor]   (the last term only if auto_compensate_latency)
+```
+
+- **`delay_ms`:** a manual per-actor offset in ms, positive or negative.
+  - The director sets it (right-click actor → Set delay). It is stored on the server and delivered in `welcome` and `presence.roster`.
+  - It covers differences in audio path or VRChat voice delay, and creative offsets. This is FEATURES-PLANNED Feature 3.
+- **`start_latency_ms`:** measured on the actor's machine as the time from `DoPlaySound` to the first position above 0. It uses the median of the last 5 plays.
+  - **Calibrate** runs one speakers-only play to seed it.
+  - **[probe]** measures typical values.
+- **Late arrival:** if a message arrives more than 20 ms after `fire_at`, the agent acts immediately and reports `late_ms` in the ack. The director UI shows it per actor.
+
+#### 8.2.4 Limits
+
+VRChat voice delay to each listener varies per listener and isn't measurable locally. `delay_ms` is tuned by ear from the director's position.
+
+### 8.3 `osc` and the OSC Timeline Editor
+
+#### 8.3.1 OSC Sender (Actor Agent)
+
+- Uses `python-osc` `SimpleUDPClient`. **Config:** `host` (127.0.0.1), `port` (9000), `enabled`.
+- **Value types** follow VRChat avatar parameter types: `bool` (T/F), `int` (0–255), `float` (−1.0..1.0). A value is sent with its declared type, never guessed.
+- Keeps the shorthand rule: `RecIcon` → `/avatar/parameters/RecIcon`; a leading `/` means a full path.
+- `osc.param {actions[], at?}` fires immediately or at `at`. This covers today's "OSC toggle on Go/Stop" feature.
+- When OSC is disabled: log the skip and acknowledge with `status: skipped`.
+
+#### 8.3.2 Cue List Model (`cuelist.v1`)
+
+```json
+{
+  "schema": "cuelist.v1",
+  "id": "cl_7Q2M",
+  "name": "EP3 Scene 4 - Diego monologue",
+  "sound": {"title": "EP3 Scene 4 - Diego.mp3", "sha256": "9f2c…", "duration_ms": 41230},
+  "cues": [
+    {
+      "id": "c1", "at_ms": 2000, "label": "Rec on",
+      "targets": {"characters": ["Diego"]},
+      "actions": [
+        {"param": "RecIcon", "type": "bool", "value": true},
+        {"param": "MouthOpen", "type": "float", "value": 0.8, "hold_ms": 3000, "revert": 0.0}
+      ]
+    },
+    {
+      "id": "c2", "at_ms": 5000,
+      "targets": {"actors": ["s_a11e", "s_b72d"]},
+      "actions": [{"param": "/avatar/parameters/EyeClose", "type": "bool", "value": true}]
+    }
+  ],
+  "on_stop": "revert"
+}
+```
+
+- **Targets:** by character, resolved through the director's character → actor mapping (the same mapping as Audioscript file routing), or by actor directly.
+  - Character targets let one cue list be reused when a different actor plays the role.
+- **Actions:** one or more parameter changes per cue, so several toggles can fire at the same moment.
+- **`hold_ms` + `revert`:** auto-revert after a duration.
+- **`on_stop`:** `revert` sends each touched parameter's `revert` value (default: bool → opposite, number → 0); `none` leaves values as they are.
+
+#### 8.3.3 Editor (Director UI)
+
+- **Audio:** the director loads the sound file in the editor; the browser decodes it.
+  - The SHA-256 is computed in the page with `SubtleCrypto` and keys the cue list to that sound.
+  - When the file is sent to actors, cue lists for it are offered automatically.
+- **Waveform:** wavesurfer.js v7 with the Regions plugin for cue markers and the Timeline plugin for a millisecond ruler. Zoom and a 10 ms snap grid.
+- **Lanes:** one lane per character or actor, so who gets what, and when, is visible at a glance. A cue with several targets appears on each target's lane.
+- **Editing:**
+  - Click a lane or press **M** to add a cue at the playhead.
+  - Drag to move; nudge ±10 or ±100 ms; copy and paste.
+  - The inspector shows time, targets, actions (parameter, type, value, hold, revert) and a label.
+- **Parameter help:** autocomplete and type checks from discovered avatar parameters (§8.3.5).
+  - Warnings for unknown parameters, wrong types, and cues past the end of the sound.
+- **Preview modes:**
+  - **Preview:** audio plays in the director's UI; markers light up. No network traffic.
+  - **Test OSC:** fires the actors' OSC on the timeline without Soundpad.
+  - **Rehearse:** plays on the actors' Soundpad **speakers only** with OSC, so actors hear and see it but the audience doesn't.
+- **Storage:** saved on the server (`cuelist.save`) and shared between directors. JSON import and export.
+
+#### 8.3.4 Runtime on the Actor (Audio-Anchored Cues)
+
+1. **Arm:** `osc.cue.load {cuelist_id, sound, cues}` carries only the cues for this actor, with characters already resolved by the director UI. The actor replies `osc.cue.ack {count, warnings}`.
+2. **Go:** `soundpad.play {sound, at, cuelist_id}`.
+3. **Anchor:**
+   - After `DoPlaySound`, poll `GetPlaybackPositionInMs()` every 10 ms until the position is above 0.
+   - Set `anchor = now − position`, then schedule each action at `anchor + at_ms`.
+   - Re-read the position every 250 ms and correct any drift above 15 ms.
+4. **Pause / seek / stop:**
+   - `PAUSED` freezes the cue clock.
+   - A position jump reschedules: cues before the new position are skipped, and their final values are applied if `catch_up` is on.
+   - `STOPPED` or `soundpad.stop` cancels the cues and applies `on_stop`.
+5. **Fallback:** if Soundpad is unavailable or disabled, cues run on the wall clock from `fire_at` (plus `start_latency_ms` when known).
+6. **Report:** `osc.cue.fired {cue_id, late_ms}`, batched every 250 ms. The director's timeline shows fired markers and lateness.
+
+#### 8.3.5 Avatar Parameter Discovery (Optional)
+
+- VRChat writes per-avatar OSC config JSON under `%USERPROFILE%\AppData\LocalLow\VRChat\VRChat\OSC\<user>\Avatars\`. **[probe]** confirms the location and format.
+- The agent reads the newest file, keeps only parameters that have an `input` (only those can be set over OSC), and sends `osc.params {avatar_name, params: [{name, address, type}]}`.
+- Picking the newest file is a guess at the current avatar. Listening for VRChat's `/avatar/change` (OSC out, 9001) or OSCQuery is a later improvement, because port 9001 is often taken by other OSC apps.
+
+### 8.4 `files`
+
+- **Receive:**
+  1. `file.offer` arrives.
+  2. Apply the policy: auto-accept or a prompt, with the overwrite prompt when the file exists (v0.3.0 rules).
+  3. Write chunks to a temp file in the target dir.
+  4. Verify SHA-256.
+  5. Rename atomically into place.
+  6. Reply `file.ok` or `file.err`.
+- **Auto-add to Soundpad:** when `auto_add_received` is on (full version only), the received file is added through the soundpad addon, and its SHA-256 → path mapping is recorded for `{sha256}` sound references.
+- **Send:** in the desktop app the agent reads from disk; in hosted mode the browser reads the file. Both use the same `file.*` messages.
+- **Character routing** (`" - Character.ext"`) is director UI logic. Port `parse_character_name` (`director_client_ws.py:875`) to TypeScript with its examples as tests.
+
+### 8.5 `obs` (Camera Operators)
+
+#### 8.5.1 Connection
+
+- Library: `simpleobsws` (asyncio, obs-websocket 5.x).
+- **Config:** `url` (default `ws://127.0.0.1:4455`), `password`, `allow_remote_control`, `local_encoder`, `slate_scene_item`, `slate_media_input`.
+- Sends `GetVersion` on connect and builds feature flags from `availableRequests`:
+
+| Feature flag | Requires | Notes |
+|---|---|---|
+| `record_dir` | `SetRecordDirectory` | obs-websocket 5.3.0+ |
+| `split` | `SplitRecordFile` | obs-websocket 5.5.0+ |
+| `chapters` | `CreateRecordChapter` | obs-websocket 5.5.0+, **Hybrid MP4 only** (as of OBS 30.2) |
+
+- Subscribes to `RecordStateChanged`, `StreamStateChanged`, `CurrentProfileChanged`, `ExitStarted`.
+
+#### 8.5.2 Recording Profile Sync
+
+```json
+{
+  "name": "VRC 1080p60",
+  "video":     { "base": [1920, 1080], "output": [1920, 1080], "fps": [60, 1] },
+  "recording": { "format": "hybrid_mp4", "codec": "h264", "rate_control": "CQP",
+                 "quality": 20, "audio_bitrate_kbps": 192 },
+  "filename_pattern": "{project}_S{scene}_T{take}_{camera}",
+  "strict": false
+}
+```
+
+**Apply algorithm:**
+1. If an output is active, report `pending_idle` and retry once it stops.
+2. Remember the operator's current profile, then switch to a dedicated `vrcActorSync` profile:
+   - `CreateProfile` if it doesn't exist (this also switches to it), otherwise `SetCurrentProfile`.
+   - **The operator's own profiles are never edited.**
+3. `SetVideoSettings`.
+4. `SetProfileParameter` for output mode, format, rate control, quality and audio bitrate.
+   - **The encoder is a local setting** (`local_encoder`, chosen once by the operator). The profile only sets the codec family and quality.
+5. Read everything back, compare, and report `obs.profile.status {compliant | mismatch | pending_idle | error, diffs}`.
+6. `obs.profile.release`, or the operator's Release button, restores the remembered profile.
+
+- The profile parameter keys per OBS version live in `agent/addons/obs/profile_keys.py`, filled in and checked in the OBS spike.
+- The record directory stays local unless the director pushes one (needs `record_dir`).
+
+#### 8.5.3 Roll → Speed → Action → Cut
+
+```
+Director UI                         Relay              Camera agent                 OBS
+    │ obs.record.start {take_id,      │                     │                        │
+    │   scene, take, at=now+1000ms}   │                     │                        │
+    ├────────────────────────────────►├────────────────────►│ check consent/strict    │
+    │                                 │                     │ set FilenameFormatting │
+    │                                 │                     │ wait until `at` (§8.2) │
+    │                                 │                     ├── StartRecord ────────►│
+    │                                 │                     │◄─ RecordStateChanged ──┤ (STARTED)
+    │◄── obs.record.state {rolling,   │◄────────────────────┤                        │
+    │      started_at_server_ms}      │                     │                        │
+    │ (all cameras rolling = "speed") │                     │                        │
+    │ soundpad.play → actors (opt.)   │                     │                        │
+    │ obs.record.stop {take_id}       │                     │                        │
+    ├────────────────────────────────►├────────────────────►├── StopRecord ─────────►│
+    │◄── obs.record.state {stopped,   │◄────────────────────┤◄─ {outputPath} ────────┤
+    │      path, duration_ms, bytes}  │                     │                        │
+```
+
+**Camera states:** `offline`, `idle`, `armed`, `rolling`, `stopping`, `error`.
+
+**Go on speed:**
+1. Once every targeted camera reports `rolling`, wait for the pre-roll (default 2 s).
+2. Then send `soundpad.play` to the selected actors (with their cue lists, if armed).
+3. If a camera hasn't reported within 5 s, warn with **Go anyway** and **Cancel**.
+
+**Marking takes:**
+- `obs.mark {label}` → `CreateRecordChapter` when available. Otherwise the mark is only a take-log entry.
+- When `split` is available, an optional **New take without stopping** calls `SplitRecordFile`.
+
+**Errors and local control:**
+- A `StartRecord` failure → `obs.record.state {error, message}`.
+- The operator can always control OBS directly. The agent reports the real state from OBS events.
+
+#### 8.5.4 Slate
+
+OBS encoder startup varies, so aligned start requests don't give aligned frames. Shortly after `rolling`, the agent:
+- Shows a configured slate scene item for about 2 frames (`SetSceneItemEnabled`)
+- Restarts a configured beep media input (`TriggerMediaInputAction`)
+
+This gives post-production a visual and audio sync point. The agent checks that the slate sources exist with `GetSceneItemId`.
+
+#### 8.5.5 Status Telemetry
+
+Every 2 s the agent sends `obs.status` with:
+- From `GetRecordStatus`: `outputActive`, `outputDuration`, `outputBytes`
+- From `GetStats`: `outputSkippedFrames`, `renderSkippedFrames`, `availableDiskSpace`, `activeFps`
+- **Disk warning** below about 30 min at the current bitrate.
+
+#### 8.5.6 Consent and Safety
+
+- On a director's first `obs.*` command, the operator chooses **Allow for this session**, **Always allow this director**, or **Deny**.
+- If the relay connection drops, recording keeps going and state re-syncs on reconnect.
+- The agent never edits the operator's own profiles and never starts streaming without consent.
+
+#### 8.5.7 Take Log
+
+- Built from `obs.record.state`, `obs.mark`, `soundpad.*` and `cue.*` events.
+- **CSV export columns:** date, project, scene, take, camera, file path, start (server time), duration, dropped frames, marks, sound played, notes.
+
+### 8.6 `stream` (Future — P2P Preview)
+
+**Build now:** reserve `rtc.*`, the `stream.publish` / `stream.view` capabilities, and `welcome.ice_servers`. Nothing else.
+
+- **Option A (primary):**
+  1. OBS's built-in WHIP output (`SetStreamServiceSettings` with type `whip_custom`, `{server, bearer_token}`) sends to a MediaMTX sidecar on the camera machine.
+  2. Viewers pull over WHEP. The agent passes the WHEP handshake through the relay (`rtc.offer/answer`), and video flows peer-to-peer.
+  3. It needs operator consent and refuses if OBS is already streaming, because OBS has one stream output.
+- **Option B (fallback):** OBS Virtual Camera → `getUserMedia` in the operator's local UI page → `RTCPeerConnection`. The window or tab must stay open, and the video is re-encoded.
+- **Option C (scale):** MediaMTX on the VPS as a relay server for many viewers. Not peer-to-peer.
+- **NAT traversal:** STUN plus coturn TURN on the VPS. Tailscale peers usually connect directly.
+- **Limits:** each viewer costs the operator one upload stream (estimated 2–4 Mbps at 720p).
+
+---
+
+## 9. Web App
+
+### 9.1 Stack and Port
+
+- Svelte 5 + Vite + TypeScript, as in `origin/tauri` `client/`.
+- Copy `client/src` to `web/src`, then:
+  - Replace the ~33 `@tauri-apps/api` `invoke`/`listen` call sites across 15 components with `Transport` (§4.4).
+  - Replace `@tauri-apps/plugin-dialog`:
+    - `FileSender` → `<input type="file" multiple>`, or the agent's file dialog in the desktop app
+    - `SoundpadConfig` → the agent's file dialog
+- Keep the dark theme and the large, VR-friendly buttons.
+- **New dependency:** wavesurfer.js v7 (Regions and Timeline plugins) for the editor.
+
+### 9.2 Layout
+
+```
+web/src/
+├── transport/   # Transport, RelayTransport, AgentTransport
+├── protocol/    # generated types.ts
+├── core/        # connection, chat/log, status bar, settings, update notifier, about
+├── roles/       # director/, actor/, camera/ views
+└── addons/
+    ├── soundpad/  # actor transport + sound picker (director), local status (actor)
+    ├── osc/       # timeline editor, cue list browser, param discovery
+    ├── files/
+    ├── obs/
+    ├── stream/
+    └── index.ts   # registry
+```
+
+### 9.3 Addon Panel Registry
+
+```ts
+registerPanel({
+  id: "soundpad",
+  roles: ["director", "assistant", "actor"],
+  requiresCapability: "soundpad",    // shown only when a participant advertises it
+  panel: SoundpadPanel,
+  settings: SoundpadSettings,        // drawn from the addon's config schema
+});
+```
+
+### 9.4 Overlay Routes (OBS Browser Sources)
+
+| Route | Shows |
+|---|---|
+| `/overlay/tally` | Red border while this camera is rolling |
+| `/overlay/cues` | Last triggered sounds and cues (ROADMAP "Soundboard overlay") |
+
+### 9.5 Resilience
+
+- Banners for "app disconnected" and "relay disconnected", with reconnect.
+- State is restored from `GET /api/state` or `presence.roster`.
+
+---
+
+## 10. Packaging, Installs and Updates
+
+### 10.1 Builds
+
+| | Installed | Portable |
+|---|---|---|
+| Artifact | `vrcActorSync-Setup-<ver>.exe` (Inno Setup 6) containing a PyInstaller **onedir** build | `vrcActorSync-<ver>-portable.exe` (PyInstaller **onefile**) |
+| Install location | Per-user `%LOCALAPPDATA%\Programs\vrcActorSync` (`PrivilegesRequired=lowest`, no admin) | Anywhere (USB drive, Desktop folder) |
+| Config and data | `%APPDATA%\vrcActorSync\` | `<exe folder>\vrcActorSync-data\` |
+| Start menu, uninstaller, "Start with Windows" option | Yes | No |
+| WebView2 | Installer runs the bundled Evergreen Bootstrapper if the runtime is missing | If missing → headless mode + browser |
+| Updates | **Automatic** (§10.2) | **Notify only** (§10.3) |
+
+- **Linux (directors):** an AppImage acting as the portable build, notify-only. Low priority.
+- **Build detection:** an `unins000.exe` next to the exe (written by Inno Setup) means installed; otherwise portable. `--portable` forces portable mode.
+- **Why onedir in the installer:** faster startup and fewer antivirus false positives than onefile.
+- Keep the v0.3.3 SSL pattern (`certifi` hidden import, explicit `SSLContext`).
+- pywebview on Windows depends on `pythonnet`. Pin the build's Python version to one supported by the pinned `pywebview` and `pythonnet` releases, and check this in CI.
+
+### 10.2 Auto-Update (Installed)
+
+1. **Check:** at startup, every 6 h, and whenever the relay sends `update.available`, read the manifest from the relay. A GitHub Releases URL in the manifest is optional.
+2. **Download:** the installer goes to `%TEMP%`, with SHA-256 **and Ed25519 signature** verification. The public key is built into the app; the release workflow signs with a key kept in CI secrets. Up to 2 public keys are accepted, to allow key rotation.
+3. **Apply:** only when idle — never while a sound is playing, a cue list is armed, or a camera is rolling.
+   - Show "Update ready — restart now / later".
+   - Run `Setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /relaunch`. The installer's `[Run]` entry, gated on `/relaunch`, restarts the app.
+4. **Rollback:** if the new version fails to start twice in a row, the next launch offers "Reinstall previous version". The last installer is kept in `%LOCALAPPDATA%\vrcActorSync\updates\`.
+5. **Optional:** sign the installer and exes (for example Azure Trusted Signing, or SignPath for open source) to reduce SmartScreen warnings.
+
+**Manifest additions** (old keys stay for legacy clients):
+
+```json
+"assets": {
+  "agent-windows-x64-setup":    {"url": "…", "sha256": "…", "sig": "…"},
+  "agent-windows-x64-portable": {"url": "…", "sha256": "…", "sig": "…"},
+  "agent-linux-x64-appimage":   {"url": "…", "sha256": "…", "sig": "…"},
+  "actor-windows-x64":          {"url": "…", "sha256": "…"},
+  "director-windows-x64":       {"url": "…", "sha256": "…"}
+}
+```
+
+### 10.3 Portable
+
+- Everything stays in the exe folder. pywebview's `storage_path` and the logs go to `vrcActorSync-data\`; nothing is written to `%APPDATA%`.
+- **Updates:** notify only, with a **Download** link and the release notes. The user swaps the exe; the downloaded file is verified the same way.
+- Nothing is written to the registry.
+
+---
+
+## 11. Backward Compatibility (v0.3.x Clients)
+
+### 11.1 Policy
+
+- `/ws` keeps speaking the pipe protocol **with no removal date**. Its removal will only be considered after a full production cycle with no legacy sessions in the server logs.
+- A server setting `legacy.enabled` (default `true`) can turn it off.
+- Behaviour that stays the same: text frames, `PING`/`PONG` every 10 s, `REGISTER` with optional version/platform, `VERSION`/`UPDATE` replies, and base64 file chunks.
+
+### 11.2 Translation
+
+| Legacy | v2 |
+|---|---|
+| `MSG` | `chat.msg` |
+| `PRIV` with `*`-prefixed text | `cue.*` to `{ids:[target]}` |
+| `PRIV` other | `chat.priv` |
+| `CMD` | `cue.*` to `{role:"actor"}` |
+| `ACK` | `cue.ack` |
+| `FILEREQ`…`FILEERR`, `BATCH_*` | `file.*` (the bridge converts base64 ⇄ binary and 64 KB ⇄ 256 KiB chunks) |
+| `OSC_CUE` | `osc.param` |
+| `APPROVE` / `DENY` / `FORGET_NAME` | `approval.*` |
+| `STATUS` / `PENDING` / `USERS` | derived from `presence.roster` |
+| `VERSION` / `UPDATE` | `welcome.version_status` / `update.available` |
+
+### 11.3 Mixed Sessions
+
+| Combination | Behaviour |
+|---|---|
+| New director → legacy actor | `soundpad.play {selected}` → `PRIV *go`; `{index: N}` → `*play:N`; `soundpad.stop` → `*stop` |
+| | `path`, `lines`, `volume`, `seek` aren't possible; the director UI greys them out for actors with capability `legacy` |
+| | **Scheduling emulation:** the server holds the message until `fire_at − RTT/2`, then sends it. Accuracy is network jitter, with no local clock sync |
+| | **Cue lists:** the server sends each cue as an `OSC_CUE` message at its time. Legacy actors fire OSC on receipt, so timing is network-accurate rather than audio-anchored |
+| | Files: full support through the bridge |
+| Legacy director → new actor | `PRIV *go` → `cue.go` (play selected); `CMD` → all actors; `FILEREQ`… → `file.*`; `OSC_CUE` → `osc.param` |
+| | New actors appear in `USERS`/`STATUS`/`PENDING`. Camera sessions are hidden from legacy directors |
+| Legacy and new actors in one take | Both work. Timing on legacy actors is network-accurate; on new actors it is clock-synced |
+| New app → v0.3.x server | Compatibility mode (§5.6): the agent speaks the pipe protocol. Directors cue by `PRIV *go` per targeted actor, like the v0.3 director; actors decline `FILEREQ` with a reason |
+
+### 11.4 Migration Path for Existing Installs
+
+- The existing v0.3 updater swaps one downloaded file over its own exe (`actor_client_ws.py:1098`). So the operator can point the manifest's `actor-windows-x64` asset at the **portable** v0.4 exe.
+- Old actors then update themselves into the portable build. Their `config.json` next to the exe is imported on first run (§7.5).
+- This is opt-in through the manifest, so the operator controls the rollout.
+
+### 11.5 Compatibility Tests
+
+- **Golden transcripts:** recorded v0.3.3 message sequences (register, approve, go/stop, play:N, batch transfer, OSC_CUE, forget) replayed through the bridge and compared byte for byte.
+- **Scripted legacy client:** built on `shared.py` + `websocket-client`, run in integration tests next to v0.4 agents.
+- **Release checklist:** the real v0.3.3 tkinter clients against the new server.
+
+---
+
+## 12. Stability and Testing
+
+| Layer | Tests |
+|---|---|
+| Protocol | Model round-trips; every legacy `MSG_TYPES` entry translates both ways |
+| Server | Permission table (every role × type), routing, session mapping, approvals, cue list storage, legacy scheduling emulation |
+| Agent core | Bus exception isolation, addon lifecycle, config migration, Host/Origin/token checks, scheduler (clock offset math, late handling, cancel) |
+| Soundpad | **Fake Soundpad transport** (in-memory RC 1.1.2 responder, like the one used to check the probe): sound resolution, drift guard, trial limits, pause/seek idempotency, reconnect after a timeout |
+| OSC | Address and type mapping; audio-anchored scheduling against the fake Soundpad's moving position (drift, pause, seek, stop → revert) |
+| Files | Reassembly, SHA-256, atomic rename, auto-add hand-off |
+| OBS | Fake obs-websocket v5 server: profile apply/diff, `pending_idle`, roll/cut, feature flags |
+| Integration | Server + 2 agents + scripted legacy client: approve → scheduled play → cue list → file batch → roll/cut |
+| UI | Playwright smoke tests for the desktop UI (in a browser) and hosted mode; editor model tests; `parse_character_name` tests |
+| Packaging | Install → auto-update → config kept; portable writes nothing outside its folder; WebView2-missing → browser fallback |
+| Windows test box | Appendix B, with real Soundpad, VRChat and OBS |
+| Soak | 2-hour session with forced network drops: no lost approvals, no duplicate actors, recordings continue |
+
+---
+
+## 13. Feature Parity Matrix
+
+| v0.3.3 feature | v0.4 home | Phase |
+|---|---|---|
+| Connect, auto-reconnect, keepalive | Agent `RelayClient` / `RelayTransport` | 1 |
+| Director secret auth, approval, auto-approve known machine, forget | Server | 0 |
+| Multi-director warning | `presence.roster` + UI banner | 2 |
+| Chat, private messages | `chat.*` | 2 |
+| `*go`, `*stop`, `*play:N` | `cue.*` + soundpad addon | 2 |
+| Play in 3s countdown | Scheduled `at` (§8.2.2) | 2 |
+| Per-actor checkboxes | `to.ids` | 2 |
+| Latency dots | `presence.latency` | 2 |
+| File transfer, batch, cancel, overwrite prompt, auto-accept, character routing | files addon + director UI | 2 |
+| OSC toggle on Go/Stop | `osc.param` | 2 |
+| Soundpad enable/disable, path, auto-detect | soundpad addon config | 2 |
+| VRChat OSC host/port/enabled | osc addon config | 2 |
+| Protocol versioning | `welcome.version_status` | 0 |
+| Auto-updater (manifest + SHA-256) | Installed auto-update; portable notify (§10) | 5 |
+| About / version display | UI | 2 |
+| **New:** play a specific file, output lines, volume, mute, pause, seek, live status, sound picker | soundpad addon | 2 |
+| **New:** per-actor delay, scheduled starts, latency calibration | §8.2 | 2 |
+| **New:** OSC timeline editor with audio-anchored cues | osc addon + editor | 3 |
+| **New:** OBS profile sync, roll/speed/cut, take log, tally | obs addon | 4 |
+| **New:** browser access, hosted director mode | §4.2 | 1–2 |
+| **Future:** P2P camera preview | stream addon | later |
+
+---
+
+## 14. Rollout
+
+| Release | Contents |
+|---|---|
+| v0.4.0-alpha | Phases 0–2. Portable build only, for the Windows test box. Legacy fully supported |
+| v0.4.0-beta | + OSC timeline editor + OBS addon |
+| v0.4.0 | + installer with auto-update, signed manifest; optional migration of v0.3 clients (§11.4) |
+| later | stream addon; LAN/phone pairing; avatar-change detection |
+
+- **Docs:** update README, ROADMAP and FEATURES-PLANNED. The v0.4.0 entry changes from "Tauri v2 + Svelte" to "Desktop web UI + local agent", and the OSC cue list spec points here.
+- **`origin/tauri`:** tag it, keep it, and port the UI code and useful test cases.
+
+---
+
+## 15. Phases and Estimates
+
+These are rough estimates for one developer.
+
+| Phase | Work | Estimate |
+|---|---|---|
+| 0 | `vrcas_protocol`, server router + permissions + session IDs, legacy bridge with scheduling emulation, golden transcript tests | ~1–1.5 weeks |
+| 1 | Agent core, pywebview shell + tray + browser access, local security, UI port to `Transport`, **portable dev build for the test box** | ~1–1.5 weeks |
+| 2 | Soundpad addon (pipe client, full control, sound resolution, status), timing + delay compensation, osc + files addons, director/actor parity | ~2–2.5 weeks |
+| 3 | OSC timeline editor (waveform, lanes, multi-parameter cues, anchoring, presets, parameter discovery) | ~1–1.5 weeks |
+| 4 | OBS spike, then the obs addon | ~1–1.5 weeks |
+| 5 | Installer, auto-update with signatures, portable notify-only, legacy migration path, release checklist | ~1 week |
+| later | stream addon + coturn | ~2–3 weeks |
+
+**Through v0.4.0: about 7–9.5 weeks.** Phases 3 and 4 are independent and can be done in either order.
+
+---
+
+## 16. Risks
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Local agent reachable by malicious websites | Remote control of Soundpad/OBS/files | §7.7 |
+| Rapid Soundpad pipe requests break the pipe | Lost commands | One request at a time, ≥2 ms gap, reconnect on timeout |
+| `SetVolume` only affects speakers | The director can't change what the audience hears | Probe + listen test; label the control honestly |
+| Soundpad trial limits (`DoAddSound`) | No auto-add | Detect with `IsTrial()`; clear hint |
+| Sound index drift after reordering | Wrong sound plays | Path references + drift guard (§8.1.3) |
+| WebView2 missing or old | Blank or broken window | Registry check + headless fallback; installer bootstraps WebView2 |
+| `pythonnet` / Python version mismatch | Build breaks | Pin versions; CI check |
+| Unsigned installer | SmartScreen warnings | Optional code signing (§10.2) |
+| Auto-update during a take | Session interrupted | Apply only when idle (§10.2) |
+| OBS profile keys differ by version | Settings don't apply | Mapping table, read-back diff, OBS spike |
+| Encoder startup variance | Cameras offset | Slate |
+| Avatar detection by newest config file is wrong | Wrong autocomplete | Advisory only; manual entry always allowed |
+| Protocol drift | Runtime errors | Shared pydantic package, generated TS, CI check |
+
+---
+
+## 17. Existing Issues to Fix in v2 (Optional v0.3.x Hotfixes)
+
+| # | Issue | Location | v2 fix |
+|---|---|---|---|
+| 1 | `APP_VERSION` is `"0.3.2"` but commit f4d3a76 says it bumped to 0.3.3 and `update_manifest.json` says 0.3.3, so 0.3.3 builds would be offered the update repeatedly | `shared.py:12` | One version constant checked against the manifest in CI; hotfix: `"0.3.3"` |
+| 2 | No role checks on `CMD`, `PRIV`, `OSC_CUE`, `FILEREQ`; actors execute any private message starting with `*` | `server_ws.py:441`, `:457`, `:466`, `:634`; `actor_client_ws.py:614` | §5.5 table (also on legacy traffic) |
+| 3 | Routing by display name | `server_ws.py:448`, `:472`, `:511`, `:638` | Session IDs |
+| 4 | Server transfer table keyed by filename only | `server_ws.py:474` | Transfer UUID |
+| 5 | Client-supplied `sender` is trusted | `server_ws.py:436` | Server sets `from` |
+| 6 | "Forgotten" is detected by matching message text | `actor_client_ws.py:601` | `approval.forgotten` |
+| 7 | `\|` in filenames breaks the pipe protocol | `shared.py` parser | JSON envelope |
+| 8 | `set_volume` validates and sends 0.0–1.0, but Soundpad's `SetVolume` takes 0–100 (per the reference client; the probe checks what 0.5 does) | `soundpad.py:169-174` | §8.1.5; hotfix: scale to an int 0–100 |
+| 9 | `find_update` treats any version mismatch as "update available", so a client *newer* than `latest_version` is offered a downgrade once the manifest has URLs | `server_ws.py:80-113` | Compare versions properly (offer only when `latest > client`); the v0.4 agent already ignores offers older than itself |
+
+---
+
+## 18. Open Questions
+
+1. **Agent default port:** proposal `47800`, falling back to the next free port.
+2. **Secrets storage:** keep them in `config.json` (as today) or move to the OS keyring?
+3. **Take log location:** the server, the director UI, or both?
+4. **MediaMTX for the stream addon:** bundle it or download on demand? Confirm the license and ICE config keys.
+5. **Assistant director permissions:** may assistants roll cameras and play sounds? The §5.5 proposal says yes.
+6. **Close button:** hide to the tray (proposed) or quit?
+7. **Cue list storage:** on the server only (proposed), or also cached on the director's machine for offline editing?
+8. **Auto-added files in Soundpad:** should they also go into a dedicated "vrcActorSync" category? This depends on whether `DoAddSound(url, category, position)` duplicates the entry in All sounds **[probe follow-up]**.
+9. **Default `lines` per actor:** `both`, or `mic` for actors who don't want to hear their own cues?
+
+---
+
+## 19. Success Criteria
+
+- [ ] On a clean Windows 10/11 machine: install → window opens → **Open in browser** shows the same live UI
+- [ ] Without WebView2, the portable build falls back to the browser with a clear hint
+- [ ] The director plays a **specific file** on 2 actors, **speakers only**, then **both**, and changes **volume**, with live position shown
+- [ ] Scheduled play with `delay_ms` +150 ms on one actor: the measured fire-time difference is within ±20 ms of 150 ms (agent logs)
+- [ ] An OSC cue list with 3 cues × 2 actors (one cue with 2 parameters) fires on the audio-anchored timeline; reported lateness ≤ 20 ms; pause and stop behave as specified
+- [ ] The installed build auto-updates between two test versions while idle and keeps its config; it doesn't update during playback
+- [ ] The portable build writes nothing outside its folder and only notifies about updates
+- [ ] v0.3.3 tkinter clients and v0.4 apps work together on the same server (§11.3), including file transfer
+- [ ] Any approved actor sending a cue or `PRIV *go` to another actor is rejected
+- [ ] The director pushes an OBS profile to 3 cameras and gets `compliant` or a precise diff; Roll/Cut produces a take-log CSV
+- [ ] The local agent rejects a foreign `Host`/`Origin` or a missing token
+- [ ] The §12 test suite runs in CI
+
+---
+
+## Appendix A — Soundpad Remote Control Reference (RC 1.1.2)
+
+Source: Leppsoft's `SoundpadRemoteControl.java` (client version 1.1.2), which Leppsoft keeps current as the complete list. Commands marked ✔ are used by the soundpad addon.
+
+**Pipe protocol:**
+- `\\.\pipe\sp_remote_control`, local only.
+- Write the UTF-8 command and read the reply. Actions reply `R-<HTTP status>` (`R-200` = OK, `R-404` = not found); getters reply with a value or XML.
+- One request at a time. The reference client keeps at least 1 ms between requests; the addon uses 2 ms.
+
+| Command | Since | Returns | Use |
+|---|---|---|---|
+| `IsAlive()` | 1.0.0 | `R-200` | ✔ health check |
+| `GetVersion()` | 1.0.0 | Soundpad version | ✔ diagnostics |
+| `GetRemoteControlVersion()` | 1.0.0 | e.g. `1.1.2` | ✔ feature flags |
+| `IsTrial()` | 1.1.2 | `1` / `0` | ✔ disables auto-add |
+| `DoPlaySound(index)` | 1.0.0 | `R-200` if the index exists | ✔ legacy `*play:N` |
+| `DoPlaySound(index, renderLine, captureLine)` | 1.0.0 | `R-200` | ✔ play with output lines (speakers = render, mic = capture) |
+| `DoPlaySelectedSound()` | 1.1.0 | `R-200` | ✔ legacy Go |
+| `DoPlaySoundFromCategory(cat, pos, render, capture)` | 1.1.1 | `R-200` | ✔ category references (`cat = -1` → current category) |
+| `DoPlayCurrentSoundAgain()`, `DoPlayPreviouslyPlayedSound()`, `DoPlayPreviousSound()`, `DoPlayNextSound()` | 1.0/1.1 | `R-200` | — |
+| `DoPlayRandomSound(render, capture)`, `DoPlayRandomSoundFromCategory(cat, render, capture)` | 1.1.2 | `R-200` | — |
+| `DoStopSound()` | 1.0.0 | `R-200` | ✔ |
+| `DoTogglePause()` | 1.0.0 | `R-200` | ✔ (wrapped to be idempotent) |
+| `DoSeekMs(ms)` | 1.0.0 | `R-200` | ✔ absolute seek |
+| `DoJumpMs(ms)` | 1.0.0 | `R-200` | ✔ relative jump (negative = back) |
+| `GetPlayStatus()` | 1.0.0 | `STOPPED` / `PLAYING` / `PAUSED` / `SEEKING` | ✔ |
+| `GetPlaybackPositionInMs()` | 1.0.0 | number | ✔ cue anchoring, status |
+| `GetPlaybackDurationInMs()` | 1.0.0 | number | ✔ |
+| `GetVolume()` / `SetVolume(0–100)` | 1.0.0 | number / `R-200` | ✔ documented as speaker volume |
+| `IsMuted()` / `DoToggleMute()` | 1.0.0 | `1`/`0` / `R-200` | ✔ speakers |
+| `GetSoundFileCount()` | 1.0.0 | number | ✔ change detection |
+| `GetSoundlist()`, `GetSoundlist(from)`, `GetSoundlist(from, to)` | 1.0.0 | XML (All sounds; indices start at 1) | ✔ picker, path → index, drift guard |
+| `GetCategories(withSounds, withIcons)`, `GetCategory(i, withSounds, withIcons)` | 1.1.0 | XML | ✔ category references |
+| `DoAddSound("path")`, `DoAddSound("path", index)` | 1.0.0 | `R-200` | ✔ auto-add (**not in the trial**) |
+| `DoAddSound("path", categoryIndex, position)` | 1.1.0 | `R-200` | Open question 8 |
+| `DoAddCategory("name", parentIndex)`, `DoRemoveCategory(i)`, `DoSelectCategory(i)`, `DoSelectPreviousCategory()`, `DoSelectNextCategory()` | 1.1.0 | `R-200` | Open question 8 |
+| `DoSearch("term")`, `DoResetSearch()`, `DoSelectPreviousHit()`, `DoSelectNextHit()`, `DoSelectIndex(row)`, `DoScrollBy(rows)`, `DoScrollTo(row)` | 1.0.0 | `R-200` | — |
+| `DoRemoveSelectedEntries(removeOnDisk)`, `DoUndo()`, `DoRedo()`, `DoSaveSoundlist()` | 1.0.0 | `R-200` | — (`DoRemoveSelectedEntries` not in the trial) |
+| `DoStartRecording()`, `DoStopRecording()`, `DoStartRecordingSpeakers()`, `DoStartRecordingMicrophone()`, `GetRecordingPositionInMs()`, `GetRecordingPeak()` | 1.0/1.1 | — | — |
+| `GetTitleText()`, `GetStatusBarText()` | 1.0.0 | text | diagnostics |
+
+**Not available through RC:**
+- Playing a file that isn't in the sound list. It must be added first.
+- Per-sound volume.
+- Mic-line volume, assumed missing; the probe checks it.
+
+---
+
+## Appendix B — Windows Test Plan
+
+**Setup:**
+- Windows 10/11 with Soundpad running and at least 3 sounds, one longer than 5 s.
+- Python 3.8+ (only for the probe; the app itself won't need Python).
+- VRChat and a second listener for the listen tests.
+
+| # | Step | Confirms |
+|---|---|---|
+| 1 | `python tools\soundpad_probe.py --json probe-readonly.json` | Pipe access, RC version, trial/full, XML attribute names, pipe round-trip latency, VRChat OSC config format |
+| 2 | `python tools\soundpad_probe.py --play <long sound #> --line speakers --json probe-play.json` | Start latency, position reporting, pause/seek/stop; the listener does **not** hear it |
+| 3 | Same with `--line both`, then `--line mic` | The listener hears both; the actor hears `mic` only through VRChat (if at all) |
+| 4 | `python tools\soundpad_probe.py --volume --json probe-volume.json`, then play on `both` at 40 vs 100 | 0–100 scale, what `SetVolume(0.5)` does (§17 #8), whether volume reaches the mic line |
+| 5 | `python tools\soundpad_probe.py --add C:\path\test.mp3` (full version) | `DoAddSound` works; the new entry's `url`/`index` |
+| 6 | `python tools\soundpad_probe.py --cli` | CLI cost compared with the pipe |
+| 7 | Reorder sounds in Soundpad, run step 1 again | Index drift: indices change, `url` stays |
+
+Send the JSON files back. Results update Appendix A, close the **[probe]** items, and set the defaults for latency compensation.
+
+---
+
+## References
+
+- Soundpad Remote Control: https://www.leppsoft.com/soundpad/en/rc/ and manual §3.9: https://www.leppsoft.com/soundpad/help/manual/tutorial/rc/
+- Soundpad RC reference client (1.1.2): https://www.leppsoft.com/soundpad/files/rc/SoundpadRemoteControl.java
+- pywebview API: https://pywebview.flowrl.com/api/ and web engines: https://pywebview.flowrl.com/guide/web_engine.html
+- WebView2 distribution: https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+- obs-websocket 5.x protocol: https://github.com/obsproject/obs-websocket/blob/master/docs/generated/protocol.md
+- simpleobsws: https://pypi.org/project/simpleobsws/
+- OBS WHIP service (`whip_custom`, `bearer_token`): `plugins/obs-webrtc/whip-service.cpp` in obs-studio
+- Previous design: `docs/superpowers/specs/2026-07-20-vrcActorSync-ssl-tauri-design.md`
+- Reusable UI code: `origin/tauri` → `client/src/`
+- Probe script: `tools/soundpad_probe.py`
+
+---
+
+## 20. Implementation Status (branch `feat/web-ui`, 2026-10-18)
+
+| Area | Built | Verified |
+|---|---|---|
+| Web UI (`web/`, Svelte 5 + Vite, Bun) | Role onboarding (role remembered, app reopens in it), director / actor / camera views, animated node graph (stage layout, packets only while commands travel), dark / light / system theme, UI scale 75–200 % + VR mode, reduce motion, settings, activity & chat drawer, toasts, demo session | `bun test` (22), `svelte-check` 0 errors, visual checks at desktop, 140 % VR and phone width |
+| Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad via `-rc`, OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
+| Not built yet | v2 relay and protocol package, Soundpad named-pipe client (§8.1), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
+| Not verified | pywebview window and WebView2 detection on Windows; Soundpad on Windows through the new app | Needs the Windows test box |
