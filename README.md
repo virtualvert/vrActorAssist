@@ -1,6 +1,8 @@
-# vrActorAssist
+# vrcActorSync
 
-A director/actor communication system for VRChat filmmaking. Director sends commands, actors receive and execute Soundpad sounds.
+*Formerly vrActorAssist.* A director/actor communication system for VRChat filmmaking. Director sends commands, actors receive and execute Soundpad sounds.
+
+> **v0.4 preview (branch `feat/web-ui`):** one desktop app for directors, actors and camera operators — a Python agent with a web UI (pywebview window or any browser), an animated network graph, dark/light themes and VR-sized controls. It works with today's v0.3 relay. See [Desktop app (v0.4 preview)](#desktop-app-v04-preview) and [AGENTS.md](AGENTS.md).
 
 ## Quick Start
 
@@ -139,7 +141,7 @@ Output:
 ## Project Structure
 
 ```
-vrActorAssist/
+vrcActorSync/
 ├── server_ws.py          # WebSocket server (FastAPI)
 ├── director_client_ws.py # Director GUI (Python/tkinter)
 ├── actor_client_ws.py    # Actor GUI with Soundpad (Python/tkinter)
@@ -150,9 +152,10 @@ vrActorAssist/
 ├── FEATURES-PLANNED.md   # Planned features
 ├── ROADMAP.md            # Future roadmap
 │
-├── client/               # Tauri v2 + Svelte app (replaces both clients)
-│   ├── src/              #   Svelte frontend
-│   └── src-tauri/        #   Rust backend
+├── agent/                # v0.4 desktop agent (python -m agent)
+├── web/                  # v0.4 web UI (Svelte 5 + Vite, built with Bun)
+├── tools/                # soundpad_probe.py (Windows Soundpad API check)
+├── AGENTS.md             # Project guide for contributors and coding agents
 │
 ├── docs/superpowers/     # Design specs and implementation plans
 │
@@ -164,6 +167,23 @@ vrActorAssist/
 └── archive/              # Early prototypes
     └── *03.py, *04.py
 ```
+
+## Desktop app (v0.4 preview)
+
+The new app replaces both tkinter clients. It opens straight into your role (picked on first launch, or imported from your v0.3 `actor_config.json` / `director_config.json`).
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r agent/requirements.txt
+bun --cwd=web install
+bun --cwd=web run build
+.venv/bin/python -m agent
+```
+
+- Windows shows a desktop window (needs the Microsoft WebView2 Runtime); Linux opens your browser. **Settings → Open in browser** opens the same live UI in any browser.
+- Desktop window on Linux: install `python-gobject` and `webkit2gtk-4.1`, create the venv with `--system-site-packages`, `pip install pywebview`, then run `.venv/bin/python -m agent --window`.
+- Try the UI without a relay: `bun --cwd=web run dev`, then open http://localhost:5173/?demo=director (or `actor`, `camera`).
+- Works with the current v0.3 relay: cast list, approvals, Go / Play in 3s / Stop, chat, Soundpad and OSC cues. Not yet: file transfer, OBS control, installer/auto-update. Details in [AGENTS.md](AGENTS.md#known-gaps-v04-preview) and the [design spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md).
 
 ## Requirements
 

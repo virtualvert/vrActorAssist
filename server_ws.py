@@ -1,4 +1,4 @@
-# vrActorAssist WebSocket Server
+# vrcActorSync WebSocket Server
 # FastAPI + WebSocket server for director/actor communication
 #
 # Usage: uvicorn server_ws:app --host 0.0.0.0 --port 5555
@@ -158,7 +158,7 @@ clients: Dict[WebSocket, Client] = {}
 pending_transfers: Dict[str, dict] = {}
 
 
-app = FastAPI(title="vrActorAssist Server")
+app = FastAPI(title="vrcActorSync Server")
 
 @app.on_event("startup")
 async def startup_event():
@@ -676,7 +676,7 @@ async def health():
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="vrActorAssist WebSocket Server")
+    parser = argparse.ArgumentParser(description="vrcActorSync WebSocket Server")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to listen on")
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
     parser.add_argument("--secret", default=SERVER_SECRET, help="Director secret")
@@ -685,7 +685,7 @@ if __name__ == "__main__":
     # Update secret from arg
     SERVER_SECRET = args.secret
     
-    log(f"Starting vrActorAssist Server v{APP_VERSION} on {args.host}:{args.port}")
+    log(f"Starting vrcActorSync Server v{APP_VERSION} on {args.host}:{args.port}")
     log(f"Director secret: {SERVER_SECRET[:4]}...")
     
     # Run with websocket ping enabled

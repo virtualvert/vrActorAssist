@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start/stop script for vrActorAssist server + Caddy reverse proxy
+# Start/stop script for vrcActorSync server + Caddy reverse proxy
 # Usage: ./start-server.sh start|stop|restart|status
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -221,7 +221,7 @@ stop() {
 
 status() {
     echo "────────────────────────────────────"
-    echo "  vrActorAssist — relay.dgp.lol"
+    echo "  vrcActorSync — relay.dgp.lol"
     echo "────────────────────────────────────"
     echo ""
 

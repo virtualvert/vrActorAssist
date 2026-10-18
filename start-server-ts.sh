@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start/stop script for vrActorAssist server + Tailscale funnel
+# Start/stop script for vrcActorSync server + Tailscale funnel
 # Usage: ./start-server.sh start|stop|restart|status
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

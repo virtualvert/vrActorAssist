@@ -1,4 +1,4 @@
-# Shared utilities for vrActorAssist
+# Shared utilities for vrcActorSync
 # Protocol definitions, config handling, common functions
 
 import json

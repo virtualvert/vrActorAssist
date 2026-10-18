@@ -1,4 +1,4 @@
-# vrActorAssist Actor Client (WebSocket)
+# vrcActorSync Actor Client (WebSocket)
 # GUI client for actors with Soundpad integration
 #
 # Usage: python actor_client_ws.py
@@ -96,7 +96,7 @@ class ActorClient:
         self.setup_ui()
         if self._config_migrated:
             self.display("Config updated with new fields", "info")
-        self.display(f"vrActorAssist Actor Client v{APP_VERSION}", "info")
+        self.display(f"vrcActorSync Actor Client v{APP_VERSION}", "info")
         self._cleanup_old_updates()
         
         # Auto-connect if config exists
@@ -1019,9 +1019,9 @@ class ActorClient:
     def _show_about(self):
         """Show About dialog."""
         messagebox.showinfo(
-            "About vrActorAssist",
+            "About vrcActorSync",
             f"Danny Grey Productions\n\n"
-            f"vrActorAssist Actor Client\n"
+            f"vrcActorSync Actor Client\n"
             f"Version {APP_VERSION}\n\n"
             f"VRChat filmmaking assistant\n"
             f"for directors and actors.\n\n"
@@ -1129,7 +1129,7 @@ class ActorClient:
                 f.write("if %errorlevel%==0 timeout /t 1 >nul & goto wait\n")
                 f.write("timeout /t 2 /nointerrupt >nul\n")
                 f.write(f'move /y "{new_path}" "{current_path}"\n')
-                f.write("echo Update applied. You can now reopen vrActorAssist.\n")
+                f.write("echo Update applied. You can now reopen vrcActorSync.\n")
                 f.write("pause\n")
                 f.write('del "%~f0"\n')
         else:
@@ -1141,7 +1141,7 @@ class ActorClient:
                 f.write("sleep 1\n")
                 f.write(f"mv -f '{new_path}' '{current_path}'\n")
                 f.write(f"chmod +x '{current_path}'\n")
-                f.write("echo 'Update applied. You can now reopen vrActorAssist.'\n")
+                f.write("echo 'Update applied. You can now reopen vrcActorSync.'\n")
             os.chmod(updater_path, 0o755)
         
         # Launch the swap script and quit

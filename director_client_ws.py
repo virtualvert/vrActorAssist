@@ -1,4 +1,4 @@
-# vrActorAssist Director Client (WebSocket)
+# vrcActorSync Director Client (WebSocket)
 # GUI client for directors with approval system
 #
 # Usage: python director_client_ws.py
@@ -63,7 +63,7 @@ class DirectorClient:
         self.char_actor_map = {}  # character_name -> actor_name (session memory)
         
         self.setup_ui()
-        self.display(f"vrActorAssist Director Client v{APP_VERSION}", "info")
+        self.display(f"vrcActorSync Director Client v{APP_VERSION}", "info")
         self._cleanup_old_updates()
         
         # Auto-connect if config exists
@@ -1510,9 +1510,9 @@ class DirectorClient:
     def _show_about(self):
         """Show About dialog."""
         messagebox.showinfo(
-            "About vrActorAssist",
+            "About vrcActorSync",
             f"Danny Grey Productions\n\n"
-            f"vrActorAssist Director Client\n"
+            f"vrcActorSync Director Client\n"
             f"Version {APP_VERSION}\n\n"
             f"VRChat filmmaking assistant\n"
             f"for directors and actors.\n\n"
@@ -1622,7 +1622,7 @@ class DirectorClient:
                 f.write("if %errorlevel%==0 timeout /t 1 >nul & goto wait\n")
                 f.write("timeout /t 2 /nointerrupt >nul\n")
                 f.write(f'move /y "{new_path}" "{current_path}"\n')
-                f.write("echo Update applied. You can now reopen vrActorAssist.\n")
+                f.write("echo Update applied. You can now reopen vrcActorSync.\n")
                 f.write("pause\n")
                 f.write('del "%~f0"\n')
         else:
@@ -1634,7 +1634,7 @@ class DirectorClient:
                 f.write("sleep 1\n")
                 f.write(f"mv -f '{new_path}' '{current_path}'\n")
                 f.write(f"chmod +x '{current_path}'\n")
-                f.write("echo 'Update applied. You can now reopen vrActorAssist.'\n")
+                f.write("echo 'Update applied. You can now reopen vrcActorSync.'\n")
             os.chmod(updater_path, 0o755)
         
         # Launch the swap script and quit
