@@ -7,6 +7,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -67,6 +68,16 @@ def compare_versions(client_ver: str, server_ver: str) -> tuple:
     return 'ok', ''
 
 
+def parse_version(version: str) -> Optional[tuple]:
+    """Parse MAJOR.MINOR.PATCH into an int tuple, ignoring suffixes like '-dev'.
+    Missing parts count as 0. Returns None if no leading number is found.
+    """
+    match = re.match(r'\s*v?(\d+)(?:\.(\d+))?(?:\.(\d+))?', version or "")
+    if not match:
+        return None
+    return tuple(int(part or 0) for part in match.groups())
+
+
 def load_manifest() -> dict:
     """Load update manifest from file. Returns empty dict if missing or invalid."""
     try:
@@ -89,9 +100,10 @@ def find_update(manifest: dict, role: str, platform_id: str, client_version: str
     if not latest:
         return {}
     
-    # Check if client is already on latest
-    v_status, _ = compare_versions(client_version, latest)
-    if v_status == "ok":
+    # Only offer strictly newer versions (never a downgrade or same-version reinstall)
+    latest_parts = parse_version(latest)
+    client_parts = parse_version(client_version)
+    if latest_parts is None or client_parts is None or latest_parts <= client_parts:
         return {}
     
     # Look up the asset key: e.g. "actor-windows-x64"
@@ -156,6 +168,25 @@ clients: Dict[WebSocket, Client] = {}
 
 # Pending file transfers: filename -> {director_ws, actor_ws}
 pending_transfers: Dict[str, dict] = {}
+
+# Cue and file-push messages only a director may send. Actors keep FILEACK/FILEDENY/
+# FILEOK/FILEERR, ACK, MSG and non-cue PRIV.
+DIRECTOR_ONLY_TYPES = {
+    "CMD", "OSC_CUE",
+    "FILEREQ", "FILESTART", "FILECHUNK", "FILEEND",
+    "BATCH_START", "BATCH_END", "BATCH_CANCEL",
+}
+
+
+def is_director_only(msg_type: str, msg_data: dict) -> bool:
+    """True if this message may only come from a director.
+    PRIV text starting with '*' is executed as a cue by actors, so it counts too.
+    """
+    if msg_type in DIRECTOR_ONLY_TYPES:
+        return True
+    if msg_type == "PRIV" and msg_data.get("text", "").lstrip().startswith("*"):
+        return True
+    return False
 
 
 app = FastAPI(title="vrActorAssist Server")
@@ -282,7 +313,12 @@ async def websocket_endpoint(
     try:
         while True:
             data = await websocket.receive_text()
-            msg_type, msg_data = parse_message(data)
+            try:
+                msg_type, msg_data = parse_message(data)
+            except (ValueError, IndexError):
+                # Bad numeric field (e.g. FILECHUNK|f|x|...) - drop it instead of disconnecting
+                log(f"Malformed message from '{client.name}': {data[:80]!r}")
+                continue
             
             if not msg_type:
                 continue
@@ -429,6 +465,13 @@ async def websocket_endpoint(
                         client.latency_ms = int((client.latency_ms + latency) / 2)
                     else:
                         client.latency_ms = latency
+                continue
+            
+            # Role check: cues and file pushes are director-only (notify, don't disconnect)
+            if client.role != "director" and is_director_only(msg_type, msg_data):
+                log(f"Rejected {msg_type} from non-director '{client.name}' ({client.role})")
+                await websocket.send_text(format_message("MSG", sender="SERVER",
+                    text=f"Permission denied: only the director can send {msg_type}"))
                 continue
             
             # Handle messages
