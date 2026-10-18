@@ -1,0 +1,369 @@
+/* vrcActorSync design tokens and base styles.
+ * Everything is sized in rem; --ui-scale multiplies the root font size, so the whole UI scales
+ * together (Settings → UI size, Ctrl +/−). VR mode raises the minimum hit target on top of that. */
+
+:root {
+  --ui-scale: 1;
+  font-size: calc(16px * var(--ui-scale));
+
+  --font: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Inter Variable", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --radius-s: 0.5rem;
+  --radius: 0.875rem;
+  --radius-l: 1.25rem;
+  --radius-xl: 1.75rem;
+  --target: 2.75rem;
+  --gap: 1rem;
+  --pad: 1.25rem;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --t-fast: 140ms;
+  --t: 240ms;
+
+  /* Dark theme (default) */
+  color-scheme: dark;
+  --bg: #080a0f;
+  --bg-glow-1: rgb(99 102 241 / 0.18);
+  --bg-glow-2: rgb(45 212 191 / 0.1);
+  --surface: #10131a;
+  --surface-2: #161a23;
+  --surface-3: #1e2330;
+  --surface-glass: rgb(16 19 26 / 0.72);
+  --border: rgb(148 163 184 / 0.13);
+  --border-strong: rgb(148 163 184 / 0.26);
+  --text: #eef1f7;
+  --text-2: #b6bdcc;
+  --text-3: #7e8799;
+  --shadow: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 18px 40px -20px rgb(0 0 0 / 0.75);
+  --shadow-pop: 0 24px 60px -18px rgb(0 0 0 / 0.8);
+
+  --director: #f5b544;
+  --actor: #a78bfa;
+  --camera: #2dd4bf;
+  --server: #94a3b8;
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --idle: #64748b;
+  --live: #ff4d5e;
+  --go: #22c55e;
+  --go-deep: #15803d;
+  --stop: #ef4444;
+  --stop-deep: #b91c1c;
+  --accent: #818cf8;
+  --accent-2: #2dd4bf;
+  --focus: #93c5fd;
+  --on-strong: #ffffff;
+  --graph-grid: rgb(148 163 184 / 0.06);
+}
+
+/* Light theme: explicit choice, or "system" while the OS is light. Kept as two copies on purpose. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f5fa;
+  --bg-glow-1: rgb(99 102 241 / 0.12);
+  --bg-glow-2: rgb(20 184 166 / 0.09);
+  --surface: #ffffff;
+  --surface-2: #f4f6fa;
+  --surface-3: #e9edf4;
+  --surface-glass: rgb(255 255 255 / 0.78);
+  --border: rgb(15 23 42 / 0.09);
+  --border-strong: rgb(15 23 42 / 0.18);
+  --text: #0e1321;
+  --text-2: #3d4659;
+  --text-3: #687185;
+  --shadow: 0 1px 2px rgb(15 23 42 / 0.05), 0 18px 40px -24px rgb(15 23 42 / 0.22);
+  --shadow-pop: 0 24px 60px -24px rgb(15 23 42 / 0.32);
+  --director: #c27709;
+  --actor: #7c3aed;
+  --camera: #0d9488;
+  --server: #64748b;
+  --ok: #059669;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --idle: #94a3b8;
+  --live: #e11d48;
+  --go: #16a34a;
+  --go-deep: #166534;
+  --stop: #dc2626;
+  --stop-deep: #991b1b;
+  --accent: #4f46e5;
+  --accent-2: #0d9488;
+  --focus: #2563eb;
+  --graph-grid: rgb(15 23 42 / 0.05);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    color-scheme: light;
+    --bg: #f3f5fa;
+    --bg-glow-1: rgb(99 102 241 / 0.12);
+    --bg-glow-2: rgb(20 184 166 / 0.09);
+    --surface: #ffffff;
+    --surface-2: #f4f6fa;
+    --surface-3: #e9edf4;
+    --surface-glass: rgb(255 255 255 / 0.78);
+    --border: rgb(15 23 42 / 0.09);
+    --border-strong: rgb(15 23 42 / 0.18);
+    --text: #0e1321;
+    --text-2: #3d4659;
+    --text-3: #687185;
+    --shadow: 0 1px 2px rgb(15 23 42 / 0.05), 0 18px 40px -24px rgb(15 23 42 / 0.22);
+    --shadow-pop: 0 24px 60px -24px rgb(15 23 42 / 0.32);
+    --director: #c27709;
+    --actor: #7c3aed;
+    --camera: #0d9488;
+    --server: #64748b;
+    --ok: #059669;
+    --warn: #d97706;
+    --bad: #dc2626;
+    --idle: #94a3b8;
+    --live: #e11d48;
+    --go: #16a34a;
+    --go-deep: #166534;
+    --stop: #dc2626;
+    --stop-deep: #991b1b;
+    --accent: #4f46e5;
+    --accent-2: #0d9488;
+    --focus: #2563eb;
+    --graph-grid: rgb(15 23 42 / 0.05);
+  }
+}
+
+/* VR mode: bigger hit targets and spacing for laser pointers and desktop overlays. */
+:root[data-vr="on"] {
+  --target: 3.75rem;
+  --gap: 1.25rem;
+  --pad: 1.5rem;
+}
+
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 1rem;
+  line-height: 1.45;
+  color: var(--text);
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, var(--bg-glow-1), transparent 60%),
+    radial-gradient(50rem 36rem at 100% 110%, var(--bg-glow-2), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+  transition: background-color var(--t) var(--ease-out), color var(--t) var(--ease-out);
+}
+
+#app {
+  height: 100%;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  margin: 0;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+}
+
+p {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}
+
+:root[data-vr="on"] :focus-visible {
+  outline-width: 5px;
+  outline-offset: 4px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Scrollbars that match the theme */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Shared building blocks -------------------------------------------- */
+
+.card {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 70%, transparent), var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow);
+}
+
+.card-pad {
+  padding: var(--pad);
+}
+
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.muted {
+  color: var(--text-2);
+}
+
+.faint {
+  color: var(--text-3);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.65rem;
+  min-height: 1.75rem;
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  background: var(--surface-3);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.input {
+  width: 100%;
+  min-height: var(--target);
+  padding: 0 0.95rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.field > span {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.field small {
+  color: var(--text-3);
+  font-size: 0.8125rem;
+}
+
+/* Status colours shared by dots, rings and links */
+.lvl-good { --lvl: var(--ok); }
+.lvl-fair { --lvl: var(--warn); }
+.lvl-poor { --lvl: var(--bad); }
+.lvl-lost { --lvl: var(--idle); }
+.lvl-unknown { --lvl: var(--ok); }
+
+.role-director { --role: var(--director); }
+.role-actor { --role: var(--actor); }
+.role-camera { --role: var(--camera); }
+.role-server { --role: var(--server); }
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.85); opacity: 0.75; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(0.6rem) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

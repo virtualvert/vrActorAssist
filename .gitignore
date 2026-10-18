@@ -27,3 +27,6 @@ start-server.sh
 
 # Misc
 .openclaw/
+# Web UI
+node_modules/
+web/dist/

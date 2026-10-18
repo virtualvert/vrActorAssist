@@ -1,0 +1,115 @@
+import type { AgentEvent, Call } from "../protocol";
+import { Emitter, type LinkState, type Transport } from "./types";
+
+const CALL_TIMEOUT_MS = 10_000;
+
+/**
+ * Talks to the local agent (python -m agent) over /ui/ws.
+ *
+ * The agent opens this page with a one-time `?t=` token; we trade it for a session cookie
+ * before opening the socket, then drop it from the address bar.
+ */
+export class AgentTransport implements Transport {
+  readonly kind = "agent";
+  #events = new Emitter<AgentEvent>();
+  #link = new Emitter<LinkState>();
+  #ws: WebSocket | null = null;
+  #nextId = 1;
+  #pending = new Map<number, { resolve: () => void; reject: (e: Error) => void; timer: number }>();
+  #retryMs = 500;
+  #stopped = false;
+
+  start(): void {
+    this.#stopped = false;
+    void this.#open();
+  }
+
+  stop(): void {
+    this.#stopped = true;
+    this.#ws?.close();
+  }
+
+  onEvent(fn: (event: AgentEvent) => void): () => void {
+    return this.#events.on(fn);
+  }
+
+  onLink(fn: (state: LinkState) => void): () => void {
+    return this.#link.on(fn);
+  }
+
+  call(call: Call): Promise<void> {
+    const ws = this.#ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("The vrcActorSync app is not reachable"));
+    }
+    const id = this.#nextId++;
+    return new Promise((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error(`${call.call} timed out`));
+      }, CALL_TIMEOUT_MS);
+      this.#pending.set(id, { resolve, reject, timer });
+      ws.send(JSON.stringify({ id, ...call }));
+    });
+  }
+
+  async #open(): Promise<void> {
+    this.#link.emit("connecting");
+    const url = new URL(location.href);
+    const token = url.searchParams.get("t");
+    if (token) {
+      const res = await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+        credentials: "same-origin",
+      }).catch(() => null);
+      url.searchParams.delete("t");
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+      if (!res?.ok) {
+        this.#link.emit("unauthorized");
+        return;
+      }
+    }
+
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${scheme}://${location.host}/ui/ws`);
+    this.#ws = ws;
+    let opened = false;
+
+    ws.onopen = () => {
+      opened = true;
+      this.#retryMs = 500;
+      this.#link.emit("open");
+    };
+    ws.onmessage = (msg) => {
+      const event = JSON.parse(msg.data) as AgentEvent;
+      if (event.type === "result") {
+        const entry = this.#pending.get(event.id);
+        if (!entry) return;
+        window.clearTimeout(entry.timer);
+        this.#pending.delete(event.id);
+        if (event.ok) entry.resolve();
+        else entry.reject(new Error(event.error ?? "Request failed"));
+        return;
+      }
+      this.#events.emit(event);
+    };
+    ws.onclose = (ev) => {
+      for (const [, entry] of this.#pending) {
+        window.clearTimeout(entry.timer);
+        entry.reject(new Error("Connection to the app closed"));
+      }
+      this.#pending.clear();
+      if (this.#stopped) return;
+      // 4401 = the agent rejected our session cookie (e.g. the app restarted).
+      if (ev.code === 4401 || (!opened && ev.code === 1008)) {
+        this.#link.emit("unauthorized");
+        return;
+      }
+      this.#link.emit("closed");
+      window.setTimeout(() => void this.#open(), this.#retryMs);
+      this.#retryMs = Math.min(this.#retryMs * 2, 5000);
+    };
+  }
+}
