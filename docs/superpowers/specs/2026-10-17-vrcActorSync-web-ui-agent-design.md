@@ -2,8 +2,12 @@
 
 **Date:** 2026-10-17 (revised 2026-10-18)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.3
+**Version:** 0.4
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.4
+
+- §8.5.8: VRChat window ↔ recording-resolution helper for camera operators (live resize where the OS allows it, generated launch options everywhere, gamescope for bigger-than-monitor rendering on Linux), with its own test plan (Appendix C).
 
 ### Changes in v0.3
 
@@ -697,9 +701,12 @@ VRChat voice delay to each listener varies per listener and isn't measurable loc
   "recording": { "format": "hybrid_mp4", "codec": "h264", "rate_control": "CQP",
                  "quality": 20, "audio_bitrate_kbps": 192 },
   "filename_pattern": "{project}_S{scene}_T{take}_{camera}",
+  "vrchat_window": { "match": false, "borderless": true },
   "strict": false
 }
 ```
+
+`vrchat_window` is the optional capture helper (§8.5.8).
 
 **Apply algorithm:**
 1. If an output is active, report `pending_idle` and retry once it stops.
@@ -776,6 +783,82 @@ Every 2 s the agent sends `obs.status` with:
 
 - Built from `obs.record.state`, `obs.mark`, `soundpad.*` and `cue.*` events.
 - **CSV export columns:** date, project, scene, take, camera, file path, start (server time), duration, dropped frames, marks, sound played, notes.
+
+#### 8.5.8 VRChat Window ↔ Recording Resolution (Capture Helper)
+
+**Goal:** VRChat renders at exactly the OBS base resolution, so camera operators don't resize windows by hand and recordings aren't rescaled. Optionally VRChat renders *larger than the monitor* (e.g. 3840×2160 on a 2560×1440 screen).
+
+**Why it matters:** OBS scales whatever it captures to the base resolution. A 1700×950 VRChat window recorded at 1920×1080 is upscaled and soft. A window at exactly 1920×1080 is captured pixel for pixel.
+
+**Profile field** (optional, in the §8.5.2 profile):
+
+```json
+"vrchat_window": { "match": true, "borderless": true }
+```
+
+- The target size is `video.base`.
+- `match: false` (the default) means nothing happens until the operator presses **Match VRChat window**.
+
+**Two methods, chosen per machine:**
+
+| Method | How | Restart VRChat? | Where |
+|---|---|---|---|
+| A. Live resize | Find the running VRChat window and set its inner (client) area to the target size | No | Windows; Linux X11; KDE Plasma on Wayland |
+| B. Launch options | Generate the exact Steam launch-option line; the operator pastes it once | Yes | Everywhere |
+
+**Method A per platform:**
+- **Windows:**
+  - Find the window owned by `VRChat.exe` (window class `UnityWndClass`, to verify) with `EnumWindows` and a process lookup.
+  - The agent runs per-monitor DPI aware, so sizes are physical pixels and 150 % scaling doesn't turn 1920×1080 into 1280×720.
+  - Work out the outer size from the wanted client size (`AdjustWindowRectExForDpi`), call `SetWindowPos(…, SWP_NOZORDER | SWP_NOACTIVATE)`, then read `GetClientRect` back.
+  - Borderless: prefer the `-popupwindow` launch option (B). Changing another app's window style live is possible, but Unity may put it back.
+- **Linux X11:** resize the window whose class is `steam_app_438100` (VRChat's Steam app id under Proton, to verify) with `xdotool` when it's installed; read the size back with `xwininfo`.
+- **Linux Wayland:** Wayland doesn't let one app resize another app's window.
+  - **KDE Plasma:** the agent loads a small KWin script over D-Bus (`org.kde.KWin`, `/Scripting`) that sets the VRChat window's client geometry.
+  - **Other compositors** (GNOME etc.): Method B only.
+- **Bigger than the monitor:** whether Windows and Unity allow a window larger than the display is a **[window test]** item. If it's clamped, use Method B with gamescope (Linux) or driver super-resolution (AMD VSR / NVIDIA DSR on Windows), which the app explains but doesn't change.
+
+**Method B lines** (built from `video.base`, plus the monitor size for gamescope):
+
+| Platform | Steam launch options |
+|---|---|
+| Windows | `-screen-width 1920 -screen-height 1080 -screen-fullscreen 0 -popupwindow` |
+| Linux (Proton), window = recording size | `%command% -screen-width 1920 -screen-height 1080 -screen-fullscreen 0 -popupwindow` |
+| Linux, bigger than the monitor | `gamescope -w 3840 -h 2160 -W 2560 -H 1440 -- obs-gamecapture %command%`: VRChat renders at 3840×2160 inside a 2560×1440 window, and obs-vkcapture records the full 3840×2160 |
+
+- That VRChat honours these Unity launch options is a **[window test]** item. Unity can remember the last resolution between runs, so the generated line always sets it explicitly.
+- `obs-gamecapture` comes with obs-vkcapture. Whether it works inside gamescope and next to Easy Anti-Cheat under Proton is a **[window test]** item.
+
+**Capture source check:** the helper looks at the camera scene's sources (`GetInputList`) and warns when the source can't record the full render size:
+- **Windows:** use **Game Capture**, which records the render output even where the window is off-screen. Window Capture may only show the visible part.
+- **Linux:** use the obs-vkcapture source. PipeWire screen or window capture records what the compositor shows, which is the window size, not the render size.
+
+**Flow:**
+1. After a profile apply, or when the operator presses **Match VRChat window**, the agent finds VRChat and compares its client size and aspect ratio with `video.base`.
+2. On a mismatch:
+   - The operator sees "VRChat is 1700×950; recording is 1920×1080" with **Match now**, **Copy launch options** and **Ignore**.
+   - The director sees ⚠ "window 1700×950" in that camera's profile status.
+3. **Match now** (Method A) only works while the camera isn't recording, because resizing briefly stalls the game. The agent resizes, reads the size back and reports.
+4. **Restore** puts the window back to its previous size and position.
+
+**Consent and safety:**
+- Needs the OBS consent from §8.5.6, plus a separate one-time "Allow vrcActorSync to resize the VRChat window" prompt.
+- Never while recording.
+- Never touches other windows.
+- Never injects into VRChat: only standard window-manager calls, which matters with VRChat's Easy Anti-Cheat. OBS's own capture hook is outside the agent; its compatibility with EAC is a **[window test]** item.
+- If VRChat isn't running, the state is `not_found` until the operator tries again.
+
+**GPU cost:** rendering at 4K is expensive. While recording, if `renderSkippedFrames` / `outputSkippedFrames` (§8.5.5) keep rising, the operator sees "GPU can't keep up at 3840×2160", with a suggestion to switch to a smaller profile.
+
+**Status:** `obs.profile.status` gains:
+
+```json
+"window": { "state": "matched | mismatch | not_found | unsupported | needs_restart | declined", "size": [1700, 950], "method": "live | launch_options" }
+```
+
+**Capabilities:** `obs.window.live` (Method A works on this machine) and `obs.window.launch` (always).
+
+**Tests:** Appendix C.
 
 ### 8.6 `stream` (Future — P2P Preview)
 
@@ -990,6 +1073,7 @@ registerPanel({
 | **New:** per-actor delay, scheduled starts, latency calibration | §8.2 | 2 |
 | **New:** OSC timeline editor with audio-anchored cues | osc addon + editor | 3 |
 | **New:** OBS profile sync, roll/speed/cut, take log, tally | obs addon | 4 |
+| **New:** VRChat window matched to the recording resolution | obs addon (§8.5.8) | 4 |
 | **New:** browser access, hosted director mode | §4.2 | 1–2 |
 | **Future:** P2P camera preview | stream addon | later |
 
@@ -1019,11 +1103,11 @@ These are rough estimates for one developer.
 | 1 | Agent core, pywebview shell + tray + browser access, local security, UI port to `Transport`, **portable dev build for the test box** | ~1–1.5 weeks |
 | 2 | Soundpad addon (pipe client, full control, sound resolution, status), timing + delay compensation, osc + files addons, director/actor parity | ~2–2.5 weeks |
 | 3 | OSC timeline editor (waveform, lanes, multi-parameter cues, anchoring, presets, parameter discovery) | ~1–1.5 weeks |
-| 4 | OBS spike, then the obs addon | ~1–1.5 weeks |
+| 4 | OBS spike, then the obs addon, including the §8.5.8 window helper (~0.5 week of that) | ~1.5–2 weeks |
 | 5 | Installer, auto-update with signatures, portable notify-only, legacy migration path, release checklist | ~1 week |
 | later | stream addon + coturn | ~2–3 weeks |
 
-**Through v0.4.0: about 7–9.5 weeks.** Phases 3 and 4 are independent and can be done in either order.
+**Through v0.4.0: about 7.5–10 weeks.** Phases 3 and 4 are independent and can be done in either order.
 
 ---
 
@@ -1044,6 +1128,9 @@ These are rough estimates for one developer.
 | Encoder startup variance | Cameras offset | Slate |
 | Avatar detection by newest config file is wrong | Wrong autocomplete | Advisory only; manual entry always allowed |
 | Protocol drift | Runtime errors | Shared pydantic package, generated TS, CI check |
+| VRChat / Unity clamps the window to the screen size | No 4K-on-2K through live resize | Launch options; gamescope on Linux; driver super-resolution (VSR / DSR) on Windows |
+| Window control unavailable (Wayland outside KDE) | Operator sets the size by hand | Launch-option generator (§8.5.8 Method B) |
+| Easy Anti-Cheat objects to a capture hook | VRChat won't start, or the capture is black | Agent uses window-manager calls only; test OBS Game Capture and obs-vkcapture with EAC (Appendix C) |
 
 ---
 
@@ -1074,6 +1161,8 @@ These are rough estimates for one developer.
 7. **Cue list storage:** on the server only (proposed), or also cached on the director's machine for offline editing?
 8. **Auto-added files in Soundpad:** should they also go into a dedicated "vrcActorSync" category? This depends on whether `DoAddSound(url, category, position)` duplicates the entry in All sounds **[probe follow-up]**.
 9. **Default `lines` per actor:** `both`, or `mic` for actors who don't want to hear their own cues?
+10. **Window helper default:** only offer the match (proposed), or apply it automatically with each profile push once the operator has consented?
+11. **Default Linux route for bigger-than-monitor recording:** gamescope (any compositor, needs a VRChat restart) or KWin live resize (KDE only, no restart)?
 
 ---
 
@@ -1089,6 +1178,7 @@ These are rough estimates for one developer.
 - [ ] v0.3.3 tkinter clients and v0.4 apps work together on the same server (§11.3), including file transfer
 - [ ] Any approved actor sending a cue or `PRIV *go` to another actor is rejected
 - [ ] The director pushes an OBS profile to 3 cameras and gets `compliant` or a precise diff; Roll/Cut produces a take-log CSV
+- [ ] On Windows, one click matches a camera operator's VRChat window to the profile resolution, and the director sees `matched` or the actual size
 - [ ] The local agent rejects a foreign `Host`/`Origin` or a missing token
 - [ ] The §12 test suite runs in CI
 
@@ -1163,6 +1253,25 @@ Send the JSON files back. Results update Appendix A, close the **[probe]** items
 
 ---
 
+## Appendix C — Capture-Resolution Test Plan (§8.5.8)
+
+**Setup:** VRChat in desktop mode (windowed) and OBS 30+. Windows: one 1440p monitor, if possible. Linux: KDE Plasma on Wayland, with gamescope and obs-vkcapture installed.
+
+| # | Step | Confirms |
+|---|---|---|
+| 1 | Windows: resize the VRChat window to the monitor size, then to 3840×2160 on a 1440p monitor (agent button or a small `SetWindowPos` script) | Live resize works; whether Windows or Unity clamp to the screen size |
+| 2 | OBS Game Capture of the oversized window, base resolution 3840×2160 | The full render size is recorded, not only the visible part |
+| 3 | Same with Window Capture | Whether off-screen parts are captured (expected: no) |
+| 4 | Steam launch options `-screen-width 1920 -screen-height 1080 -screen-fullscreen 0 -popupwindow` | VRChat honours them, borderless, and still after a restart |
+| 5 | Windows display scaling at 150 %, match to 1920×1080 | Physical pixels match (no 1280×720 surprise) |
+| 6 | KDE Wayland: KWin script resize of the `steam_app_438100` window | The KWin route works |
+| 7 | Linux: `gamescope -w 3840 -h 2160 -W 2560 -H 1440 -- obs-gamecapture %command%` | VRChat starts under Proton with EAC; obs-vkcapture records 3840×2160 |
+| 8 | Record 10 minutes at 4K in a busy world | GPU headroom; the dropped-frame warning fires when it should |
+
+Results close the **[window test]** items in §8.5.8.
+
+---
+
 ## References
 
 - Soundpad Remote Control: https://www.leppsoft.com/soundpad/en/rc/ and manual §3.9: https://www.leppsoft.com/soundpad/help/manual/tutorial/rc/
@@ -1184,5 +1293,5 @@ Send the JSON files back. Results update Appendix A, close the **[probe]** items
 |---|---|---|
 | Web UI (`web/`, Svelte 5 + Vite, Bun) | Role onboarding (role remembered, app reopens in it), director / actor / camera views, animated node graph (stage layout, packets only while commands travel), dark / light / system theme, UI scale 75–200 % + VR mode, reduce motion, settings, activity & chat drawer, toasts, demo session | `bun test` (22), `svelte-check` 0 errors, visual checks at desktop, 140 % VR and phone width |
 | Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad via `-rc`, OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
-| Not built yet | v2 relay and protocol package, Soundpad named-pipe client (§8.1), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
+| Not built yet | v2 relay and protocol package, Soundpad named-pipe client (§8.1), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
 | Not verified | pywebview window and WebView2 detection on Windows; Soundpad on Windows through the new app | Needs the Windows test box |
