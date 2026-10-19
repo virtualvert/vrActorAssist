@@ -51,6 +51,8 @@ web/                    v0.4 UI: Svelte 5 + Vite + TypeScript, built and tested 
 
 tools/soundpad_probe.py Windows-only probe for Soundpad's named-pipe API (spec Appendix B);
                         results go to tools/probe-results/ (git-ignored: sound titles and paths)
+tools/vrchat_window_probe.py  Windows-only VRChat window ↔ recording-size probe (spec §8.5.8, Appendix C);
+                        window-manager calls only (EAC), read-only unless --resize / --restore
 docs/superpowers/       Design specs and plans (dated; older ones are historical records)
 legacy/, archive/       TCP-era and prototype code. Reference only; don't modify
 ```

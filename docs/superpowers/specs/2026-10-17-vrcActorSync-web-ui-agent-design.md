@@ -15,6 +15,12 @@
   - Audio starts about 50–90 ms after the command.
   - `DoAddSound` lists the sound asynchronously.
 - §8.2.3 measures start latency from position changes, not from the first non-zero position.
+- VRChat window test results (Windows rows of Appendix C) folded into §8.5.8:
+  - live resize works, even beyond the monitor size;
+  - the launch options are honoured and persist;
+  - VRChat is per-monitor DPI aware, but resizes itself when Windows scaling changes;
+  - OBS Game Capture hooks VRChat under EAC.
+- The Linux rows are not tested.
 
 ### Changes in v0.4
 
@@ -849,15 +855,28 @@ Every 2 s the agent sends `obs.status` with:
 
 **Method A per platform:**
 - **Windows:**
-  - Find the window owned by `VRChat.exe` (window class `UnityWndClass`, to verify) with `EnumWindows` and a process lookup.
+  - Find the window owned by `VRChat.exe` with `EnumWindows` and a process lookup.
+    - The process lookup is a Toolhelp snapshot, which gives names and ids only, so the agent never opens a handle to VRChat.
+    - **Confirmed:** one visible window, class `UnityWndClass`, title `VRChat`.
   - The agent runs per-monitor DPI aware, so sizes are physical pixels and 150 % scaling doesn't turn 1920×1080 into 1280×720.
-  - Work out the outer size from the wanted client size (`AdjustWindowRectExForDpi`), call `SetWindowPos(…, SWP_NOZORDER | SWP_NOACTIVATE)`, then read `GetClientRect` back.
-  - Borderless: prefer the `-popupwindow` launch option (B). Changing another app's window style live is possible, but Unity may put it back.
+    - **Confirmed:** VRChat itself is per-monitor DPI aware, so Windows never stretches it. Its client size is its render size: OBS logged the swap chain at the client size after every change.
+    - **Confirmed:** at 150 % a fresh start with the launch options gives exactly 1920×1080 physical pixels, and a live match to 1920×1080 at 150 % holds.
+    - **Confirmed, needs handling:** changing Windows scaling *while VRChat runs* resizes it by the DPI ratio. At 125 % → 150 %, 1920×1080 became 2304×1296 and the render followed. So the agent re-checks the size on display or DPI changes (`WM_DISPLAYCHANGE`, or a poll every few seconds while matching is on) and reports `mismatch`.
+  - Work out the outer size from the wanted client size (`AdjustWindowRectExForDpi`), call `SetWindowPos(…, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)`, then read `GetClientRect` back.
+    - **Confirmed:** the bordered default window (`WS_OVERLAPPEDWINDOW`) needs +18×47 px at 125 %; a `-popupwindow` window needs none.
+    - `SetWindowPos` returned in 36–58 ms; the operator saw a brief hitch.
+    - The size still held at 0.5 s and 3 s; Unity didn't put it back.
+    - Run `SetWindowPos` off the agent's event loop with a timeout, since it waits for VRChat's window thread.
+  - Borderless: prefer the `-popupwindow` launch option (B). Changing another app's window style live is possible, but Unity may put it back (**unconfirmed**; not tried).
+  - `tools/vrchat_window_probe.py` implements this (read-only by default; `--resize W H`, `--restore`).
 - **Linux X11:** resize the window whose class is `steam_app_438100` (VRChat's Steam app id under Proton, to verify) with `xdotool` when it's installed; read the size back with `xwininfo`.
 - **Linux Wayland:** Wayland doesn't let one app resize another app's window.
   - **KDE Plasma:** the agent loads a small KWin script over D-Bus (`org.kde.KWin`, `/Scripting`) that sets the VRChat window's client geometry.
   - **Other compositors** (GNOME etc.): Method B only.
-- **Bigger than the monitor:** whether Windows and Unity allow a window larger than the display is a **[window test]** item. If it's clamped, use Method B with gamescope (Linux) or driver super-resolution (AMD VSR / NVIDIA DSR on Windows), which the app explains but doesn't change.
+- **Bigger than the monitor:** if Windows or Unity clamps the window, use Method B with gamescope (Linux) or driver super-resolution (AMD VSR / NVIDIA DSR on Windows), which the app explains but doesn't change.
+  - **Confirmed on Windows: not clamped.** A 3840×2160 client area on a 2560×1600 monitor held at 3 s; the outer window was 3858×2207 with about a third of it off-screen.
+  - OBS logged VRChat's swap chain at 3840×2160, so VRChat really renders at that size. 2560×1600 (taller than the screen once the title bar is added) also held.
+  - VSR / DSR isn't needed on Windows for live resize.
 
 **Method B lines** (built from `video.base`, plus the monitor size for gamescope):
 
@@ -867,11 +886,16 @@ Every 2 s the agent sends `obs.status` with:
 | Linux (Proton), window = recording size | `%command% -screen-width 1920 -screen-height 1080 -screen-fullscreen 0 -popupwindow` |
 | Linux, bigger than the monitor | `gamescope -w 3840 -h 2160 -W 2560 -H 1440 -- obs-gamecapture %command%`: VRChat renders at 3840×2160 inside a 2560×1440 window, and obs-vkcapture records the full 3840×2160 |
 
-- That VRChat honours these Unity launch options is a **[window test]** item. Unity can remember the last resolution between runs, so the generated line always sets it explicitly.
-- `obs-gamecapture` comes with obs-vkcapture. Whether it works inside gamescope and next to Easy Anti-Cheat under Proton is a **[window test]** item.
+- Unity can remember the last resolution between runs, so the generated line always sets it explicitly.
+- **Confirmed on Windows:** VRChat honours the Windows line.
+  - With `-screen-width 1920 -screen-height 1080 -screen-fullscreen 0 -popupwindow` it started borderless (`WS_POPUP`, no caption) with a 1920×1080 client area at the monitor's top-left.
+  - That held across two restarts, and again after a restart at 150 % scaling.
+- `obs-gamecapture` comes with obs-vkcapture. Whether it works inside gamescope and next to Easy Anti-Cheat under Proton is **not tested** (Appendix C #7). The Linux lines are unverified.
 
 **Capture source check:** the helper looks at the camera scene's sources (`GetInputList`) and warns when the source can't record the full render size:
 - **Windows:** use **Game Capture**, which records the render output even where the window is off-screen. Window Capture may only show the visible part.
+  - **Partly confirmed:** Game Capture hooked VRChat's 3840×2160 swap chain (shared-texture capture) while the window was larger than the screen. No recording file was checked.
+  - What Window Capture records of an off-screen window is **unconfirmed**.
 - **Linux:** use the obs-vkcapture source. PipeWire screen or window capture records what the compositor shows, which is the window size, not the render size.
 
 **Flow:**
@@ -886,7 +910,9 @@ Every 2 s the agent sends `obs.status` with:
 - Needs the OBS consent from §8.5.6, plus a separate one-time "Allow vrcActorSync to resize the VRChat window" prompt.
 - Never while recording.
 - Never touches other windows.
-- Never injects into VRChat: only standard window-manager calls, which matters with VRChat's Easy Anti-Cheat. OBS's own capture hook is outside the agent; its compatibility with EAC is a **[window test]** item.
+- Never injects into VRChat: only standard window-manager calls, which matters with VRChat's Easy Anti-Cheat. OBS's own capture hook is outside the agent.
+  - **Observed** with OBS 32.2.1: Game Capture hooked VRChat through its anti-cheat compatibility hook 8 times over about an hour, across 3 VRChat restarts and all the resizes. VRChat kept running and EAC raised nothing.
+  - That's one machine and one session, not a guarantee.
 - If VRChat isn't running, the state is `not_found` until the operator tries again.
 
 **GPU cost:** rendering at 4K is expensive. While recording, if `renderSkippedFrames` / `outputSkippedFrames` (§8.5.5) keep rising, the operator sees "GPU can't keep up at 3840×2160", with a suggestion to switch to a smaller profile.
@@ -1169,7 +1195,8 @@ These are rough estimates for one developer.
 | Encoder startup variance | Cameras offset | Slate |
 | Avatar detection by newest config file is wrong | Wrong autocomplete | Advisory only; manual entry always allowed |
 | Protocol drift | Runtime errors | Shared pydantic package, generated TS, CI check |
-| VRChat / Unity clamps the window to the screen size | No 4K-on-2K through live resize | Launch options; gamescope on Linux; driver super-resolution (VSR / DSR) on Windows |
+| VRChat / Unity clamps the window to the screen size | No 4K-on-2K through live resize | Not clamped on the Windows test box (3840×2160 on 2560×1600 held). Otherwise: launch options; gamescope on Linux; driver super-resolution (VSR / DSR) on Windows |
+| Windows scaling changes while VRChat runs | VRChat resizes itself by the DPI ratio and the match is lost | Re-check the size on display changes and report `mismatch` (§8.5.8) |
 | Window control unavailable (Wayland outside KDE) | Operator sets the size by hand | Launch-option generator (§8.5.8 Method B) |
 | Easy Anti-Cheat objects to a capture hook | VRChat won't start, or the capture is black | Agent uses window-manager calls only; test OBS Game Capture and obs-vkcapture with EAC (Appendix C) |
 
@@ -1309,16 +1336,18 @@ Send the JSON files back. Results update Appendix A, close the **[probe]** items
 
 **Setup:** VRChat in desktop mode (windowed) and OBS 30+. Windows: one 1440p monitor, if possible. Linux: KDE Plasma on Wayland, with gamescope and obs-vkcapture installed.
 
-| # | Step | Confirms |
-|---|---|---|
-| 1 | Windows: resize the VRChat window to the monitor size, then to 3840×2160 on a 1440p monitor (agent button or a small `SetWindowPos` script) | Live resize works; whether Windows or Unity clamp to the screen size |
-| 2 | OBS Game Capture of the oversized window, base resolution 3840×2160 | The full render size is recorded, not only the visible part |
-| 3 | Same with Window Capture | Whether off-screen parts are captured (expected: no) |
-| 4 | Steam launch options `-screen-width 1920 -screen-height 1080 -screen-fullscreen 0 -popupwindow` | VRChat honours them, borderless, and still after a restart |
-| 5 | Windows display scaling at 150 %, match to 1920×1080 | Physical pixels match (no 1280×720 surprise) |
-| 6 | KDE Wayland: KWin script resize of the `steam_app_438100` window | The KWin route works |
-| 7 | Linux: `gamescope -w 3840 -h 2160 -W 2560 -H 1440 -- obs-gamecapture %command%` | VRChat starts under Proton with EAC; obs-vkcapture records 3840×2160 |
-| 8 | Record 10 minutes at 4K in a busy world | GPU headroom; the dropped-frame warning fires when it should |
+| # | Step | Confirms | Result (2026-10-19) |
+|---|---|---|---|
+| 1 | Windows: resize the VRChat window to the monitor size, then to 3840×2160 on a 1440p monitor (agent button or a small `SetWindowPos` script) | Live resize works; whether Windows or Unity clamp to the screen size | **Confirmed**: 2560×1600 and 3840×2160 on a 2560×1600 monitor both held; no clamping; swap chain followed |
+| 2 | OBS Game Capture of the oversized window, base resolution 3840×2160 | The full render size is recorded, not only the visible part | **Partly**: Game Capture hooked the 3840×2160 swap chain; no recording made, so the file is unchecked |
+| 3 | Same with Window Capture | Whether off-screen parts are captured (expected: no) | **Not tested** (recordings skipped) |
+| 4 | Steam launch options `-screen-width 1920 -screen-height 1080 -screen-fullscreen 0 -popupwindow` | VRChat honours them, borderless, and still after a restart | **Confirmed**: borderless 1920×1080 at the top-left, after two restarts |
+| 5 | Windows display scaling at 150 %, match to 1920×1080 | Physical pixels match (no 1280×720 surprise) | **Confirmed**: 1920×1080 physical both by live resize and by restart at 150 %. Also found: changing scaling while VRChat runs resizes it by the DPI ratio (§8.5.8) |
+| 6 | KDE Wayland: KWin script resize of the `steam_app_438100` window | The KWin route works | **Not tested** (Windows box only) |
+| 7 | Linux: `gamescope -w 3840 -h 2160 -W 2560 -H 1440 -- obs-gamecapture %command%` | VRChat starts under Proton with EAC; obs-vkcapture records 3840×2160 | **Not tested** (Windows box only) |
+| 8 | Record 10 minutes at 4K in a busy world | GPU headroom; the dropped-frame warning fires when it should | **Not tested** (optional, skipped) |
+
+Test box: Windows 11 24H2, one 2560×1600 60 Hz laptop display at 125 % (150 % for #5), RTX 3070 Laptop GPU, OBS 32.2.1, VRChat in desktop mode. Probe: `tools/vrchat_window_probe.py`. The swap-chain sizes come from OBS's own game-capture log lines (`DXGI_SWAP_CHAIN_DESC`).
 
 Results close the **[window test]** items in §8.5.8.
 
@@ -1347,4 +1376,5 @@ Results close the **[window test]** items in §8.5.8.
 | Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad named-pipe client with `-rc` fallback (live status, version info, start-latency logging), OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
 | Not built yet | v2 relay and protocol package, the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
 | Soundpad on Windows (2026-10-19) | Probe (Appendix B) and the agent's pipe client against Soundpad 4.0.35 | Relay GO / STOP and `*play:N` end to end: Soundpad played and stopped, the actor view showed Playing with position and went back to Ready; `pytest` adds 15 tests against an in-memory Soundpad |
+| VRChat window probe (§8.5.8) | `tools/vrchat_window_probe.py`: window-manager calls only, read-only by default, `--resize` / `--restore` | Windows rows of Appendix C on the test box (2026-10-19); the agent-side helper isn't built |
 | Not verified | pywebview window and WebView2 detection on Windows | Needs the Windows test box |
