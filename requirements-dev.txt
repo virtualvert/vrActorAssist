@@ -1,0 +1,4 @@
+# Test dependencies (run: python -m pytest tests)
+-r requirements.txt
+pytest
+httpx

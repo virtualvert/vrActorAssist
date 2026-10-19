@@ -424,7 +424,8 @@ class DirectorClient:
                 ssl_context = ssl.create_default_context(cafile=certifi.where())
                 ssl_context.check_hostname = False
                 ssl_context.verify_mode = ssl.CERT_NONE
-                self.ws.run_forever(ping_interval=30, ping_timeout=10, ssl=ssl_context)
+                # websocket-client takes TLS settings through sslopt; a ready context goes in "context"
+                self.ws.run_forever(ping_interval=30, ping_timeout=10, sslopt={"context": ssl_context})
                 
                 if not self.should_reconnect:
                     break
