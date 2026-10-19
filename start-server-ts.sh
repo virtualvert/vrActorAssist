@@ -138,7 +138,8 @@ start() {
     
     # Start Python server (as current user, not root)
     echo "Starting server..."
-    "$PYTHON" "$SCRIPT_DIR/server_ws.py" --secret "$SECRET" >> "$LOG_DIR/server.log" 2>&1 &
+    # Bind to localhost only: clients reach the relay through the funnel, not the LAN
+    "$PYTHON" "$SCRIPT_DIR/server_ws.py" --host 127.0.0.1 --secret "$SECRET" >> "$LOG_DIR/server.log" 2>&1 &
     echo $! > "$SERVER_PID"
     
     # Give server a moment to bind

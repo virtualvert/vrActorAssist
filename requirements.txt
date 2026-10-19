@@ -7,6 +7,9 @@ websockets
 websocket-client
 certifi
 
+# VRChat OSC (actor client; imported lazily, so PyInstaller only bundles it if installed)
+python-osc
+
 # GUI (usually built-in with Python, but included for completeness)
 # tkinter is part of standard library
 
