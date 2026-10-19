@@ -1,9 +1,20 @@
 # vrcActorSync: Desktop Web UI + Local Agent Design
 
-**Date:** 2026-10-17 (revised 2026-10-18)
+**Date:** 2026-10-17 (revised 2026-10-19)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.4
+**Version:** 0.5
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.5
+
+- Soundpad probe results from the Windows test box are folded into §8.1, §8.2.3, Appendix A and Appendix B. Open items are marked unconfirmed.
+- Key findings:
+  - `SetVolume` changes both lines.
+  - Position moves in about 140 ms steps.
+  - The status says PLAYING before any audio.
+  - Audio starts about 50–90 ms after the command.
+  - `DoAddSound` lists the sound asynchronously.
+- §8.2.3 measures start latency from position changes, not from the first non-zero position.
 
 ### Changes in v0.4
 
@@ -444,7 +455,7 @@ class AddonContext:
 
 ### 8.1 `soundpad` (Windows)
 
-Based on Leppsoft's reference client `SoundpadRemoteControl.java` (RC interface 1.1.2). Full command list: Appendix A. Assumptions marked **[probe]** are checked by `tools/soundpad_probe.py` on the test box (Appendix B).
+Based on Leppsoft's reference client `SoundpadRemoteControl.java` (RC interface 1.1.2). Full command list: Appendix A. Assumptions were checked by `tools/soundpad_probe.py` on the Windows test box on 2026-10-19 (Soundpad 4.0.35, RC 1.1.2, full version; Appendix B). Results are marked **Confirmed**; anything the probe didn't reach is marked **unconfirmed**.
 
 #### 8.1.1 Transport: Named Pipe
 
@@ -455,12 +466,16 @@ Based on Leppsoft's reference client `SoundpadRemoteControl.java` (RC interface 
 - **Why the pipe replaces the CLI:**
   - `Soundpad.exe -rc` starts a new process per command and returns nothing.
   - The pipe returns position, status, volume and the sound list, which the status display, sound picker and cue anchoring all need.
-  - The probe measures both, to confirm.
+  - **Confirmed:** a pipe round trip takes 0.10 ms (median of 50 `IsAlive()`, p95 0.17 ms). `Soundpad.exe -rc` takes 179 ms (median of 5), and 837 ms for the first call.
 - **Client:**
   - One worker thread owns the pipe handle and runs one request at a time, at least 2 ms apart. The reference client warns that back-to-back requests can break the pipe.
   - Timeouts: 2 s, or 10 s for list calls. On a timeout or a broken pipe, the client reconnects with backoff and marks the addon `degraded`; the UI shows "Soundpad not responding".
-  - Read method, as in the reference client: block for the first byte, then read the rest of what is available (`PeekNamedPipe`). The probe uses the same method.
-- **Startup probe:** `IsAlive()`, `GetVersion()`, `GetRemoteControlVersion()`, `IsTrial()` → feature flags.
+  - Read method, as in the reference client: block for the first byte, then read the rest of what is available (`PeekNamedPipe`). The probe uses the same method. **Confirmed** for answers up to about 1 KB (a 6-sound list). Large sound lists are **unconfirmed**.
+  - The agent's client (`agent/soundpad_pipe.py`) differs in two ways:
+    - It waits for the first byte by polling `PeekNamedPipe` every 0.2 ms instead of blocking, so a hung Soundpad can't wedge the worker thread and the timeout is a plain deadline.
+    - It reads XML answers until the root element closes, rather than relying on a short pause.
+  - **Confirmed:** Soundpad accepts more than one pipe client at a time, so the agent keeping the pipe open doesn't lock out the probe or other tools (for example Stream Deck plugins).
+- **Startup probe:** `IsAlive()`, `GetVersion()`, `GetRemoteControlVersion()`, `IsTrial()` → feature flags. The test box answered `R-200`, `4.0.35`, `1.1.2`, `0`.
   - `add_sound` is off in the trial version: `DoAddSound` isn't allowed there.
   - Warn if the RC version is below 1.1.2, since some commands would be missing.
 - **Auto-launch (optional):** if the pipe is missing and `auto_launch` is on, start Soundpad.exe (path from config, else auto-detected by `soundpad.py`'s `find_soundpad_exe`) and wait up to 15 s for the pipe. This covers ROADMAP Priority 4, "Auto-start with Soundpad".
@@ -484,7 +499,10 @@ Based on Leppsoft's reference client `SoundpadRemoteControl.java` (RC interface 
 
 - `soundpad.ack {status, late_ms, error?}` answers every action.
 - Error codes: `not_found`, `not_in_soundpad`, `trial_limit`, `soundpad_offline`, `timeout`.
-- `start_ms` seeks right after starting playback. **[probe]** whether this causes an audible blip; if it does, the UI marks it as "approximate".
+- `start_ms` seeks right after starting playback.
+  - **Confirmed:** a seek shows `SEEKING` for 20–50 ms, during which the position reads 0 or the old value, then the exact target (`DoSeekMs(5000)` → 5000). A seek and a pause/resume in the middle of a sound sounded clean to the actor and to a listener in VRChat.
+  - Whether seeking right after `DoPlaySound` makes an audible blip is **unconfirmed**; until it's checked, the UI marks `start_ms` as "approximate".
+  - Don't stop during `SEEKING`. Once, a `DoStopSound()` sent mid-seek made the next `DoPlaySound` of that sound start at the seek target instead of 0. `soundpad.stop` waits for the seek to finish (up to 250 ms) first.
 
 #### 8.1.3 Sound References ("Play a Specific File")
 
@@ -499,10 +517,12 @@ Based on Leppsoft's reference client `SoundpadRemoteControl.java` (RC interface 
 How the actor's agent resolves a reference:
 1. `sha256` → local path, from the files addon's receive log.
 2. `path` → index, through a cached sound list.
-   - Match the `url` attribute, normalised and case-insensitive. **[probe]** the attribute names; the expected ones are `index`, `url`, `title`, `duration`.
+   - Match the `url` attribute, normalised and case-insensitive.
+   - **Confirmed** format: `<Soundlist>` of `<Sound>` elements with `index`, `url` (the full Windows path), `title` (file name without extension), `artist`, `duration` (`m:ss`, whole seconds only), `addedOn`, `lastPlayedOn`, `playCount`, `tag`. `GetSoundlist(from, to)` returns just that range.
    - Refresh the cache when `GetSoundFileCount()` changes, or on a miss.
 3. Not in Soundpad:
    - With `auto_add` on and the full version: `DoAddSound("<path>")`, refresh, then use the new index.
+   - **Confirmed:** `DoAddSound` answers `R-200` at once but the sound is listed a little later, so the agent waits for `GetSoundFileCount()` to change (up to 5 s). The new sound was appended at the end of All sounds. A path with spaces works inside the quotes.
    - In the trial: error `trial_limit` with the hint "add it to Soundpad by hand".
 4. **Index drift guard:** before playing by index, `GetSoundlist(i,i)` must still show the same `url`. Otherwise refresh and resolve again.
 5. `category` → `GetCategories` → category index → `DoPlaySoundFromCategory(cat, pos, render, capture)`.
@@ -522,17 +542,24 @@ How the actor's agent resolves a reference:
 
 The default is set per actor in config. The director can override it on each play.
 
+**Confirmed by listen test** with `DoPlaySound(i, render, capture)`: `speakers` was heard only by the actor, `both` by the actor and a listener in VRChat, `mic` only by the VRChat listener.
+
 #### 8.1.5 Volume and Mute
 
-- `SetVolume` / `GetVolume` use **0–100**. The reference client documents them as "volume of the speakers".
-- **[probe] + listen test:** does `SetVolume` also change what others hear on the mic line?
-  - If it doesn't, the slider is labelled "Speaker volume", and audience loudness stays a Soundpad setting on the actor's machine.
-- `IsMuted()` / `DoToggleMute()` mute the speakers.
-- Today's `soundpad.py` sends 0.0–1.0 to `SetVolume`; see §17 #8.
+- `SetVolume` / `GetVolume` use **0–100** (**confirmed**). `SetVolume(0.5)` answers `R-200` and sets the volume to 0, so the agent only sends whole numbers.
+- **Confirmed by listen test: `SetVolume` changes both lines**, although the reference client calls it "volume of the speakers". Playing on the mic line only at 5 and then at 100, the VRChat listener heard the second clip much louder. (40 vs 100 on `both` was too close to call.)
+  - So there's one control, labelled "Volume", and it changes what the audience hears as well as the actor's speakers. Soundpad has no separate mic-line volume.
+- `IsMuted()` / `DoToggleMute()` mute the speakers. Whether mute also silences the mic line is **unconfirmed**.
+- v0.3's `soundpad.py` sent 0.0–1.0 to `SetVolume`, which mutes in practice; fixed on main in 0.3.3 (§17 #8).
 
 #### 8.1.6 Status Reporting
 
 - **While playing:** poll `GetPlayStatus()` and `GetPlaybackPositionInMs()` every 250 ms. Send `soundpad.state {status, position_ms, duration_ms, sound, lines, volume, muted}` to directors at most twice a second. Otherwise send on change, plus a heartbeat every 10 s.
+- **Confirmed position behaviour** (a 50 s WAV; other formats **unconfirmed**):
+  - The status reads `PLAYING` 5–6 ms after `DoPlaySound`, before any audio. The position stays 0 until about 180–215 ms after the command.
+  - After that the position advances in steps about 140 ms apart, so the UI interpolates between reads.
+  - It reads 0 or the old value while `SEEKING`.
+  - After a stop, `GetPlaybackPositionInMs()` and `GetPlaybackDurationInMs()` keep the last sound's values (once 3127 ms of a 3096 ms sound), so `STOPPED` means "no position".
 - **List changes:** poll `GetSoundFileCount()` every 5 s; push `soundpad.list` when the count changes.
 - **Director UI:** a mini transport per actor with status, title, progress bar and volume.
 
@@ -571,9 +598,21 @@ fire_at = at + delay_ms[actor] − start_latency_ms[actor]   (the last term only
 - **`delay_ms`:** a manual per-actor offset in ms, positive or negative.
   - The director sets it (right-click actor → Set delay). It is stored on the server and delivered in `welcome` and `presence.roster`.
   - It covers differences in audio path or VRChat voice delay, and creative offsets. This is FEATURES-PLANNED Feature 3.
-- **`start_latency_ms`:** measured on the actor's machine as the time from `DoPlaySound` to the first position above 0. It uses the median of the last 5 plays.
+- **`start_latency_ms`:** measured on the actor's machine from the play command to the moment audio starts. It uses the median of the last 5 plays.
   - **Calibrate** runs one speakers-only play to seed it.
-  - **[probe]** measures typical values.
+  - **How it's measured** (changed after the probe):
+    - The status says `PLAYING` 2–11 ms after the command, before any audio.
+    - The position stays 0 for about 180–220 ms and then moves in steps about 140 ms apart (§8.1.6). So "time to the first position above 0" overstates the latency by up to one step.
+    - Instead, the agent polls status and position right after the command. At each of the first 3 position changes it takes `(time of the read − command time) − position`, then the median of those.
+  - **Measured** on the test box (Windows 11, Soundpad 4.0.35; logged by the agent as `Soundpad start: …`):
+
+    | Command | Plays | Audio start after the command | First position read |
+    |---|---|---|---|
+    | `DoPlaySound(5, …)` from the probe, 50 s WAV, three output-line settings | 3 | 51, 55, 79 ms | 179–216 ms |
+    | `DoPlaySelectedSound()` via relay GO, 50 s WAV | 5 | 92, 67, 55, 49, 48 ms (median 55) | 177–222 ms |
+    | `DoPlaySound(6)` via `*play:6`, 47 s MP3, first play of that file | 1 | 88 ms | 214 ms |
+
+  - The first play of each sequence was slower (88–92 ms: the first GO, and the first play of the MP3); repeats settled around 50 ms. Proposed default before any calibration: **60 ms**. Other formats and machines are **unconfirmed**.
 - **Late arrival:** if a message arrives more than 20 ms after `fire_at`, the agent acts immediately and reports `late_ms` in the ack. The director UI shows it per actor.
 
 #### 8.2.4 Limits
@@ -649,6 +688,7 @@ VRChat voice delay to each listener varies per listener and isn't measurable loc
 3. **Anchor:**
    - After `DoPlaySound`, poll `GetPlaybackPositionInMs()` every 10 ms until the position is above 0.
    - Set `anchor = now − position`, then schedule each action at `anchor + at_ms`.
+   - Soundpad's position moves in steps about 140 ms apart (§8.1.6), so `now` must be the read where the value changed. A read taken between steps is up to one step late.
    - Re-read the position every 250 ms and correct any drift above 15 ms.
 4. **Pause / seek / stop:**
    - `PAUSED` freezes the cue clock.
@@ -659,7 +699,8 @@ VRChat voice delay to each listener varies per listener and isn't measurable loc
 
 #### 8.3.5 Avatar Parameter Discovery (Optional)
 
-- VRChat writes per-avatar OSC config JSON under `%USERPROFILE%\AppData\LocalLow\VRChat\VRChat\OSC\<user>\Avatars\`. **[probe]** confirms the location and format.
+- VRChat writes per-avatar OSC config JSON under `%USERPROFILE%\AppData\LocalLow\VRChat\VRChat\OSC\<user>\Avatars\`.
+  - **Confirmed:** files are `usr_…\Avatars\avtr_….json`. Each has top-level keys `id`, `name`, `hash` and `parameters`. Each parameter has `name` and an `input` and/or `output` with `address` and `type` (`Float`, `Bool`, `Int`). The test avatar had 44 parameters, 16 of them settable.
 - The agent reads the newest file, keeps only parameters that have an `input` (only those can be set over OSC), and sends `osc.params {avatar_name, params: [{name, address, type}]}`.
 - Picking the newest file is a guess at the current avatar. Listening for VRChat's `/avatar/change` (OSC out, 9001) or OSCQuery is a later improvement, because port 9001 is often taken by other OSC apps.
 
@@ -1117,7 +1158,7 @@ These are rough estimates for one developer.
 |---|---|---|
 | Local agent reachable by malicious websites | Remote control of Soundpad/OBS/files | §7.7 |
 | Rapid Soundpad pipe requests break the pipe | Lost commands | One request at a time, ≥2 ms gap, reconnect on timeout |
-| `SetVolume` only affects speakers | The director can't change what the audience hears | Probe + listen test; label the control honestly |
+| `SetVolume` is one volume for both lines (confirmed, §8.1.5) | Turning the actor's speakers down also makes the sound quieter for the audience | One "Volume" control, labelled as changing what everyone hears |
 | Soundpad trial limits (`DoAddSound`) | No auto-add | Detect with `IsTrial()`; clear hint |
 | Sound index drift after reordering | Wrong sound plays | Path references + drift guard (§8.1.3) |
 | WebView2 missing or old | Blank or broken window | Registry check + headless fallback; installer bootstraps WebView2 |
@@ -1145,7 +1186,7 @@ These are rough estimates for one developer.
 | 5 | Client-supplied `sender` is trusted | `server_ws.py:436` | Server sets `from` |
 | 6 | "Forgotten" is detected by matching message text | `actor_client_ws.py:601` | `approval.forgotten` |
 | 7 | `\|` in filenames breaks the pipe protocol | `shared.py` parser | JSON envelope |
-| 8 | `set_volume` validates and sends 0.0–1.0, but Soundpad's `SetVolume` takes 0–100 (per the reference client; the probe checks what 0.5 does) | `soundpad.py:169-174` | §8.1.5; hotfix: scale to an int 0–100 |
+| 8 | `set_volume` validates and sends 0.0–1.0, but Soundpad's `SetVolume` takes 0–100. The probe confirmed `SetVolume(0.5)` sets the volume to 0 | `soundpad.py:169-174` | §8.1.5; hotfix on main (0.3.3): scale to an int 0–100 |
 | 9 | `find_update` treats any version mismatch as "update available", so a client *newer* than `latest_version` is offered a downgrade once the manifest has URLs | `server_ws.py:80-113` | Compare versions properly (offer only when `latest > client`); the v0.4 agent already ignores offers older than itself |
 
 ---
@@ -1193,42 +1234,42 @@ Source: Leppsoft's `SoundpadRemoteControl.java` (client version 1.1.2), which Le
 - Write the UTF-8 command and read the reply. Actions reply `R-<HTTP status>` (`R-200` = OK, `R-404` = not found); getters reply with a value or XML.
 - One request at a time. The reference client keeps at least 1 ms between requests; the addon uses 2 ms.
 
-| Command | Since | Returns | Use |
-|---|---|---|---|
-| `IsAlive()` | 1.0.0 | `R-200` | ✔ health check |
-| `GetVersion()` | 1.0.0 | Soundpad version | ✔ diagnostics |
-| `GetRemoteControlVersion()` | 1.0.0 | e.g. `1.1.2` | ✔ feature flags |
-| `IsTrial()` | 1.1.2 | `1` / `0` | ✔ disables auto-add |
-| `DoPlaySound(index)` | 1.0.0 | `R-200` if the index exists | ✔ legacy `*play:N` |
-| `DoPlaySound(index, renderLine, captureLine)` | 1.0.0 | `R-200` | ✔ play with output lines (speakers = render, mic = capture) |
-| `DoPlaySelectedSound()` | 1.1.0 | `R-200` | ✔ legacy Go |
-| `DoPlaySoundFromCategory(cat, pos, render, capture)` | 1.1.1 | `R-200` | ✔ category references (`cat = -1` → current category) |
-| `DoPlayCurrentSoundAgain()`, `DoPlayPreviouslyPlayedSound()`, `DoPlayPreviousSound()`, `DoPlayNextSound()` | 1.0/1.1 | `R-200` | — |
-| `DoPlayRandomSound(render, capture)`, `DoPlayRandomSoundFromCategory(cat, render, capture)` | 1.1.2 | `R-200` | — |
-| `DoStopSound()` | 1.0.0 | `R-200` | ✔ |
-| `DoTogglePause()` | 1.0.0 | `R-200` | ✔ (wrapped to be idempotent) |
-| `DoSeekMs(ms)` | 1.0.0 | `R-200` | ✔ absolute seek |
-| `DoJumpMs(ms)` | 1.0.0 | `R-200` | ✔ relative jump (negative = back) |
-| `GetPlayStatus()` | 1.0.0 | `STOPPED` / `PLAYING` / `PAUSED` / `SEEKING` | ✔ |
-| `GetPlaybackPositionInMs()` | 1.0.0 | number | ✔ cue anchoring, status |
-| `GetPlaybackDurationInMs()` | 1.0.0 | number | ✔ |
-| `GetVolume()` / `SetVolume(0–100)` | 1.0.0 | number / `R-200` | ✔ documented as speaker volume |
-| `IsMuted()` / `DoToggleMute()` | 1.0.0 | `1`/`0` / `R-200` | ✔ speakers |
-| `GetSoundFileCount()` | 1.0.0 | number | ✔ change detection |
-| `GetSoundlist()`, `GetSoundlist(from)`, `GetSoundlist(from, to)` | 1.0.0 | XML (All sounds; indices start at 1) | ✔ picker, path → index, drift guard |
-| `GetCategories(withSounds, withIcons)`, `GetCategory(i, withSounds, withIcons)` | 1.1.0 | XML | ✔ category references |
-| `DoAddSound("path")`, `DoAddSound("path", index)` | 1.0.0 | `R-200` | ✔ auto-add (**not in the trial**) |
-| `DoAddSound("path", categoryIndex, position)` | 1.1.0 | `R-200` | Open question 8 |
-| `DoAddCategory("name", parentIndex)`, `DoRemoveCategory(i)`, `DoSelectCategory(i)`, `DoSelectPreviousCategory()`, `DoSelectNextCategory()` | 1.1.0 | `R-200` | Open question 8 |
-| `DoSearch("term")`, `DoResetSearch()`, `DoSelectPreviousHit()`, `DoSelectNextHit()`, `DoSelectIndex(row)`, `DoScrollBy(rows)`, `DoScrollTo(row)` | 1.0.0 | `R-200` | — |
-| `DoRemoveSelectedEntries(removeOnDisk)`, `DoUndo()`, `DoRedo()`, `DoSaveSoundlist()` | 1.0.0 | `R-200` | — (`DoRemoveSelectedEntries` not in the trial) |
-| `DoStartRecording()`, `DoStopRecording()`, `DoStartRecordingSpeakers()`, `DoStartRecordingMicrophone()`, `GetRecordingPositionInMs()`, `GetRecordingPeak()` | 1.0/1.1 | — | — |
-| `GetTitleText()`, `GetStatusBarText()` | 1.0.0 | text | diagnostics |
+| Command | Since | Returns | Use | Test box (Soundpad 4.0.35, 2026-10-19) |
+|---|---|---|---|---|
+| `IsAlive()` | 1.0.0 | `R-200` | ✔ health check | Confirmed; 0.10 ms round trip |
+| `GetVersion()` | 1.0.0 | Soundpad version | ✔ diagnostics | Confirmed: `4.0.35` |
+| `GetRemoteControlVersion()` | 1.0.0 | e.g. `1.1.2` | ✔ feature flags | Confirmed: `1.1.2` |
+| `IsTrial()` | 1.1.2 | `1` / `0` | ✔ disables auto-add | Confirmed: `0` (full version); trial unconfirmed |
+| `DoPlaySound(index)` | 1.0.0 | `R-200` if the index exists | ✔ legacy `*play:N` | Confirmed (agent, `*play:6`): plays on **both** lines (listen test). The answer for an index that doesn't exist is unconfirmed |
+| `DoPlaySound(index, renderLine, captureLine)` | 1.0.0 | `R-200` | ✔ play with output lines (speakers = render, mic = capture) | Confirmed, all three line combinations by listen test (§8.1.4) |
+| `DoPlaySelectedSound()` | 1.1.0 | `R-200` | ✔ legacy Go | Confirmed (agent, relay GO ×5): plays on **both** lines; audio ≈55 ms after the command (§8.2.3) |
+| `DoPlaySoundFromCategory(cat, pos, render, capture)` | 1.1.1 | `R-200` | ✔ category references (`cat = -1` → current category) | Unconfirmed |
+| `DoPlayCurrentSoundAgain()`, `DoPlayPreviouslyPlayedSound()`, `DoPlayPreviousSound()`, `DoPlayNextSound()` | 1.0/1.1 | `R-200` | — | Not tested |
+| `DoPlayRandomSound(render, capture)`, `DoPlayRandomSoundFromCategory(cat, render, capture)` | 1.1.2 | `R-200` | — | Not tested |
+| `DoStopSound()` | 1.0.0 | `R-200` | ✔ | Confirmed: `STOPPED` at the next read. Don't send it during `SEEKING` (§8.1.2) |
+| `DoTogglePause()` | 1.0.0 | `R-200` | ✔ (wrapped to be idempotent) | Confirmed: `PAUSED` with the position frozen, then `PLAYING` again |
+| `DoSeekMs(ms)` | 1.0.0 | `R-200` | ✔ absolute seek | Confirmed: `SEEKING` for 20–50 ms, then the exact target |
+| `DoJumpMs(ms)` | 1.0.0 | `R-200` | ✔ relative jump (negative = back) | Unconfirmed |
+| `GetPlayStatus()` | 1.0.0 | `STOPPED` / `PLAYING` / `PAUSED` / `SEEKING` | ✔ | Confirmed: all four seen. `PLAYING` 5–6 ms after a play command, before any audio |
+| `GetPlaybackPositionInMs()` | 1.0.0 | number | ✔ cue anchoring, status | Confirmed: moves in steps about 140 ms apart; keeps the last value after a stop (§8.1.6) |
+| `GetPlaybackDurationInMs()` | 1.0.0 | number | ✔ | Confirmed: exact ms while playing (49721 for a "0:50" sound); keeps the last value after a stop |
+| `GetVolume()` / `SetVolume(0–100)` | 1.0.0 | number / `R-200` | ✔ volume of **both** lines (listen test) | Confirmed: 0–100. `SetVolume(0.5)` answers `R-200` and sets 0 |
+| `IsMuted()` / `DoToggleMute()` | 1.0.0 | `1`/`0` / `R-200` | ✔ speakers | `IsMuted()` confirmed (`0`); `DoToggleMute()` unconfirmed |
+| `GetSoundFileCount()` | 1.0.0 | number | ✔ change detection | Confirmed |
+| `GetSoundlist()`, `GetSoundlist(from)`, `GetSoundlist(from, to)` | 1.0.0 | XML (All sounds; indices start at 1) | ✔ picker, path → index, drift guard | Confirmed: `GetSoundlist()` and `(from, to)`; attributes in §8.1.3. `(from)` unconfirmed |
+| `GetCategories(withSounds, withIcons)`, `GetCategory(i, withSounds, withIcons)` | 1.1.0 | XML | ✔ category references | `GetCategories(false, false)` confirmed: `<Categories>` of `<Category index name type hidden>`, starting with the hidden "All sounds" (index 1). `GetCategory` unconfirmed |
+| `DoAddSound("path")`, `DoAddSound("path", index)` | 1.0.0 | `R-200` | ✔ auto-add (**not in the trial**) | `DoAddSound("path")` confirmed: `R-200` at once, listed shortly after (§8.1.3). `(path, index)` unconfirmed |
+| `DoAddSound("path", categoryIndex, position)` | 1.1.0 | `R-200` | Open question 8 | Unconfirmed |
+| `DoAddCategory("name", parentIndex)`, `DoRemoveCategory(i)`, `DoSelectCategory(i)`, `DoSelectPreviousCategory()`, `DoSelectNextCategory()` | 1.1.0 | `R-200` | Open question 8 | Not tested |
+| `DoSearch("term")`, `DoResetSearch()`, `DoSelectPreviousHit()`, `DoSelectNextHit()`, `DoSelectIndex(row)`, `DoScrollBy(rows)`, `DoScrollTo(row)` | 1.0.0 | `R-200` | — | `DoResetSearch()` through `Soundpad.exe -rc` only (179 ms) |
+| `DoRemoveSelectedEntries(removeOnDisk)`, `DoUndo()`, `DoRedo()`, `DoSaveSoundlist()` | 1.0.0 | `R-200` | — (`DoRemoveSelectedEntries` not in the trial) | Not tested |
+| `DoStartRecording()`, `DoStopRecording()`, `DoStartRecordingSpeakers()`, `DoStartRecordingMicrophone()`, `GetRecordingPositionInMs()`, `GetRecordingPeak()` | 1.0/1.1 | — | — | Not tested |
+| `GetTitleText()`, `GetStatusBarText()` | 1.0.0 | text | diagnostics | Not tested |
 
 **Not available through RC:**
 - Playing a file that isn't in the sound list. It must be added first.
 - Per-sound volume.
-- Mic-line volume, assumed missing; the probe checks it.
+- A separate mic-line volume. `SetVolume` sets one volume for both lines (confirmed by listen test).
 
 ---
 
@@ -1250,6 +1291,17 @@ Source: Leppsoft's `SoundpadRemoteControl.java` (client version 1.1.2), which Le
 | 7 | Reorder sounds in Soundpad, run step 1 again | Index drift: indices change, `url` stays |
 
 Send the JSON files back. Results update Appendix A, close the **[probe]** items, and set the defaults for latency compensation.
+
+**Results (2026-10-19, Windows 11, Soundpad 4.0.35 full version, RC 1.1.2):**
+- Steps 1–6 were run, with a listener in VRChat for steps 2–4. The findings are in §8.1, §8.2.3 and Appendix A.
+- Step 4's 40 vs 100 on `both` was inconclusive, so it was repeated on `mic` at 5 vs 100, which was clear.
+- Step 7 (reordering) wasn't run, so index drift is **unconfirmed**.
+- Probe changes made along the way:
+  - Positions count only after `PLAYING`, because the stale position after a stop otherwise looks like an instant start.
+  - The probe records how often the position changes.
+  - It seeks to 5 s, so a stale read can't pass.
+  - `--add` waits for the list to grow.
+- Raw JSON stays on the test box in `tools/probe-results/`. That folder is git-ignored because it holds sound titles and paths.
 
 ---
 
@@ -1292,6 +1344,7 @@ Results close the **[window test]** items in §8.5.8.
 | Area | Built | Verified |
 |---|---|---|
 | Web UI (`web/`, Svelte 5 + Vite, Bun) | Role onboarding (role remembered, app reopens in it), director / actor / camera views, animated node graph (stage layout, packets only while commands travel), dark / light / system theme, UI scale 75–200 % + VR mode, reduce motion, settings, activity & chat drawer, toasts, demo session | `bun test` (22), `svelte-check` 0 errors, visual checks at desktop, 140 % VR and phone width |
-| Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad via `-rc`, OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
-| Not built yet | v2 relay and protocol package, Soundpad named-pipe client (§8.1), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
-| Not verified | pywebview window and WebView2 detection on Windows; Soundpad on Windows through the new app | Needs the Windows test box |
+| Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad named-pipe client with `-rc` fallback (live status, version info, start-latency logging), OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
+| Not built yet | v2 relay and protocol package, the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
+| Soundpad on Windows (2026-10-19) | Probe (Appendix B) and the agent's pipe client against Soundpad 4.0.35 | Relay GO / STOP and `*play:N` end to end: Soundpad played and stopped, the actor view showed Playing with position and went back to Ready; `pytest` adds 15 tests against an in-memory Soundpad |
+| Not verified | pywebview window and WebView2 detection on Windows | Needs the Windows test box |

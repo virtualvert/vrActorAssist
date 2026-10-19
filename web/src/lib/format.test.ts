@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ago, duration, initials, latencyLevel, peerSubtitle } from "./format";
+import { ago, duration, initials, latencyLevel, mediaTime, peerSubtitle } from "./format";
 import { clampScale } from "./protocol";
 
 describe("latencyLevel", () => {
@@ -27,6 +27,14 @@ describe("text helpers", () => {
     expect(ago(0, 30_000)).toBe("30s ago");
     expect(initials("Cam A")).toBe("CA");
     expect(initials("quincey")).toBe("QU");
+  });
+
+  test("mediaTime reads like a player", () => {
+    expect(mediaTime(0)).toBe("0:00");
+    expect(mediaTime(49_721)).toBe("0:49");
+    expect(mediaTime(83_999)).toBe("1:23");
+    expect(mediaTime(3_723_000)).toBe("1:02:03");
+    expect(mediaTime(-5)).toBe("0:00");
   });
 });
 

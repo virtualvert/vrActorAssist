@@ -27,6 +27,9 @@ start-server.sh
 
 # Misc
 .openclaw/
+
+# Windows probe output (sound titles, paths, window info)
+tools/probe-results/
 # Web UI
 node_modules/
 web/dist/

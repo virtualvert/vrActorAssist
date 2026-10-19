@@ -13,6 +13,7 @@ import {
   type Peer,
   type Prefs,
   type Role,
+  type SoundpadPlayback,
   type TrafficKind,
 } from "../protocol";
 
@@ -63,6 +64,11 @@ const HOST = "relay.demo";
 const JITTER_EVERY_MS = 2000;
 const INCOMING_CUE_EVERY_MS = 14_000;
 const COUNTDOWN_MS = 3000;
+const SELF_SOUND_MS = 5000;
+
+function stoppedPlayback(): SoundpadPlayback {
+  return { status: "STOPPED", positionMs: 0, durationMs: 0, title: null };
+}
 
 export function peerId(name: string): string {
   return `peer:${name.toLowerCase().replace(/\s+/g, "-")}`;
@@ -75,6 +81,8 @@ export class DemoSession {
   #emit: (event: AgentEvent) => void;
   #timers: { at: number; fn: () => void }[] = [];
   #playingUntil = new Map<string, number>();
+  /** When the simulated Soundpad started the current sound (actor role). */
+  #selfPlayStart: number | null = null;
   #cast = new Map<string, CastMember>();
   #connectedAt: number | null = null;
   #lastJitter = 0;
@@ -176,6 +184,8 @@ export class DemoSession {
           if (call.args.soundpadEnabled !== undefined) {
             this.state.actor.soundpad.enabled = call.args.soundpadEnabled;
             this.state.actor.soundpad.state = call.args.soundpadEnabled ? "simulated" : "disabled";
+            this.state.actor.soundpad.playback = call.args.soundpadEnabled ? stoppedPlayback() : null;
+            this.#selfPlayStart = null;
           }
           if (call.args.oscEnabled !== undefined) {
             this.state.actor.osc.enabled = call.args.oscEnabled;
@@ -213,6 +223,7 @@ export class DemoSession {
         this.#go();
       }
       this.#finishPlayback(now);
+      this.#advanceSelfPlayback(now);
       if (this.state.role !== "director" && now >= this.#nextIncomingCue) {
         this.#nextIncomingCue = now + INCOMING_CUE_EVERY_MS;
         this.#incomingCue();
@@ -395,6 +406,10 @@ export class DemoSession {
       this.#playingUntil.set("self", now + 5000);
       self.activity = "playing";
       this.state.actor.lastCue = { command: "*go", at: now, ok: true };
+      if (this.state.actor.soundpad.enabled) {
+        this.#selfPlayStart = now;
+        this.state.actor.soundpad.playback = { status: "PLAYING", positionMs: 0, durationMs: SELF_SOUND_MS, title: null };
+      }
       const how = this.state.actor.soundpad.enabled ? "played the selected sound (simulated)" : "Soundpad is off, nothing played";
       this.#log("success", `▶ GO from ${director.name} — ${how}`);
     } else {
@@ -479,6 +494,20 @@ export class DemoSession {
     }
   }
 
+  /** The simulated Soundpad moves in ~140 ms steps like the real one; the tick is coarser anyway. */
+  #advanceSelfPlayback(now: number): void {
+    const playback = this.state.actor?.soundpad.playback;
+    if (!playback || this.#selfPlayStart === null) return;
+    const position = now - this.#selfPlayStart;
+    if (position >= playback.durationMs) {
+      this.state.actor!.soundpad.playback = stoppedPlayback();
+      this.#selfPlayStart = null;
+    } else {
+      playback.positionMs = Math.floor(position / 140) * 140;
+    }
+    this.#changed = true;
+  }
+
   #onlineActors(): Peer[] {
     return this.state.peers.filter((p) => p.role === "actor" && p.status === "online");
   }
@@ -516,7 +545,7 @@ export class DemoSession {
     this.state.actor =
       role === "actor"
         ? ({
-            soundpad: { enabled: true, state: "simulated", detail: "Demo — no Soundpad needed" },
+            soundpad: { enabled: true, state: "simulated", detail: "Demo — no Soundpad needed", info: null, playback: stoppedPlayback() },
             osc: { enabled: true, host: "127.0.0.1", port: 9000, ready: true },
             lastCue: null,
           } satisfies ActorLocal)

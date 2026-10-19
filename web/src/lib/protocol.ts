@@ -49,8 +49,38 @@ export interface PendingActor {
   name: string;
 }
 
+/**
+ * ready: Soundpad answers on its remote-control pipe. fallback: it doesn't, so cues go through
+ * `Soundpad.exe -rc` (no playback status). missing: neither works.
+ */
+export type SoundpadState = "ready" | "fallback" | "simulated" | "missing" | "disabled";
+export type PlayStatus = "STOPPED" | "PLAYING" | "PAUSED" | "SEEKING";
+
+export interface SoundpadInfo {
+  version: string;
+  rcVersion: string;
+  /** null when Soundpad's answer wasn't 0 or 1. */
+  trial: boolean | null;
+}
+
+/** Live from Soundpad's pipe. Position moves in ~140 ms steps; 0 / 0 while stopped. */
+export interface SoundpadPlayback {
+  status: PlayStatus;
+  positionMs: number;
+  durationMs: number;
+  /** Known when the cue named the sound (`*play:N`), not for Go (Soundpad's selected sound). */
+  title: string | null;
+}
+
 export interface ActorLocal {
-  soundpad: { enabled: boolean; state: "ready" | "simulated" | "missing" | "disabled"; detail: string };
+  soundpad: {
+    enabled: boolean;
+    state: SoundpadState;
+    detail: string;
+    /** Only while the pipe is connected. */
+    info: SoundpadInfo | null;
+    playback: SoundpadPlayback | null;
+  };
   osc: { enabled: boolean; host: string; port: number; ready: boolean };
   lastCue: { command: string; at: number; ok: boolean } | null;
 }

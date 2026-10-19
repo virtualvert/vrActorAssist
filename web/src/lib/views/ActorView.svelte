@@ -3,7 +3,7 @@
   import { onDestroy } from "svelte";
   import ConnectBanner from "../components/ConnectBanner.svelte";
   import Toggle from "../components/Toggle.svelte";
-  import { ago } from "../format";
+  import { ago, mediaTime } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
   import type { AppState } from "../protocol";
   import { app } from "../state.svelte";
@@ -21,6 +21,10 @@
   const self = $derived(data.peers.find((p) => p.self));
   const actor = $derived(data.actor);
   const recentCue = $derived(actor?.lastCue && now - actor.lastCue.at < 3500 ? actor.lastCue : null);
+  // Soundpad's real status when it answers on its pipe; null means only the cue flash is known
+  const playback = $derived(actor?.soundpad.playback ?? null);
+  const active = $derived(playback !== null && playback.status !== "STOPPED");
+  const progress = $derived(playback && playback.durationMs > 0 ? Math.min(100, (playback.positionMs / playback.durationMs) * 100) : 0);
 
   const hero = $derived.by(() => {
     const c = data.connection;
@@ -29,6 +33,11 @@
     if (c.status === "pending")
       return { tone: "warn", title: "Waiting for the director", sub: "The director approves you once. After that you join automatically." };
     if (c.status !== "connected") return { tone: "idle", title: "Not connected", sub: "Connect to your relay to receive cues." };
+    if (playback) {
+      if (!active) return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
+      const where = `${playback.title ?? "Your selected sound"} · ${mediaTime(playback.positionMs)} / ${mediaTime(playback.durationMs)}`;
+      return playback.status === "PAUSED" ? { tone: "warn", title: "Paused", sub: where } : { tone: "go", title: "Playing", sub: where };
+    }
     if (self?.activity === "playing" || recentCue) {
       const sp = actor?.soundpad;
       return {
@@ -40,7 +49,13 @@
     return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
   });
 
-  const SP_LABEL = { ready: "Ready", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
+  const SP_LABEL = { ready: "Ready", fallback: "Command line", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
+  const STATUS_LABEL = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;
+
+  function edition(trial: boolean | null): string {
+    if (trial === null) return "edition unknown";
+    return trial ? "trial (can't add sounds)" : "full version";
+  }
 </script>
 
 <div class="wrap">
@@ -79,6 +94,22 @@
             <span class="chip sp-{actor.soundpad.state}">{SP_LABEL[actor.soundpad.state]}</span>
           </div>
         </div>
+        {#if actor.soundpad.info}
+          {@const info = actor.soundpad.info}
+          <p class="small">Soundpad {info.version} · remote control {info.rcVersion} · {edition(info.trial)}</p>
+        {/if}
+        {#if playback && active}
+          <div class="transport" aria-label="Soundpad playback">
+            <div class="transport-row">
+              <span class="chip status-{playback.status.toLowerCase()}">{STATUS_LABEL[playback.status]}</span>
+              <span class="track">{playback.title ?? "Selected sound"}</span>
+              <span class="mono small">{mediaTime(playback.positionMs)} / {mediaTime(playback.durationMs)}</span>
+            </div>
+            <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}>
+              <span style:width="{progress}%"></span>
+            </div>
+          </div>
+        {/if}
         <p class="faint small">{actor.soundpad.detail}</p>
         <Toggle
           checked={actor.soundpad.enabled}
@@ -297,8 +328,50 @@
   }
 
   .sp-ready { color: var(--ok); }
-  .sp-simulated { color: var(--warn); }
+  .sp-simulated,
+  .sp-fallback { color: var(--warn); }
   .sp-missing { color: var(--bad); }
+
+  .transport {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .transport-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+
+  .track {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .status-playing,
+  .status-seeking { color: var(--go); }
+  .status-paused { color: var(--warn); }
+
+  .bar {
+    height: 0.375rem;
+    border-radius: 999px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+
+  .bar span {
+    display: block;
+    height: 100%;
+    background: var(--go);
+    transition: width 250ms linear;
+  }
 
   @container (max-width: 56rem) {
     .view {

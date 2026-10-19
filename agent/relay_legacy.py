@@ -322,7 +322,7 @@ class LegacyRelay:
             await self.send(format_message("ACK", actor=clean(self.agent.config.name), command=command, status="OK"))
             self.self_playing_until = 0.0 if "stop" in command else time.monotonic() + CUE_FLASH_S
             state = self.agent.actor.soundpad_state()["state"]
-            note = {"simulated": " (simulated)", "disabled": " (Soundpad is off)"}.get(state, "")
+            note = {"simulated": " (simulated)", "disabled": " (Soundpad is off)", "fallback": " (via Soundpad.exe -rc)"}.get(state, "")
             hub.log("success", f"{command} from {sender}{note}")
         else:
             hub.log("error", f"{command} failed: {error}")

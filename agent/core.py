@@ -24,7 +24,7 @@ class Agent:
     def __init__(self, store: ConfigStore):
         self.store = store
         self.hub = Hub(self.snapshot)
-        self.actor = ActorRuntime(store.config)
+        self.actor = ActorRuntime(store.config, changed=self.changed, log=self.hub.log)
         self.relay = LegacyRelay(self)
         self.last_cue: dict | None = None
         # Set by the launcher: returns a fresh one-time URL for the local UI.
@@ -49,6 +49,7 @@ class Agent:
 
     async def shutdown(self) -> None:
         await self.relay.stop("App closed")
+        await self.actor.close()
 
     def ready_to_connect(self) -> bool:
         cfg = self.config
@@ -60,7 +61,9 @@ class Agent:
         cfg = self.config
         relay = self.relay
         now = time.monotonic()
-        playing = cfg.role == "actor" and now < relay.self_playing_until
+        # Soundpad's real status when the pipe is up; otherwise a short flash after each cue
+        live = self.actor.live_status
+        playing = cfg.role == "actor" and (live in ("PLAYING", "SEEKING") if live else now < relay.self_playing_until)
         peers: list[dict] = []
         if cfg.role:
             peers.append(
@@ -138,6 +141,7 @@ class Agent:
         self.last_cue = None
         self.relay.targets.clear()
         self.hub.log("info", f"Role set to {role}")
+        await self.actor.refresh()  # opens or closes Soundpad's pipe
         if was_online:
             await self.relay.restart()
 

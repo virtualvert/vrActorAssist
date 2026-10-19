@@ -32,7 +32,8 @@ agent/                  v0.4 desktop agent (python -m agent)
   __main__.py           CLI, port pick, uvicorn server, window vs browser
   core.py               Agent: config + relay + actor runtime; snapshot() = UI state; _call_* = UI requests
   relay_legacy.py       Connection to a v0.3 relay: REGISTER, roster from USERS/STATUS/PENDING, cues via PRIV
-  actor_runtime.py      Soundpad (soundpad.py) and VRChat OSC (python-osc)
+  actor_runtime.py      Cues → Soundpad (pipe, else soundpad.py -rc), live playback status, VRChat OSC
+  soundpad_pipe.py      Soundpad named-pipe client: one worker thread, typed helpers, fake-able transport
   web.py                Local UI server: Host/Origin guard, one-time token → session cookie, /ui/ws
   hub.py                Fan-out of state/log/traffic events to every open UI
   shell.py              pywebview window (Windows + WebView2) or default browser
@@ -48,7 +49,8 @@ web/                    v0.4 UI: Svelte 5 + Vite + TypeScript, built and tested 
   src/lib/components/   Shell pieces: TopBar, Settings, Onboarding, LogDrawer, Button, ...
   src/app.css           Design tokens: dark/light themes, --ui-scale, VR mode, motion
 
-tools/soundpad_probe.py Windows-only probe for Soundpad's named-pipe API (spec Appendix B)
+tools/soundpad_probe.py Windows-only probe for Soundpad's named-pipe API (spec Appendix B);
+                        results go to tools/probe-results/ (git-ignored: sound titles and paths)
 docs/superpowers/       Design specs and plans (dated; older ones are historical records)
 legacy/, archive/       TCP-era and prototype code. Reference only; don't modify
 ```
@@ -103,6 +105,6 @@ There are no tests for the v0.3 tkinter clients; test changes there by hand.
 
 - No v2 relay yet; camera operators register but stay invisible to others on a v0.3 relay.
 - File transfer isn't in the new app (actors decline `FILEREQ` with a clear reason).
-- Soundpad still uses `-rc`; the named-pipe client waits for the Windows probe results (spec §8.1, Appendix B).
+- Soundpad cues (Go / Stop / `*play:N`) go through the named pipe, with `-rc` as the fallback. The rest of the soundpad addon (sound references, picker, volume / pause / seek messages) and scheduling (§8.2) aren't built.
 - No tray icon, installer, auto-updater or PyInstaller build for the agent yet; closing the window quits.
 - OBS addon, OSC timeline editor and P2P streaming are designed (spec §8.3, §8.5, §8.6), not built.

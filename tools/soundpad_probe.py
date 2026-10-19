@@ -238,11 +238,29 @@ def get_position(sp):
     return as_int(sp.request("GetPlaybackPositionInMs()")[0])
 
 
+def sample_positions(sp, seconds, t0):
+    """Poll status and position for `seconds`. Returns ([ms since t0, status, position] at each
+    change, number of polls)."""
+    rows, last, polls = [], None, 0
+    end = time.perf_counter() + seconds
+    while time.perf_counter() < end:
+        status, _ = sp.request("GetPlayStatus()")
+        position = get_position(sp)
+        polls += 1
+        if (status, position) != last:
+            rows.append([round((time.perf_counter() - t0) * 1000, 1), status, position])
+            last = (status, position)
+    return rows, polls
+
+
 def run_play(sp, rep, index, line):
     render, capture = {"speakers": (True, False), "mic": (False, True), "both": (True, True)}[line]
     cmd = f"DoPlaySound({index}, {str(render).lower()}, {str(capture).lower()})"
     rep.section(f"Play test: sound {index} on {line}")
 
+    # Soundpad keeps reporting the last position after a stop, so positions only count once
+    # the status says PLAYING.
+    stale_position = get_position(sp)
     start = time.perf_counter()
     resp, ms = sp.request(cmd)
     rep.check(cmd, resp.startswith("R-200"), f"{resp!r} in {ms:.1f} ms")
@@ -250,15 +268,20 @@ def run_play(sp, rep, index, line):
         return
 
     playing_at = position_at = first_position = None
+    trace = []
     deadline = start + 3.0
     while time.perf_counter() < deadline and position_at is None:
         status, _ = sp.request("GetPlayStatus()")
+        now = time.perf_counter()
         if status == "PLAYING" and playing_at is None:
-            playing_at = time.perf_counter()
-        position = get_position(sp)
+            playing_at = now
+        position = get_position(sp) if playing_at else None
+        if len(trace) < 100:
+            trace.append([round((now - start) * 1000, 2), status, position])
         if position is not None and position > 0:
             position_at = time.perf_counter()
             first_position = position
+    rep.check("Position before the command", None, f"{stale_position} ms", trace=trace)
 
     def since_start(t):
         return f"{(t - start) * 1000:.1f} ms" if t else "not reached within 3 s"
@@ -277,7 +300,18 @@ def run_play(sp, rep, index, line):
     rep.check("GetPlaybackDurationInMs() while playing", duration > 0, f"{duration} ms")
 
     if duration > 2500:
-        time.sleep(0.5)
+        rows, polls = sample_positions(sp, 0.5, start)
+        playing = [r for r in rows if r[1] == "PLAYING" and r[2]]
+        gaps = [b[0] - a[0] for a, b in zip(playing, playing[1:])]
+        # t - position = when position 0 was, i.e. when the audio actually started
+        starts = [r[0] - r[2] for r in playing]
+        rep.check("Position updates while playing", None,
+                  f"{len(playing)} distinct positions in {polls} polls over 0.5 s"
+                  + (f", median {statistics.median(gaps):.1f} ms apart" if gaps else "")
+                  + (f"; positions imply audio started {statistics.median(starts):.0f} ms after the command"
+                     if starts else ""),
+                  trace=rows, implied_start_ms=round(statistics.median(starts), 1) if starts else None)
+
         resp, _ = sp.request("DoTogglePause()")
         status, _ = sp.request("GetPlayStatus()")
         paused_pos = get_position(sp)
@@ -290,10 +324,14 @@ def run_play(sp, rep, index, line):
         status, _ = sp.request("GetPlayStatus()")
         rep.check("DoTogglePause() -> PLAYING again", status == "PLAYING", f"{resp!r}, status {status}")
 
-        resp, _ = sp.request("DoSeekMs(500)")
-        position = get_position(sp)
-        rep.check("DoSeekMs(500)", resp.startswith("R-200") and position is not None and 400 <= position <= 900,
-                  f"{resp!r}, position right after: {position} ms")
+        # Far from the paused position, so a stale read can't pass
+        seek_to = min(5000, duration - 1000)
+        resp, _ = sp.request(f"DoSeekMs({seek_to})")
+        rows, _ = sample_positions(sp, 0.3, time.perf_counter())
+        landed = next((r for r in rows if r[2] is not None and seek_to - 100 <= r[2] <= seek_to + 600), None)
+        rep.check(f"DoSeekMs({seek_to})", resp.startswith("R-200") and landed is not None,
+                  f"{resp!r}, position {landed[2]} ms read {landed[0]} ms after the seek" if landed
+                  else f"{resp!r}, position never near {seek_to} ms within 0.3 s", trace=rows)
     else:
         rep.note("Sound is shorter than 2.5 s, so pause and seek were skipped. Use a longer sound to test them.")
 
@@ -339,9 +377,15 @@ def run_add(sp, rep, path, trial):
         rep.check("DoAddSound", None, "skipped: not allowed in the trial version")
         return
     before = as_int(sp.request("GetSoundFileCount()")[0])
+    start = time.perf_counter()
     resp, ms = sp.request(f'DoAddSound("{file_path}")')
-    after = as_int(sp.request("GetSoundFileCount()")[0])
-    detail = f"{resp!r} in {ms:.1f} ms, sound count {before} -> {after}"
+    # Soundpad answers before the sound is in the list, so wait for the count to change
+    after = before
+    while after == before and time.perf_counter() - start < 5.0:
+        time.sleep(0.05)
+        after = as_int(sp.request("GetSoundFileCount()")[0])
+    listed_ms = (time.perf_counter() - start) * 1000
+    detail = f"{resp!r} in {ms:.1f} ms, sound count {before} -> {after} after {listed_ms:.0f} ms"
     entry = {}
     if after:
         root, _ = parse_xml(sp.request(f"GetSoundlist({after},{after})")[0])
