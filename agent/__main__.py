@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import signal
 import socket
 import sys
 import threading
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -25,6 +27,24 @@ from .shell import open_browser, run_window, window_reason
 from .web import Security, create_app
 
 DEFAULT_PORT = 47800
+
+
+class UIServer(uvicorn.Server):
+    """Treats a second Ctrl+C within half a second as the same one.
+
+    A one-file build's launcher process forwards the terminal's SIGINT to the agent, which got
+    it directly too; uvicorn takes the second copy as "force quit" and skips the clean shutdown.
+    """
+
+    _last_sigint = float("-inf")
+
+    def handle_exit(self, sig, frame) -> None:
+        if sig == signal.SIGINT:
+            now = time.monotonic()
+            if now - self._last_sigint < 0.5:
+                return
+            self._last_sigint = now
+        super().handle_exit(sig, frame)
 
 
 def find_port(preferred: int) -> int:
@@ -98,9 +118,9 @@ def main(argv: list[str] | None = None) -> int:
 
     agent.ui_url = ui_url
     app = create_app(agent, security, static_dir())
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    server = UIServer(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
 
-    reason = None if args.window else window_reason()
+    reason = window_reason(forced=args.window)
     use_window = not args.headless and not args.no_open and reason is None
     log.info("%s %s · data in %s%s", APP_NAME, APP_VERSION, folder, " (portable)" if is_portable() or args.portable else "")
 

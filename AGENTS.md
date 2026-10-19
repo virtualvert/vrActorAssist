@@ -25,6 +25,7 @@ soundpad.py             Soundpad via `Soundpad.exe -rc <command>` (Windows; simu
 actor_client_ws.py      v0.3 tkinter actor client (Soundpad, OSC, file receive, self-updater)
 director_client_ws.py   v0.3 tkinter director client (cues, approvals, file batches, OSC toggle)
 build_exe.py            PyInstaller builds for the v0.3 clients
+build_agent.py          PyInstaller build for the v0.4 agent (dist/vrcActorSync[.exe]); entry: agent_entry.py
 update_manifest.json    Relay-side update manifest read by server_ws.py
 start-server*.sh        VPS start/stop scripts (Caddy / Tailscale Funnel)
 
@@ -78,6 +79,15 @@ VRCAS_MACHINE_ID=test-actor .venv/bin/python -m agent --role actor --name Coda -
 
 Useful agent flags: `--headless` (browser instead of window), `--window` (pywebview window on Linux), `--no-open` (print the one-time UI URL), `--dev` (accept the Vite dev server origin so `bun run dev` can proxy to a running agent), `--data-dir`, `--portable`.
 
+Standalone build (no Python or Bun on the target): `.venv/bin/pip install pyinstaller`, then
+
+```bash
+.venv/bin/python build_agent.py             # bun web build + one file: dist/vrcActorSync (vrcActorSync.exe on Windows)
+.venv/bin/python build_agent.py --onedir    # one folder: dist/vrcActorSync/  (--skip-web reuses web/dist)
+```
+
+Build on the OS you're targeting (PyInstaller doesn't cross-compile). Windows builds are windowed (pywebview + WebView2); Linux builds are console programs that open the browser. On Linux the build prints the oldest glibc the binary accepts: with uv's standalone Python it was 2.35 (from the bundled libgcc_s), with a distro Python it can be the build machine's own glibc. Never name the output `vrActorClient*` / `vrDirectorClient*`. `build_exe.py` deletes `dist/` when it runs.
+
 Desktop window: Windows uses pywebview + WebView2 by default. On Linux it's opt-in with `--window` and uses the system WebKit2GTK through PyGObject, so the venv must see system packages: install `python-gobject` and `webkit2gtk-4.1` (Arch/CachyOS names), create the venv with `python -m venv --system-site-packages .venv`, then `pip install pywebview`.
 
 ## Tests and checks — run before you finish
@@ -108,5 +118,6 @@ There are no tests for the v0.3 tkinter clients; test changes there by hand.
 - No v2 relay yet; camera operators register but stay invisible to others on a v0.3 relay.
 - File transfer isn't in the new app (actors decline `FILEREQ` with a clear reason).
 - Soundpad cues (Go / Stop / `*play:N`) go through the named pipe, with `-rc` as the fallback. The rest of the soundpad addon (sound references, picker, volume / pause / seek messages) and scheduling (§8.2) aren't built.
-- No tray icon, installer, auto-updater or PyInstaller build for the agent yet; closing the window quits.
+- No tray icon, installer or auto-updater yet; closing the window quits. In browser mode, Ctrl+C in the terminal quits. With no terminal (a Windows build without WebView2, or a Linux build started from a file manager), the only way to quit is ending the process.
+- `build_agent.py`: the Linux one-file build is tested here (CachyOS): UI, relay connection, director → actor cue, `--portable`, Ctrl+C. The Windows build (window, WebView2, Soundpad pipe while frozen) hasn't been built or run on Windows yet.
 - OBS addon, OSC timeline editor and P2P streaming are designed (spec §8.3, §8.5, §8.6), not built.

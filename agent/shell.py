@@ -31,9 +31,9 @@ def webview2_available() -> bool:
     return False
 
 
-def window_reason() -> str | None:
-    """None when a desktop window can be used, otherwise why not."""
-    if sys.platform != "win32":
+def window_reason(forced: bool = False) -> str | None:
+    """None when a desktop window can be used, otherwise why not. `forced` is --window."""
+    if sys.platform != "win32" and not forced:
         # WebKitGTK windows are optional on Linux (directors only); the browser is the default.
         return "Linux uses the browser by default (pass --window to try a pywebview window)"
     try:
