@@ -2,8 +2,14 @@
 
 **Date:** 2026-10-17 (revised 2026-10-20)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.6
+**Version:** 0.7
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.7
+
+- Phase 0 built on branch `feat/relay-v2` (§20): `vrcas_protocol`, the v2 relay on `/v2/ws`, the permission table, the v0.3 bridge with scheduling emulation, golden transcripts, and the agent's v2 client with automatic fallback to compatibility mode.
+- Where the build differs from §5, §6 and §11, the sections carry a short note; the full list is §20.1.
+- §18 question 5 is settled as proposed: assistants may cue, play sounds and roll cameras.
 
 ### Changes in v0.6
 
@@ -260,7 +266,7 @@ Director UI ── soundpad.play {sound:{path}, lines:"both", at:T, cuelist_id} 
 
 `to` takes one of these forms:
 - `"server"`
-- `"all"`
+- `"all"` (everyone approved **except the sender**; the relay doesn't echo, §20.1)
 - `{"role": "camera"}`
 - `{"ids": [...]}`
 
@@ -320,6 +326,7 @@ Columns are the role of the **sender**.
 | `rtc.*` | ✅ | ✅ | ❌ | ✅ |
 
 - The table is data in `server/permissions.py`.
+- Rows the table leaves implicit (built): `file.end` and `file.batch.*` go with `file.offer`; `hello` and `time.*` are open to everyone; types only the relay sends (`welcome`, `presence.*`, …) are open to no one. A type that isn't in the table is rejected with `unknown_type`, so a new addon needs its rows added (§20.1).
 - Rejected messages get `error {code: "forbidden", reply_to}`.
 - The legacy bridge applies the same table (§11).
 
@@ -333,6 +340,7 @@ server → welcome {session_id, server_version, version_status, server_time, del
 ```
 
 - `capabilities` examples: `["soundpad", "soundpad.lines", "soundpad.add", "soundpad.position", "osc"]` or `["obs.record", "obs.profile"]`. The director UI shows controls per participant based on them.
+- As built (§20.1): `welcome` also carries the `name` and `role` the relay uses (an approved actor keeps its approved name). Join requests reach directors and assistants as `presence.roster.pending`, and `approval.approve` / `deny` name the `machine_id`. Errors use `error {code, message, type, ids?}` with codes `forbidden`, `invalid`, `not_approved`, `unknown_type`, `unknown_target`, `unsupported`.
 - Directors and assistants authenticate with a secret, as today. Actors and cameras go through approval; `approved_actors.json` gains `role` and `delay_ms`.
 - `version_status` follows `compare_versions()` (major mismatch → unsupported).
 - A v0.4 app that reaches a v0.3.x server runs in **compatibility mode** (`agent/relay_legacy.py`): it registers over the pipe protocol on `/ws` and supports the cast list, approvals, Go / Play in 3s / Stop, chat, Soundpad and OSC cues. Not available there: camera operators in the roster, file transfer, scheduling, the v2 permission checks. The UI says it's on a v0.3 relay.
@@ -350,7 +358,7 @@ server → welcome {session_id, server_version, version_status, server_time, del
 ### 5.8 Schema Source of Truth
 
 - `protocol/vrcas_protocol/` contains pydantic v2 models, one per message type, plus the envelope. Server and agent both import it.
-- `scripts/gen_ts_types.py` exports JSON Schema and generates `web/src/protocol/types.ts`. CI fails if it is stale.
+- `scripts/gen_ts_types.py` exports JSON Schema and generates `web/src/protocol/types.ts`. CI fails if it is stale. (There's no CI yet: `tests/test_protocol.py` fails when the file is stale, and `--check` exits 1.)
 - The cue list file format (`cuelist.v1`, §8.3.2) is defined in the same package.
 
 ---
@@ -384,6 +392,8 @@ server/
 ```
 
 `server_ws.py` stays as a thin entrypoint shim, so `start-server.sh` and `start-server-ts.sh` keep working unchanged.
+
+As built (§20.1): `server/relay.py` holds the shared state and the operations both endpoints use (approve, deny, forget, status loop), and `server/settings.py` the settings and log. `storage.py` (cue lists, take log) isn't built.
 
 ---
 
@@ -1278,7 +1288,7 @@ registerPanel({
 ### 11.5 Compatibility Tests
 
 - **Golden transcripts:** recorded v0.3.3 message sequences (register, approve, go/stop, play:N, batch transfer, OSC_CUE, forget) replayed through the bridge and compared byte for byte.
-- **Scripted legacy client:** built on `shared.py` + `websocket-client`, run in integration tests next to v0.4 agents.
+- **Scripted legacy client:** built on `shared.py` + `websocket-client`, run in integration tests next to v0.4 agents. (Built on the `websockets` sync client instead, an agent dependency: `tests/legacy_client.py`.)
 - **Release checklist:** the real v0.3.3 tkinter clients against the new server.
 
 ---
@@ -1437,7 +1447,7 @@ Agreed on 2026-10-20. Rough estimates for one developer, on top of the phases ab
 2. **Secrets storage:** keep them in `config.json` (as today) or move to the OS keyring?
 3. **Take log location:** the server, the director UI, or both?
 4. **MediaMTX for the stream addon:** bundle it or download on demand? Confirm the license and ICE config keys.
-5. **Assistant director permissions:** may assistants roll cameras and play sounds? The §5.5 proposal says yes.
+5. **Assistant director permissions:** may assistants roll cameras and play sounds? The §5.5 proposal says yes. **Built as proposed** (§20.1): assistants use the director secret and get the director's rights except approvals and `actor.settings`.
 6. **Close button:** hide to the tray (proposed) or quit?
 7. **Cue list storage:** on the server only (proposed), or also cached on the director's machine for offline editing?
 8. **Auto-added files in Soundpad:** should they also go into a dedicated "vrcActorSync" category? This depends on whether `DoAddSound(url, category, position)` duplicates the entry in All sounds **[probe follow-up]**.
@@ -1592,7 +1602,49 @@ Results close the **[window test]** items in §8.5.8.
 |---|---|---|
 | Web UI (`web/`, Svelte 5 + Vite, Bun) | Role onboarding (role remembered, app reopens in it), director / actor / camera views, animated node graph (stage layout, packets only while commands travel), dark / light / system theme, UI scale 75–200 % + VR mode, reduce motion, settings, activity & chat drawer, toasts, demo session | `bun test` (22), `svelte-check` 0 errors, visual checks at desktop, 140 % VR and phone width |
 | Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad named-pipe client with `-rc` fallback (live status, version info, start-latency logging), OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
-| Not built yet | v2 relay and protocol package, the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
+| Relay v2 and the agent's v2 client (Phase 0, branch `feat/relay-v2`, 2026-10-20) | `protocol/vrcas_protocol` + generated `web/src/protocol/types.ts`; `server/`: `/v2/ws` (handshake, session ids, routing, roster with cameras, approvals, `actor.settings`, `time.pong`, relay-measured latency), the §5.5 table on both endpoints, the `/ws` bridge with scheduling emulation; `agent/relay_v2.py` + `agent/relay.py` (v2 first, compatibility mode on a 403/404) | `pytest` 550: golden transcript from the frozen v0.3.3 relay replayed byte for byte (also with a v2 camera and assistant connected), every table row × role on `/v2/ws`, mixed sessions, scheduling on a fake clock, agents end to end with scripted v0.3 clients. Separate processes on port 5601 (relay, 3 agents, scripted v0.3 director and actor): 30/30 checks. Frozen Linux build connects over v2. Not tried yet: the real v0.3.3 tkinter clients, Windows, the live relay |
+| Not built yet | the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
 | Soundpad on Windows (2026-10-19) | Probe (Appendix B) and the agent's pipe client against Soundpad 4.0.35 | Relay GO / STOP and `*play:N` end to end: Soundpad played and stopped, the actor view showed Playing with position and went back to Ready; `pytest` adds 15 tests against an in-memory Soundpad |
 | VRChat window probe (§8.5.8) | `tools/vrchat_window_probe.py`: window-manager calls only, read-only by default, `--resize` / `--restore` | Windows rows of Appendix C on the test box (2026-10-19); the agent-side helper isn't built |
 | Not verified | pywebview window and WebView2 detection on Windows | Needs the Windows test box |
+
+### 20.1 Phase 0 as Built: Deviations and Decisions
+
+Choices made while building the v2 relay (`feat/relay-v2`) where §5, §6 and §11 left room or said otherwise:
+
+**Protocol (§5)**
+- `to: "all"` and `{role}` exclude the sender, so chat isn't echoed; the agent logs its own messages.
+- `welcome` adds `name` and `role`. `ice_servers` is always `[]` until ICE/TURN is built.
+- Join requests are a `pending` list in `presence.roster`, filled only for directors and assistants. `approval.approve` / `approval.deny` take `{machine_id}`; `approval.forget` takes `{id}` (session) or `{machine_id}`.
+- The relay measures latency itself: every 10 s it sends `time.ping` to each v2 session, which answers `time.pong` (`reply_to` = the ping). Directors and assistants get `presence.latency {sessions: [{id, latency_ms, timed_out}]}` after each round; v0.3 directors keep getting `STATUS`, now including v2 actors.
+- Session ids (`s_` + 8 hex) are kept per machine id and role for as long as the relay runs, so a reconnecting agent keeps its id. They're not saved across relay restarts. Two live sessions from one machine in the same role (two directors on a test PC) get different ids.
+- A second connection from an approved machine in the same role replaces the first, which gets `denied {reason: "Reconnected from another location"}` (the v0.3 rule, which applied to actors only, now covers v2 cameras too).
+- Close codes: 4400 bad or missing hello, 4401 wrong secret, 4403 denied / forgotten / replaced, 4408 no hello within 10 s.
+- Types missing from the permission table are rejected (`unknown_type`). That's narrower than G3 ("a new addon needs no relay change"): a new addon needs rows in `server/permissions.py`, which is data only.
+- `cuelist.*` passes the permission check and then gets `error unsupported` until cue-list storage exists. `stage.*` and `ready.*` are routed but not stored, and the bridge doesn't show `stage.state` to v0.3 clients yet (§15.1 steps 2 and 4).
+- Binary frames on `/v2/ws` get `error unsupported` (files addon). Text frames are limited to 256 KiB.
+- Version check for v2 clients ignores suffixes (`0.4.0-dev`) and the patch number: a different major is `unsupported`, a different minor `warning`.
+
+**Relay (§6)**
+- `/` keeps the v0.3 health JSON (`{status, clients, approved}`) because the web app isn't hosted yet; `/health` is unchanged.
+- `server_ws.py` keeps its CLI and adds `--data-dir` (default: next to the script, as before) and `--no-legacy` (§11.1 `legacy.enabled`).
+- `approved_actors.json` gains `role` (written only for non-actors) and `delay_ms`; `actor.settings.display_name` renames the entry. The v0.3 relay ignores the extra keys, so going back still works.
+
+**Bridge (§11)**
+- `/ws` reports the v0.3 protocol version (`VERSION|ok|0.3.3|` for v0.3.3 clients); `welcome.server_version` is the relay's own (`0.4.0-dev`).
+- v0.3 ↔ v0.3 traffic keeps every v0.3.3 quirk, because the golden transcript requires it: `CMD` echoes to directors, the client-supplied sender name is passed on, a forgotten actor stays in `USERS` until it hangs up, a reconnecting actor is announced "joined" and then "left", and ACKs never reach v0.3 directors. v2 recipients get the sender's real session id instead.
+- Permission notices on `/ws` stay exactly as before (`Permission denied: only the director can send X` for the v0.3 director-only types). Messages the table newly rejects (a director's `FILEACK`, a camera's `ACK`) are dropped and logged.
+- Cameras are hidden from `/ws`: not in `USERS` or `PENDING`, no joined/left lines, and not reachable by name. So a v0.3 director can't approve a camera; a v2 director (or assistant) has to.
+- A v0.3 actor's `ACK` reaches v2 directors and assistants as `cue.ack`.
+- A v2 `chat.priv` whose text starts with `*` reaches v0.3 clients with a leading space, so a v0.3 actor doesn't run it as a cue.
+- Files between v0.3 and v2 aren't translated yet: a v0.3 director's `FILEREQ` to a v2 actor is answered with `FILEDENY` and a reason; `BATCH_*` to a v2 actor is dropped.
+- v2 actions a v0.3 actor can't carry (`soundpad.play` with `path`, `sha256`, `lines` other than `both`, `volume` or `start_ms`; other `soundpad.*`) get `error unsupported` naming the sessions.
+- Scheduling emulation sends at `at + delay_ms − RTT/2` (RTT from the v0.3 `PING`/`PONG` average; no start-latency term). A stop cancels the actor's held go/play cues: at once without `at`, at its own send time with `at`. Held cues are dropped when the actor disconnects. Sends more than 20 ms late are logged.
+
+**Agent**
+- Every connection attempt tries `/v2/ws` first and continues on `/ws` when the relay answers 403 or 404, so an upgraded relay is picked up at the next reconnect.
+- Actors announce `capabilities: ["soundpad", "osc"]`. Assistants aren't a UI role yet; a v2 roster shows them as directors.
+- `Connection.legacy` is `false` until a relay turns out to be v0.3 (it used to be fixed at `true`).
+- The scripted v0.3 client uses the `websockets` sync client, not `websocket-client` (§11.5).
+
+**§17 status on the v2 relay:** #2 fixed (the table applies to `/ws` too); #3 and #5 fixed for v2 sessions, while v0.3 clients keep name routing and client-supplied sender names among themselves; #4 waits for the files addon (v0.3 transfers are still keyed by file name); #6 fixed (`approval.forgotten`); #7 fixed for v2 messages (JSON), and v2 names are cleaned of `|` before they reach `/ws`.

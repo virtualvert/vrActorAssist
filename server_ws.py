@@ -32,6 +32,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-legacy", action="store_true", help="Refuse v0.3 clients on /ws")
     args = parser.parse_args()
 
+    args.data_dir.mkdir(parents=True, exist_ok=True)
     settings = Settings(secret=args.secret, data_dir=args.data_dir, legacy_enabled=not args.no_legacy)
     app = create_app(settings)
     relay = app.state.relay

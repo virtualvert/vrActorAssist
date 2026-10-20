@@ -9,7 +9,7 @@ import pytest
 
 import server  # noqa: F401  (puts protocol/ on sys.path)
 from server import permissions
-from vrcas_protocol import MODELS, Envelope, make, new_id, parse, validate
+from vrcas_protocol import MODELS, make, new_id, parse, validate
 from vrcas_protocol.messages import Payload
 
 ROOT = Path(__file__).resolve().parents[1]

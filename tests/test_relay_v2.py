@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from relay_helpers import SECRET, FakeClock, connect_v2, make_relay
+from relay_helpers import FakeClock, connect_v2, make_relay
 
 MANIFEST = {
     "latest_version": "0.4.1",
