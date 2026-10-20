@@ -114,6 +114,7 @@ def pyinstaller_command(onedir: bool) -> list[str]:
         "--workpath", str(WORK),
         "--specpath", str(WORK),
         "--paths", str(ROOT),  # top-level shared.py and soundpad.py
+        "--paths", str(ROOT / "protocol"),  # vrcas_protocol
         "--add-data", f"{WEB_DIST}{os.pathsep}web",
     ]
     for package in COLLECT:

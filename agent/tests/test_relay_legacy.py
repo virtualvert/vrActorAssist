@@ -80,6 +80,9 @@ def test_director_and_actor_flow(relay, tmp_path, monkeypatch):
         try:
             await director.start()
             await wait_for(lambda: director.relay.status == "connected")
+            # The v0.3 relay has no /v2/ws: the agent fell back to compatibility mode
+            assert director.snapshot()["connection"]["legacy"] is True
+            assert any("compatibility mode" in e["text"] for e in director.hub._logs)
 
             await actor.start()
             await wait_for(lambda: actor.relay.status == "pending")

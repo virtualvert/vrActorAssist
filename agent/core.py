@@ -11,7 +11,7 @@ from . import APP_VERSION
 from .actor_runtime import ActorRuntime
 from .config import ROLES, THEMES, ConfigStore, clamp_scale
 from .hub import Hub
-from .relay_legacy import LegacyRelay
+from .relay import Relay
 
 COUNTDOWN_MS = 3000
 
@@ -25,7 +25,7 @@ class Agent:
         self.store = store
         self.hub = Hub(self.snapshot)
         self.actor = ActorRuntime(store.config, changed=self.changed, log=self.hub.log)
-        self.relay = LegacyRelay(self)
+        self.relay = Relay(self)
         self.last_cue: dict | None = None
         # Set by the launcher: returns a fresh one-time URL for the local UI.
         self.ui_url: Callable[[], str] | None = None
@@ -98,11 +98,11 @@ class Agent:
                 "detail": relay.detail,
                 "host": relay.host,
                 "serverVersion": relay.server_version,
-                "legacy": True,
+                "legacy": relay.legacy,
             },
             "peers": peers,
             "pending": list(relay.pending) if cfg.role == "director" and relay.status == "connected" else [],
-            "targets": sorted(f"actor:{n}" for n in relay.targets if n in relay.actors) if cfg.role == "director" else [],
+            "targets": relay.target_ids() if cfg.role == "director" else [],
             "countdown": countdown,
             "actor": (
                 {"soundpad": self.actor.soundpad_state(), "osc": self.actor.osc_state(), "lastCue": self.last_cue}
@@ -139,7 +139,7 @@ class Agent:
         self.config.role = role
         self.store.save()
         self.last_cue = None
-        self.relay.targets.clear()
+        self.relay.clear_targets()
         self.hub.log("info", f"Role set to {role}")
         await self.actor.refresh()  # opens or closes Soundpad's pipe
         if was_online:

@@ -46,8 +46,11 @@ def osc_address(parameter: str) -> str:
     return parameter if parameter.startswith("/") else f"/avatar/parameters/{parameter}"
 
 
-def osc_value(value: str) -> Any:
-    """VRChat needs typed values: bool for toggles, numbers for floats/ints."""
+def osc_value(value: Any) -> Any:
+    """VRChat needs typed values: bool for toggles, numbers for floats/ints. Text (the v0.3
+    OSC_CUE) is converted; values that are already typed (v2 osc.param) pass through."""
+    if not isinstance(value, str):
+        return value
     lowered = value.strip().lower()
     if lowered in ("true", "false"):
         return lowered == "true"
@@ -314,7 +317,7 @@ class ActorRuntime:
 
     # ---- OSC --------------------------------------------------------------------
 
-    def send_osc(self, parameter: str, value: str) -> tuple[bool, str]:
+    def send_osc(self, parameter: str, value: Any) -> tuple[bool, str]:
         osc = self._config.osc
         address = osc_address(parameter)
         if not osc.enabled:
