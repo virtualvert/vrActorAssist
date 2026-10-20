@@ -14,7 +14,7 @@
 | **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
 || **v0.3.0** | Released | Multi-file transfer, character routing, batch protocol, overwrite dialog, cancel batch, protocol versioning, auto-updater, About dialog |
 | **v0.3.3** | Released | SSL cert fix for Windows PyInstaller builds |
-|| **v0.4.0** | Planned | Tauri v2 + Svelte migration (replaces both Python clients) |
+|| **v0.4.0** | Planned | Desktop web UI + local agent, replacing both Python clients ([spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md)) |
 
 ## v0.3.0 Features (Planned)
 
@@ -408,6 +408,8 @@ Each release includes:
 
 ## v0.4.0 Features (Planned) — Tauri v2 + Svelte Migration
 
+> **Superseded:** v0.4 is the desktop web UI + local agent described in the [design spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md), not Tauri. This section is kept for history.
+
 ### Migration Decision: Tauri Over PySide6
 
 After evaluating PySide6 (Qt) vs Tauri v2 + Svelte for the v0.4.0 client rewrite, we chose **Tauri**:
@@ -594,6 +596,18 @@ If actor client has `osc_enabled: false` or VRChat OSC is not reachable:
 
 ---
 
+## v0.4.x Production Helpers (Planned)
+
+Agreed on 2026-10-20. Full design in the [spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md); build order in its §15.1.
+
+1. [ ] **Normalize folder** (§8.4.2) — measure each file's loudness (LUFS) and write copies adjusted to one target, with a peak ceiling. Originals untouched. Works with today's v0.3 batch transfer. **High priority.**
+2. [ ] **Headset notifications** (§8.7) — "Standby", "Rolling" and setup errors ("Not connected", "Soundpad not detected", "VRChat OSC is off", "OBS not detected") in XSOverlay or OVR Toolkit. On by default, can be turned off. Comes with **Standby / Rolling** buttons for the director (§8.8.1).
+3. [ ] **Project folder sync** (§8.4.1) — the director selects a folder; a `vrcactorsync.yml` (created after a prompt if missing) says which character gets which files. New files prompt for an owner, changed files are flagged, and a grid shows which actors have the latest version. **Sync** sends only what's missing or outdated, with loudness matching applied.
+4. [ ] **Ready check** (§8.8.2) — automatic checks plus a Ready button for each person; the director sees who's ready and can ping anyone who isn't (in-app alert and headset notification). Needs the v2 relay.
+5. [ ] **Control input** (§8.9) — Go / Stop / Standby / Ready from a VRChat avatar menu (OSC, via OSCQuery, with a VRCFury prefab) and from Stream Deck or MIDI through Bitfocus Companion.
+
+---
+
 ## Future Ideas
 
 Lower priority features that will be designed when moved to a release:
@@ -608,6 +622,9 @@ Lower priority features that will be designed when moved to a release:
 - **Mobile app** — Director control from phone/tablet
 - **Cloud sync** — Share approved actors list across servers
 - **Scene presets** — Save/load actor configurations per scene
+- **Scene list ("run of show")** — Ordered scenes, each with its cast, sounds, cue list and camera roll; the director runs them with Next + Go
+- **Post-production export** — Per take, a timeline of which clip started when on which actor, for DaVinci Resolve or Premiere
+- **"Your line next"** — Headset notification just before an actor's next line, found from long silent gaps in their file
 
 ---
 

@@ -1,9 +1,20 @@
 # vrcActorSync: Desktop Web UI + Local Agent Design
 
-**Date:** 2026-10-17 (revised 2026-10-19)
+**Date:** 2026-10-17 (revised 2026-10-20)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.5
+**Version:** 0.6
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.6
+
+- Production helpers agreed on 2026-10-20, with a build order (§15.1):
+  - **Loudness matching** of sent files, also as a standalone **Normalize folder** tool (§8.4.2). High priority.
+  - **Project folder sync** with a `vrcactorsync.yml` manifest and per-actor up-to-date status (§8.4.1).
+  - **Headset notifications** (§8.7): Standby, Rolling and setup errors in XSOverlay or OVR Toolkit. On by default.
+  - **Stage state and ready check** with a director ping (§8.8).
+  - **Control input** (§8.9): Go, Stop, Standby and Ready from a VRChat avatar menu over OSC, and from Stream Deck or MIDI through Bitfocus Companion.
+- New core namespaces `stage.*` and `ready.*`, and `file.inventory*` (§5.4, §5.5, §11.3).
+- Later ideas: scene list ("run of show"), post-production export, "your line next" (§14).
 
 ### Changes in v0.5
 
@@ -273,8 +284,10 @@ Any action message (`soundpad.play`, `soundpad.stop`, `cue.go`, `osc.param`, `ob
 | `time.*` | core | `ping`, `pong` |
 | `update.*` | core | `available` |
 | `cue.*` | core | `go` (play selected), `stop`, `play` (index), `ack` — legacy-compatible semantics |
+| `stage.*` | core | `state` (idle / standby / rolling), stored by the server (§8.8.1) |
+| `ready.*` | core | `request`, `status`, `ping` (§8.8.2) |
 | `soundpad.*` | soundpad addon | `play`, `stop`, `pause`, `seek`, `jump`, `volume`, `mute`, `list.request`, `list`, `state`, `ack`, `calibrate` |
-| `file.*` | files addon | `offer`, `accept`, `deny`, `progress`, `end`, `ok`, `err`, `batch.start/end/cancel` (+ binary frames) |
+| `file.*` | files addon | `offer`, `accept`, `deny`, `progress`, `end`, `ok`, `err`, `batch.start/end/cancel` (+ binary frames), `inventory.request`, `inventory` (§8.4.1) |
 | `osc.*` | osc addon | `param`, `cue.load`, `cue.ack`, `cue.fired`, `params` (discovered avatar parameters) |
 | `cuelist.*` | server storage | `save`, `get`, `list`, `delete` |
 | `obs.*` | obs addon | `profile.apply/status/release`, `record.start/stop/state`, `mark`, `slate`, `status` |
@@ -294,6 +307,10 @@ Columns are the role of the **sender**.
 | `approval.approve/deny/forget`, `actor.settings` | ✅ | ❌ | ❌ | ❌ |
 | `file.offer` + chunks | ✅ | ❌ | ❌ | ❌ |
 | `file.accept/deny/ok/err/progress` | ❌ | ❌ | ✅ | ✅ |
+| `file.inventory.request` | ✅ | ✅ | ❌ | ❌ |
+| `file.inventory` | ❌ | ❌ | ✅ | ✅ |
+| `stage.state`, `ready.request`, `ready.ping` | ✅ | ✅ | ❌ | ❌ |
+| `ready.status` | ❌ | ❌ | ✅ | ✅ |
 | `osc.param`, `osc.cue.load` | ✅ | ✅ | ❌ | ❌ |
 | `osc.cue.ack`, `osc.cue.fired`, `osc.params` | ❌ | ❌ | ✅ | ❌ |
 | `cuelist.save/delete` | ✅ | ✅ | ❌ | ❌ |
@@ -723,6 +740,79 @@ VRChat voice delay to each listener varies per listener and isn't measurable loc
 - **Send:** in the desktop app the agent reads from disk; in hosted mode the browser reads the file. Both use the same `file.*` messages.
 - **Character routing** (`" - Character.ext"`) is director UI logic. Port `parse_character_name` (`director_client_ws.py:875`) to TypeScript with its examples as tests.
 
+#### 8.4.1 Project Folder Sync (`vrcactorsync.yml`)
+
+The director keeps one project folder, and the app keeps each actor's copy of their files up to date. Desktop app only: the agent reads the folder.
+
+**Setup:**
+1. The director selects the project folder.
+2. If `vrcactorsync.yml` is missing, the app proposes one and writes it after the director confirms.
+   - Each file's character comes from its name (`parse_character_name`). Files without a character are listed for the director to assign.
+   - The cast comes from the session's character → actor mapping. Unknown characters prompt for an actor.
+
+**Manifest (`project.v1`):**
+
+```yaml
+schema: project.v1
+name: EP3
+cast:                            # character → actor; recasting is a one-line change
+  Diego: {actor: Coda, id: m_3f2a9c}
+  Mira:  {actor: Rin,  id: m_81d0e4}
+files:
+  - path: "Scene 4 - Diego.mp3"  # relative, forward slashes
+    to: [Diego]
+  - glob: "sfx/*.wav"            # for shared folders; an explicit path wins over a glob
+    to: [all]
+  - path: "Scene 4 - ambience.wav"
+    to: [Diego, Mira]
+    normalize: false             # §8.4.2 opt-out; `gain_db: -3` offsets the target instead
+```
+
+- Files go to **characters**, not actors, so the project survives recasting. `to` also accepts `all` and `{actors: [...]}`.
+- **Identity:** routing uses `id` (the actor's machine-based identity). `actor` is the label for humans and is refreshed from the roster. Display names never route (§5.2).
+- **Hand edits:** the agent reads and writes with `ruamel.yaml` in round-trip mode, so comments and ordering survive. It re-reads before every write, writes atomically, and never overwrites a file it can't parse; it shows the line and column instead.
+
+**Watching** (poll every 2 s, no extra dependency):
+- **New file** that no entry matches → prompt "Who gets this?", pre-filled from the file name. The answer is added to the manifest.
+- **Changed file** → marked outdated for its actors. Hashes are cached by size + mtime, so only changed files are re-hashed.
+- **Deleted file** → offer to remove its entry. Actors keep their copies, shown as "removed from project".
+- A file counts as settled once its size hasn't changed for 2 s, so half-written exports aren't sent.
+
+**Status:**
+- Each actor's agent records received files per project (path, SHA-256) and answers `file.inventory.request {project}` with `file.inventory {project, files: [{path, sha256}]}`. It sends a fresh inventory after every received file.
+- The director sees a grid of actors × files: **up to date / outdated / missing / sending n % / failed**.
+- **Sync** sends only missing and outdated files, one batch per actor. **Auto-sync** (off by default, open question 15) sends settled changes without asking.
+- The ready check (§8.8.2) reports "files up to date" for each actor's assigned files.
+
+**Actor side:**
+- Files land in `<received files folder>/<project name>/<relative path>` and replace older versions atomically (§8.4 steps 3–5).
+- The first sync from a project asks the actor once ("Allow EP3 to keep files in …"). Later syncs from that project are accepted automatically.
+- Auto-add to Soundpad (§8.4) only for new paths. An updated file keeps its Soundpad entry because the path doesn't change. Whether Soundpad shows the old duration until it rescans is **unconfirmed** [probe follow-up].
+
+**Relay:** needs the v2 relay (files addon and inventory). Until then, directors use the v0.3 director client's batch transfer, ideally with copies from **Normalize folder** (§8.4.2).
+
+#### 8.4.2 Loudness Matching
+
+Lines recorded at different levels sound uneven in a scene. The director's app measures each file's loudness and sends copies adjusted to one target. **High priority.**
+
+**Measure** (in the director's UI page, so nothing is added to the download):
+- Decode with Web Audio `decodeAudioData`, built into WebView2 and browsers: MP3, WAV, OGG and FLAC; AAC where the engine includes it. The agent streams the file to the page and writes the result back.
+- Integrated loudness per ITU-R BS.1770-4 / EBU R128: K-weighting, 400 ms blocks with 75 % overlap, absolute gate −70 LUFS, relative gate −10 LU.
+- True peak with 4× oversampling.
+- Pure TypeScript in `web/src/lib/audio/loudness.ts`, unit-tested against the EBU Tech 3341 test signals.
+
+**Adjust:**
+- `gain = target − measured`, reduced if needed so the true peak stays at or below the ceiling. No limiter or compression, so dynamics stay as recorded. If the target can't be reached, the file is marked "quieter by n dB".
+- Defaults: target **−16 LUFS**, ceiling **−1 dBTP** (open question 12). Per file: `normalize: false` or `gain_db` in the manifest (§8.4.1).
+- Copies only; originals are never changed. Copies are cached in `<project>/.vrcas/normalized/`, keyed by the source SHA-256 and the settings, so unchanged files aren't processed twice.
+- Output format: WAV stays WAV. MP3 and other lossy sources are written as MP3 at 256 kbps by an in-page encoder, a second lossy generation (open question 12).
+
+**Where it's used:**
+- **Project sync** (§8.4.1) sends the normalized copy. Inventories and the up-to-date check use the copy's SHA-256.
+- **Normalize folder** (standalone, §15.1 step 1): the director picks a folder, and the app writes normalized copies to `<folder>/normalized/` and shows a table of file, measured loudness, gain and peak. It works right away with the v0.3 director client's batch transfer.
+
+**Limits:** this evens out the files, not the playback chain. Each actor's Soundpad volume (one global setting, §8.1.5), Windows mic level and VRChat mic volume still differ. A later "level check" step in the ready check could have each actor play a reference line for the director to judge by ear.
+
 ### 8.5 `obs` (Camera Operators)
 
 #### 8.5.1 Connection
@@ -940,6 +1030,100 @@ Every 2 s the agent sends `obs.status` with:
 - **NAT traversal:** STUN plus coturn TURN on the VPS. Tailscale peers usually connect directly.
 - **Limits:** each viewer costs the operator one upload stream (estimated 2–4 Mbps at 720p).
 
+### 8.7 `notify` (Headset Notifications)
+
+People in VR can't see the desktop app, so the agent shows short status messages in their headset overlay. **On by default**; one switch in settings turns it off. All roles; Windows only for now.
+
+| Message | When |
+|---|---|
+| **Standby** | The director sets `stage.state standby` (§8.8.1) |
+| **Rolling** | The director sets `stage.state rolling` |
+| **Not connected** | The relay connection has been down for more than 5 s |
+| **Soundpad not detected** | Soundpad state `missing`, for actors with Soundpad enabled |
+| **VRChat OSC is off** | OSCQuery doesn't find VRChat's OSC service (§8.9.1), for actors with OSC enabled |
+| **OBS not detected** | The obs addon can't reach obs-websocket (camera operators, §8.5.1) |
+| **Director is waiting** | A ready-check ping (§8.8.2) |
+| **Connected**, **Soundpad found**, … | One of the errors above cleared |
+
+- Nothing else goes to the headset: Go, Stop and chat stay out of it.
+- **Rate limits:** an error is shown when it starts (after the 5 s grace period) and when it clears, and repeated at most once a minute while it lasts. Active errors ride along with Standby ("Standby · Soundpad not detected").
+- **Not VRChat's chatbox:** `/chatbox/input` shows text above the avatar to everyone, so it would end up on camera.
+
+**Targets** (adapters behind one `send(title, body, level)` call):
+- **XSOverlay:** its notification API, JSON over UDP to localhost (port 42069 in current versions). **Unconfirmed** on the test box.
+- **OVR Toolkit:** its local WebSocket API. **Unconfirmed** on the test box.
+- The agent uses whichever one is running (Toolhelp process snapshot, as in `tools/vrchat_window_probe.py`) and skips quietly if neither is.
+- Settings: on/off, `target: auto | xsoverlay | ovrtoolkit`, and a **Test notification** button.
+- Linux (for example wlx-overlay-s) later.
+
+**Later — "Your line next":** with character routing, each actor's file holds only their own lines, so a long silence in it means others are talking.
+- The director UI finds silent gaps (below −50 dBFS for at least 4 s, both settable) while it measures loudness (§8.4.2), and sends them with the sound reference.
+- The actor's agent follows the playback position as for audio-anchored cues (§8.3.4) and shows **Your line in 3** just before each gap ends.
+
+### 8.8 Stage State and Ready Check
+
+#### 8.8.1 Stage State
+
+- `stage.state {state: "idle" | "standby" | "rolling", scene?}` from a director or assistant goes to everyone.
+- The server keeps the current state and includes it in `welcome` and `presence.roster`, so late joiners see it.
+- **Director UI:** **Standby**, **Rolling** and **Clear** buttons. Rolling is a signal only until the obs addon exists. Then Roll (§8.5.3) sets it automatically, and Cut returns to idle.
+- Every app shows the state as a banner, and `notify` (§8.7) shows Standby and Rolling in the headset.
+- **Compatibility mode** (v0.3 relay): the director's agent sends a chat line instead, `[stage] Standby`. v0.4 agents turn it into the state; v0.3 clients simply display it.
+
+#### 8.8.2 Ready Check
+
+1. The director presses **Ready check**, for everyone or for the targeted people: `ready.request {check_id, scene?}`.
+2. Each agent runs its automatic checks and shows a checklist with a **Ready** button.
+3. The agent sends `ready.status {check_id, ready, checks: [{id, ok, detail}]}`, and again whenever a check changes.
+4. The director sees one row per person, with each check red or green and Ready or not, and a summary such as "5 of 6 ready".
+
+| Role | Automatic check | Source |
+|---|---|---|
+| Actor | Soundpad found | soundpad state (§8.1.6) |
+| Actor | Files up to date | project inventory (§8.4.1) |
+| Actor | OSC on, VRChat OSC found | osc config; OSCQuery (§8.9.1) |
+| Actor | Latency below the lead | RTT/2 vs. lead (§8.2.2) |
+| Camera | OBS connected, profile applied, at least 30 min of disk | §8.5.1, §8.5.2, §8.5.5 |
+
+- Being connected is implicit: someone who isn't connected shows as offline.
+- **Ready** can also come from the avatar menu (§8.9.1), so actors don't need to leave VR.
+- **Ping:** the director pings anyone not ready with `ready.ping {to}`. They get an in-app banner with a sound, a flashing taskbar button, and **Director is waiting** in the headset (§8.7). At most one ping per person every 5 s.
+- Ready resets when a new check starts and when the stage returns to idle.
+- **Go isn't blocked:** if anyone isn't ready, Go asks "2 not ready — Go anyway?" (open question 13).
+- Needs the v2 relay: on a v0.3 relay camera operators are invisible and v0.3 clients can't answer.
+
+### 8.9 `control` (Avatar Menu and Control Surfaces)
+
+Trigger actions without touching the desktop app: from a VRChat avatar menu, a Stream Deck or a MIDI pad. Each input maps to an action the person's role can already send, and the relay enforces roles as usual (§5.5).
+
+| Action | Roles |
+|---|---|
+| Go, Stop, Play in 3s | director, assistant |
+| Standby, Rolling, Clear (§8.8.1) | director, assistant |
+| Ready (§8.8.2) | actor, camera |
+
+#### 8.9.1 VRChat Avatar Menu (OSC In)
+
+- The avatar gets bool parameters `VRCAS_Go`, `VRCAS_Stop`, `VRCAS_Standby`, `VRCAS_Rolling` and `VRCAS_Ready`, set by **Button** controls in an expression menu.
+  - They don't need network sync, which saves the synced-parameter budget. Whether VRChat sends unsynced parameters over OSC is **unconfirmed** [Windows check].
+- VRChat sends parameter changes over OSC (`/avatar/parameters/<name>`). The agent acts on the rising edge (false → true) and ignores repeats within 500 ms.
+- **No port clash:** VRChat sends to port 9001 by default, which face tracking and other OSC apps often hold. VRChat supports **OSCQuery**:
+  - The agent opens an OSC server on a free port and advertises it over mDNS (`_osc._udp`, `_oscjson._tcp`, via `zeroconf`).
+  - VRChat discovers it and sends to it alongside other apps.
+  - Fallback: a manual port, or an OSC router.
+- OSCQuery also tells the agent whether VRChat's OSC is on, for the ready check (§8.8.2) and `notify` (§8.7).
+- **Setup:** ship a VRCFury prefab ("vrcActorSync menu") that adds the parameters and menu without editing the avatar by hand, plus manual instructions.
+- **Safety:** by default, Go from the avatar menu only works during Standby (open question 14). Each action is confirmed in the headset ("Go sent").
+- Off by default; each person turns it on in settings.
+
+#### 8.9.2 Stream Deck and MIDI (Bitfocus Companion)
+
+- Companion sends HTTP or OSC, and also covers MIDI controllers.
+- **HTTP:** `POST /control/<action>` on the agent's local port with `Authorization: Bearer <control token>`.
+  - The token is separate from the UI cookie (§7.7), shown once in settings, and can be regenerated.
+  - The same Host check as the UI applies.
+- **OSC:** `/vrcas/<action>` on a local UDP port bound to 127.0.0.1. OSC has no authentication, so it's off by default.
+
 ---
 
 ## 9. Web App
@@ -1083,6 +1267,7 @@ registerPanel({
 | | New actors appear in `USERS`/`STATUS`/`PENDING`. Camera sessions are hidden from legacy directors |
 | Legacy and new actors in one take | Both work. Timing on legacy actors is network-accurate; on new actors it is clock-synced |
 | New app → v0.3.x server | Compatibility mode (§5.6): the agent speaks the pipe protocol. Directors cue by `PRIV *go` per targeted actor, like the v0.3 director; actors decline `FILEREQ` with a reason |
+| New features → legacy clients | The bridge shows `stage.state` to legacy clients as a chat line (`[stage] Standby`, §8.8.1). `ready.*` and `file.inventory*` aren't translated: legacy actors show "no ready check" and an unknown sync status, and still receive files through the bridge |
 
 ### 11.4 Migration Path for Existing Installs
 
@@ -1142,7 +1327,14 @@ registerPanel({
 | **New:** OBS profile sync, roll/speed/cut, take log, tally | obs addon | 4 |
 | **New:** VRChat window matched to the recording resolution | obs addon (§8.5.8) | 4 |
 | **New:** browser access, hosted director mode | §4.2 | 1–2 |
+| **New:** loudness matching, Normalize folder tool | director UI + files addon (§8.4.2) | §15.1 steps 1, 3 |
+| **New:** headset notifications (Standby, Rolling, errors) | notify addon (§8.7) | §15.1 step 2 |
+| **New:** stage state (Standby / Rolling) | `stage.*` (§8.8.1) | §15.1 step 2 |
+| **New:** project folder sync (`vrcactorsync.yml`) | files addon (§8.4.1) | §15.1 step 3 |
+| **New:** ready check with ping | `ready.*` (§8.8.2) | §15.1 step 4 |
+| **New:** avatar-menu and Stream Deck / MIDI triggers | control addon (§8.9) | §15.1 step 5 |
 | **Future:** P2P camera preview | stream addon | later |
+| **Future:** scene list, post-production export, "your line next" | — | later (§14) |
 
 ---
 
@@ -1150,10 +1342,10 @@ registerPanel({
 
 | Release | Contents |
 |---|---|
-| v0.4.0-alpha | Phases 0–2. Portable build only, for the Windows test box. Legacy fully supported |
-| v0.4.0-beta | + OSC timeline editor + OBS addon |
+| v0.4.0-alpha | Phases 0–2. Portable build only, for the Windows test box. Legacy fully supported. Production helpers steps 1–4 (§15.1) |
+| v0.4.0-beta | + OSC timeline editor + OBS addon + control input (§8.9) |
 | v0.4.0 | + installer with auto-update, signed manifest; optional migration of v0.3 clients (§11.4) |
-| later | stream addon; LAN/phone pairing; avatar-change detection |
+| later | stream addon; LAN/phone pairing; avatar-change detection; **scene list** ("run of show": ordered scenes, each with its cast, sounds, cue list and camera roll, run with Next + Go); **post-production export** (per take, a timeline of which clip started when on which actor, for DaVinci Resolve or Premiere, built on the take log §8.5.7); **"your line next"** (§8.7) |
 
 - **Docs:** update README, ROADMAP and FEATURES-PLANNED. The v0.4.0 entry changes from "Tauri v2 + Svelte" to "Desktop web UI + local agent", and the OSC cue list spec points here.
 - **`origin/tauri`:** tag it, keep it, and port the UI code and useful test cases.
@@ -1175,6 +1367,21 @@ These are rough estimates for one developer.
 | later | stream addon + coturn | ~2–3 weeks |
 
 **Through v0.4.0: about 7.5–10 weeks.** Phases 3 and 4 are independent and can be done in either order.
+
+### 15.1 Production Helpers: Build Order
+
+Agreed on 2026-10-20. Rough estimates for one developer, on top of the phases above.
+
+| Step | Work | Depends on | Estimate |
+|---|---|---|---|
+| 1 | **Normalize folder** (§8.4.2): loudness measurement, gain, WAV/MP3 writing, results table | — | ~3–4 days |
+| 2 | **Headset notifications** for errors (§8.7) and **stage state** with Standby / Rolling (§8.8.1), including the compatibility-mode chat line | Windows test box for the overlay APIs | ~3–4 days |
+| 3 | **Project folder sync** (§8.4.1) with loudness matching on send | Phase 2 (files addon) | ~1–1.5 weeks |
+| 4 | **Ready check and ping** (§8.8.2) | Phase 0 (v2 relay) | ~3–4 days |
+| 5 | **Control input** (§8.9): avatar menu with OSCQuery and a VRCFury prefab, Companion endpoint | step 4 for Ready | ~1–1.5 weeks |
+
+- Steps 1 and 2 don't need the v2 relay and can ship in the current preview.
+- Later (§14): scene list, post-production export, "your line next".
 
 ---
 
@@ -1199,6 +1406,12 @@ These are rough estimates for one developer.
 | Windows scaling changes while VRChat runs | VRChat resizes itself by the DPI ratio and the match is lost | Re-check the size on display changes and report `mismatch` (§8.5.8) |
 | Window control unavailable (Wayland outside KDE) | Operator sets the size by hand | Launch-option generator (§8.5.8 Method B) |
 | Easy Anti-Cheat objects to a capture hook | VRChat won't start, or the capture is black | Agent uses window-manager calls only; test OBS Game Capture and obs-vkcapture with EAC (Appendix C) |
+| XSOverlay or OVR Toolkit changes its notification API | No headset messages | Small adapters, **Test notification** button; the in-app banner always shows too (§8.7) |
+| Headset notification spam | Distracted actors | Only Standby, Rolling, errors and pings; grace period and rate limits (§8.7) |
+| VRChat doesn't find the agent over OSCQuery (mDNS blocked) | Avatar-menu triggers don't arrive | Manual port fallback; settings show whether VRChat was found (§8.9.1) |
+| Accidental avatar-menu press | Unwanted Go | Go only during Standby by default; confirmation in the headset (§8.9.1) |
+| Loudness matching evens out intended differences (whispers, quiet SFX) | Wrong mix | Per-file `normalize: false` and `gain_db`; originals untouched (§8.4.2) |
+| The app rewrites a hand-edited manifest | Lost edits | Round-trip YAML, re-read before writing, atomic write, refuse on parse errors (§8.4.1) |
 
 ---
 
@@ -1231,6 +1444,11 @@ These are rough estimates for one developer.
 9. **Default `lines` per actor:** `both`, or `mic` for actors who don't want to hear their own cues?
 10. **Window helper default:** only offer the match (proposed), or apply it automatically with each profile push once the operator has consented?
 11. **Default Linux route for bigger-than-monitor recording:** gamescope (any compositor, needs a VRChat restart) or KWin live resize (KDE only, no restart)?
+12. **Loudness defaults (§8.4.2):** target −16 LUFS (common for spoken word online, proposed) or −23 LUFS (broadcast)? Should MP3 sources be re-encoded as MP3 (small, a second lossy generation, proposed) or written as WAV (lossless, several times larger to send)?
+13. **Ready check and Go (§8.8.2):** only warn (proposed), or block Go until everyone is ready?
+14. **Avatar-menu Go (§8.9.1):** only during Standby (proposed), or always?
+15. **Project auto-sync (§8.4.1):** off, with a Sync button (proposed), or on?
+16. **Manifest name (§8.4.1):** `vrcactorsync.yml` (proposed, visible) or `.vrcactorsync.yml` (hidden by file browsers)?
 
 ---
 
