@@ -86,7 +86,7 @@ Standalone build (no Python or Bun on the target): `.venv/bin/pip install pyinst
 .venv/bin/python build_agent.py --onedir    # one folder: dist/vrcActorSync/  (--skip-web reuses web/dist)
 ```
 
-Build on the OS you're targeting (PyInstaller doesn't cross-compile). Windows builds are windowed (pywebview + WebView2); Linux builds are console programs that open the browser. On Linux the build prints the oldest glibc the binary accepts: with uv's standalone Python it was 2.35 (from the bundled libgcc_s), with a distro Python it can be the build machine's own glibc. Never name the output `vrActorClient*` / `vrDirectorClient*`. `build_exe.py` deletes `dist/` when it runs.
+Build on the OS you're targeting (PyInstaller doesn't cross-compile). Windows builds are windowed (pywebview + WebView2); Linux builds are console programs that open the browser; they have no window, and `--window` only works from a source checkout (a bundled Qt WebEngine window was tried: ~500 MB and tied to the build machine's glibc). On Linux the build prints the oldest glibc the binary accepts: with uv's standalone Python it was 2.35 (from the bundled libgcc_s), with a distro Python it can be the build machine's own glibc. Never name the output `vrActorClient*` / `vrDirectorClient*`. `build_exe.py` deletes `dist/` when it runs.
 
 Desktop window: Windows uses pywebview + WebView2 by default. On Linux it's opt-in with `--window` and uses the system WebKit2GTK through PyGObject, so the venv must see system packages: install `python-gobject` and `webkit2gtk-4.1` (Arch/CachyOS names), create the venv with `python -m venv --system-site-packages .venv`, then `pip install pywebview`.
 

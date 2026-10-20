@@ -39,6 +39,9 @@ def window_reason(forced: bool = False) -> str | None:
     try:
         import webview  # noqa: F401
     except ImportError:
+        if getattr(sys, "frozen", False):
+            # build_agent.py leaves pywebview out on Linux: the bundled build is browser-only.
+            return "the Linux build has no desktop window (only a source checkout can use --window)"
         return "pywebview isn't installed"
     if not webview2_available():
         return "the Microsoft WebView2 Runtime isn't installed"
