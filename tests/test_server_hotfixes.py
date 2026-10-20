@@ -1,5 +1,5 @@
-# Tests for the v0.3.x relay hotfixes: update offers, director-only messages,
-# malformed-message handling, and Soundpad volume scaling.
+# Tests for the v0.3.x relay hotfixes, now run against the new relay's /ws: update offers,
+# director-only messages, malformed-message handling, and Soundpad volume scaling.
 
 import itertools
 import json
@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 
 import server_ws
 import soundpad
+from server.app import create_app
+from server.settings import Settings
 
 SECRET = "test-secret"
 
@@ -29,28 +31,20 @@ MANIFEST = {
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def relay(tmp_path, monkeypatch):
-    """A TestClient on server_ws.app with fresh state and all files in tmp_path."""
-    monkeypatch.setattr(server_ws, "APPROVED_FILE", tmp_path / "approved_actors.json")
-    monkeypatch.setattr(server_ws, "LOG_FILE", tmp_path / "server.log")
-    monkeypatch.setattr(server_ws, "MANIFEST_FILE", tmp_path / "update_manifest.json")
-    monkeypatch.setattr(server_ws, "SERVER_SECRET", SECRET)
-    monkeypatch.setattr(server_ws, "approved_actors", {
+def relay(tmp_path):
+    """A TestClient on a fresh relay app with all files in tmp_path and no status loop."""
+    (tmp_path / "approved_actors.json").write_text(json.dumps({
         "mid-alice": {"name": "Alice"},
         "mid-bob": {"name": "Bob"},
-    })
-    monkeypatch.setattr(server_ws, "pending_actors", {})
-    monkeypatch.setattr(server_ws, "clients", {})
-    monkeypatch.setattr(server_ws, "pending_transfers", {})
-
-    async def no_status_loop():
-        pass
-
-    monkeypatch.setattr(server_ws, "status_broadcast_loop", no_status_loop)
-
+    }))
+    app = create_app(Settings(secret=SECRET, data_dir=tmp_path, status_interval_s=None, echo_log=False))
     # Entering the client shares one event loop between all websockets
-    with TestClient(server_ws.app) as client:
+    with TestClient(app) as client:
         yield client
+
+
+def relay_state(client):
+    return client.app.state.relay
 
 
 def read_until(ws, prefix):
@@ -146,7 +140,7 @@ def test_find_update_needs_manifest_and_asset_url():
 ])
 @pytest.mark.parametrize("role", ["actor", "director"])
 def test_registration_sends_update_only_to_older_clients(relay, role, version, expect_update):
-    server_ws.MANIFEST_FILE.write_text(json.dumps(MANIFEST))
+    relay_state(relay).settings.manifest_file.write_text(json.dumps(MANIFEST))
     with ExitStack() as stack:
         ws = stack.enter_context(relay.websocket_connect("/ws"))
         if role == "director":
@@ -196,7 +190,7 @@ def test_actor_cannot_send_director_only_messages(relay, message):
         f"MSG|SERVER|Permission denied: only the director can send {msg_type}"
     ]
     assert not any(m.startswith(msg_type + "|") for m in bob_msgs + director_msgs)
-    assert set(server_ws.pending_transfers) == {"clip.wav"}
+    assert set(relay_state(relay).transfers) == {"clip.wav"}
 
 
 def test_director_can_still_send_cues_and_files(relay):
@@ -246,7 +240,7 @@ def test_actor_file_replies_still_reach_director(relay, final_reply):
         assert not any(is_denial(m) for m in bob_msgs)
         assert final_reply in director_msgs
 
-    assert server_ws.pending_transfers == {}
+    assert relay_state(relay).transfers == {}
 
 
 def test_actor_can_deny_file(relay):
@@ -262,7 +256,7 @@ def test_actor_can_deny_file(relay):
 
     assert not any(is_denial(m) for m in bob_msgs)
     assert "FILEDENY|clip.wav|Declined" in director_msgs
-    assert server_ws.pending_transfers == {}
+    assert relay_state(relay).transfers == {}
 
 
 def test_actor_chat_ack_and_plain_priv_allowed(relay):

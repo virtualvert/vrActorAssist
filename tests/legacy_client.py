@@ -69,6 +69,7 @@ def prepare_data_dir(data_dir: Path) -> Path:
 def load_v033_relay(data_dir: Path, secret: str = SECRET):
     """A fresh copy of the frozen v0.3.3 relay module (its state lives in module globals), with
     its files in data_dir and the 10 s status/ping loop off. Returns the module; use .app."""
+    data_dir.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location(f"server_ws_v033_{uuid.uuid4().hex}", LEGACY_RELAY)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -120,7 +121,8 @@ class LegacyClient:
     carries timestamps) never enter a transcript."""
 
     def __init__(self, url: str, label: str, name: str):
-        self.ws = connect(url, open_timeout=TIMEOUT_S, max_size=2**24)
+        # Entered by hand: the connection outlives this call (websockets wants a context manager)
+        self.ws = connect(url, open_timeout=TIMEOUT_S, max_size=2**24).__enter__()
         self.label = label
         self.name = name
         self.approved = False
