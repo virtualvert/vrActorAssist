@@ -1,3 +1,4 @@
+import { DemoFolders } from "../demo/folders";
 import { DemoSession, type DemoStorage, type SavedDemo } from "../demo/session";
 import type { AgentEvent, Call, Role } from "../protocol";
 import { Emitter, type LinkState, type Transport } from "./types";
@@ -28,6 +29,7 @@ const browserStorage: DemoStorage = {
  */
 export class DemoTransport implements Transport {
   readonly kind = "demo";
+  readonly folders = new DemoFolders();
   #events = new Emitter<AgentEvent>();
   #link = new Emitter<LinkState>();
   #session: DemoSession | null = null;

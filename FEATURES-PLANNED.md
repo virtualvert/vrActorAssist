@@ -600,7 +600,7 @@ If actor client has `osc_enabled: false` or VRChat OSC is not reachable:
 
 Agreed on 2026-10-20. Full design in the [spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md); build order in its §15.1.
 
-1. [ ] **Normalize folder** (§8.4.2) — measure each file's loudness (LUFS) and write copies adjusted to one target, with a peak ceiling. Originals untouched. Works with today's v0.3 batch transfer. **High priority.**
+1. [x] **Normalize folder** (§8.4.2) — measure each file's loudness (LUFS) and write copies adjusted to one target, with a peak ceiling. Originals untouched. Works with today's v0.3 batch transfer. **Built 2026-10-20** (16-bit WAV copies; MP3 output still open).
 2. [ ] **Headset notifications** (§8.7) — "Standby", "Rolling" and setup errors ("Not connected", "Soundpad not detected", "VRChat OSC is off", "OBS not detected") in XSOverlay or OVR Toolkit. On by default, can be turned off. Comes with **Standby / Rolling** buttons for the director (§8.8.1).
 3. [ ] **Project folder sync** (§8.4.1) — the director selects a folder; a `vrcactorsync.yml` (created after a prompt if missing) says which character gets which files. New files prompt for an owner, changed files are flagged, and a grid shows which actors have the latest version. **Sync** sends only what's missing or outdated, with loudness matching applied.
 4. [ ] **Ready check** (§8.8.2) — automatic checks plus a Ready button for each person; the director sees who's ready and can ping anyone who isn't (in-app alert and headset notification). Needs the v2 relay.

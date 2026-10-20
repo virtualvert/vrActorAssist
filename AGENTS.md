@@ -35,6 +35,7 @@ agent/                  v0.4 desktop agent (python -m agent)
   relay_legacy.py       Connection to a v0.3 relay: REGISTER, roster from USERS/STATUS/PENDING, cues via PRIV
   actor_runtime.py      Cues → Soundpad (pipe, else soundpad.py -rc), live playback status, VRChat OSC
   soundpad_pipe.py      Soundpad named-pipe client: one worker thread, typed helpers, fake-able transport
+  folders.py            Normalize folder file access: folder picker, audio listing, guarded reads, writes only under normalized/
   web.py                Local UI server: Host/Origin guard, one-time token → session cookie, /ui/ws
   hub.py                Fan-out of state/log/traffic events to every open UI
   shell.py              pywebview window (Windows + WebView2) or default browser
@@ -42,11 +43,12 @@ agent/                  v0.4 desktop agent (python -m agent)
   tests/                pytest (includes an end-to-end run against the real server_ws.py)
 
 web/                    v0.4 UI: Svelte 5 + Vite + TypeScript, built and tested with Bun
-  src/lib/protocol.ts   UI ↔ agent contract (AppState, events, calls). Mirror of agent/core.py snapshot()
+  src/lib/protocol.ts   UI ↔ agent contract (AppState, events, calls, folder listing). Mirror of agent/core.py snapshot()
   src/lib/transport/    AgentTransport (/ui/ws), DemoTransport (simulated session), chooser
-  src/lib/demo/         DemoSession: in-page simulation used by `bun run dev` and `?demo`
+  src/lib/demo/         DemoSession: in-page simulation used by `bun run dev` and `?demo`; DemoFolders for Normalize folder
+  src/lib/audio/        Loudness (BS.1770 / R128, 4× true peak), WAV writer, gain/output planning; worker + engine (decodes at 48 kHz)
   src/lib/graph/        Animated node graph (d3-force) + pure layout math (layout.ts)
-  src/lib/views/        DirectorView, ActorView, CameraView, CastPanel, CueDeck
+  src/lib/views/        DirectorView, ActorView, CameraView, CastPanel, CueDeck, NormalizePanel
   src/lib/components/   Shell pieces: TopBar, Settings, Onboarding, LogDrawer, Button, ...
   src/app.css           Design tokens: dark/light themes, --ui-scale, VR mode, motion
 
@@ -105,7 +107,7 @@ There are no tests for the v0.3 tkinter clients; test changes there by hand.
 
 - **Backward compatibility is a requirement.** v0.3 clients in the field must keep working with the relay (`/ws`, pipe protocol, `PING`/`PONG`, `REGISTER|name|machine_id|role|secret|version|platform`). Don't change existing message formats in `shared.py`; add, don't alter. The v0.3 updater swaps files named `vrActorClient*` / `vrDirectorClient*`, so those build names stay.
 - **The UI contract has two sides.** Changing `AppState`, events or calls in `web/src/lib/protocol.ts` means changing `agent/core.py` (`snapshot()` / `_call_*`) and `web/src/lib/demo/session.ts` in the same change.
-- **Local server security** (`agent/web.py`): bind 127.0.0.1 only; check `Host` on every request and `Origin` on POST/WebSocket; data and sockets need the session cookie from a one-time `?t=` token. Never send secrets (director secret, future OBS password) to the UI — expose `hasSecret`-style booleans. Don't write one-time UI links to the log file.
+- **Local server security** (`agent/web.py`): bind 127.0.0.1 only; check `Host` on every request and `Origin` on POST/WebSocket; data and sockets need the session cookie from a one-time `?t=` token. Never send secrets (director secret, future OBS password) to the UI — expose `hasSecret`-style booleans. Don't write one-time UI links to the log file. File access (`/api/folders/*`, `agent/folders.py`) stays narrow: only folders opened in this run, audio-only reads, `.wav` writes only under `<folder>/normalized/`.
 - **The v0.3 relay enforces only the director boundary.** Since v0.3.3 a director needs the secret, and only directors may send cues (`CMD`, `OSC_CUE`, `PRIV` text starting with `*`) and file pushes (`is_director_only` in `server_ws.py`). Anything else (`MSG`, plain `PRIV`, ...) is open to any approved client, and there's no camera-operator role. Don't rely on the server for finer permissions; the v2 relay design covers them (spec §5.5, §17).
 - **UI sizing:** use `rem` (it tracks the UI scale) and `var(--target)` for hit targets; collapse layouts with container queries (`@container`), not media queries, so breakpoints follow the scaled UI. Colours come from tokens in `app.css` — define new ones for both themes. Respect `[data-motion="reduce"]`.
 - **Svelte 5 runes:** don't name a prop or local `state` (it collides with `$state`); the codebase uses `data`.
@@ -120,4 +122,5 @@ There are no tests for the v0.3 tkinter clients; test changes there by hand.
 - Soundpad cues (Go / Stop / `*play:N`) go through the named pipe, with `-rc` as the fallback. Actors run `*play:N`, but the director UI only sends Go / Stop / countdown, so nothing in the new app sends it yet. The rest of the soundpad addon (sound references, picker, volume / pause / seek messages) and scheduling (§8.2) aren't built.
 - No tray icon, installer or auto-updater yet; closing the window quits. In browser mode, Ctrl+C in the terminal quits. With no terminal (a Windows build without WebView2, or a Linux build started from a file manager), the only way to quit is ending the process.
 - `build_agent.py`: the Linux one-file build is tested (CachyOS): UI, relay connection, director → actor cue, `--portable`, Ctrl+C. The Windows one-file build is tested too (Windows 11, Python 3.12, PyInstaller 6.22, pywebview 6.2 on WebView2 155): the window opens without the browser fallback, the actor drives Soundpad through the named pipe while frozen, Go / Stop / countdown and `*play:N` play against a local relay, closing the window ends the process, and `--portable` keeps its data beside the exe. An actor on the live `wss://` relay (Tailscale Funnel) gets approved and plays Go / Stop. The exe is unsigned: a copy marked as downloaded gets SmartScreen's "Windows protected your PC" block. Not tried yet: a PC without the WebView2 Runtime.
+- Normalize folder (spec §8.4.2) writes 16-bit WAV at 48 kHz only; MP3 output for MP3 sources isn't built. Its folder dialog inside the desktop window (Windows, Linux `--window`) is untested; the browser-mode fallbacks (`kdialog` / `zenity` / typed path) are.
 - OBS addon, OSC timeline editor and P2P streaming are designed (spec §8.3, §8.5, §8.6), not built.

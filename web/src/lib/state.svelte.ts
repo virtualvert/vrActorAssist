@@ -1,5 +1,6 @@
 import type { AgentEvent, AppState, Call, LogEntry, LogLevel, Prefs, Traffic } from "./protocol";
 import type { LinkState, Transport } from "./transport";
+import type { FolderAccess } from "./transport/types";
 import { applyPrefs } from "./prefs";
 
 const MAX_LOGS = 300;
@@ -21,6 +22,7 @@ class AppStore {
   unreadLogs = $state(0);
   logOpen = $state(false);
   settingsOpen = $state(false);
+  normalizeOpen = $state(false);
   /** True while the first-run flow is on screen, even after a role has been saved. */
   onboarding = $state(false);
 
@@ -38,6 +40,11 @@ class AppStore {
       if (transport === this.#transport) this.link = link;
     });
     transport.start();
+  }
+
+  /** File access for Normalize folder, from whichever transport drives the page. */
+  get folders(): FolderAccess | null {
+    return this.#transport?.folders ?? null;
   }
 
   async call(call: Call): Promise<void> {

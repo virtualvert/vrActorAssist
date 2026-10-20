@@ -1,5 +1,5 @@
-import type { AgentEvent, Call } from "../protocol";
-import { Emitter, type LinkState, type Transport } from "./types";
+import type { AgentEvent, Call, FolderListing } from "../protocol";
+import { Emitter, type FolderAccess, type LinkState, type Transport } from "./types";
 
 const CALL_TIMEOUT_MS = 10_000;
 
@@ -11,6 +11,7 @@ const CALL_TIMEOUT_MS = 10_000;
  */
 export class AgentTransport implements Transport {
   readonly kind = "agent";
+  readonly folders: FolderAccess = agentFolders;
   #events = new Emitter<AgentEvent>();
   #link = new Emitter<LinkState>();
   #ws: WebSocket | null = null;
@@ -113,3 +114,34 @@ export class AgentTransport implements Transport {
     };
   }
 }
+
+/** POST to one of the agent's /api/folders/ endpoints; its `{error}` becomes the thrown message. */
+async function post(path: string, body: BodyInit, contentType: string): Promise<Response> {
+  const res = await fetch(path, { method: "POST", headers: { "Content-Type": contentType }, body, credentials: "same-origin" }).catch(() => null);
+  if (!res) throw new Error("The vrcActorSync app is not reachable");
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(detail?.error ?? `Request failed (${res.status})`);
+  }
+  return res;
+}
+
+const postJson = (path: string, body: object) => post(path, JSON.stringify(body), "application/json");
+
+const agentFolders: FolderAccess = {
+  async pick() {
+    const res = await postJson("/api/folders/pick", {});
+    return ((await res.json()) as { path: string | null }).path;
+  },
+  async open(folder) {
+    return (await (await postJson("/api/folders/open", { folder })).json()) as FolderListing;
+  },
+  async read(folder, path) {
+    return (await postJson("/api/folders/read", { folder, path })).arrayBuffer();
+  },
+  async write(folder, path, data) {
+    const query = new URLSearchParams({ folder, path });
+    const res = await post(`/api/folders/write?${query}`, new Blob([data]), "application/octet-stream");
+    return ((await res.json()) as { path: string }).path;
+  },
+};

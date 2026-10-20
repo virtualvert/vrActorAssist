@@ -157,6 +157,27 @@ export type Call =
   | { call: "camera"; args: { action: "roll" | "cut" } }
   | { call: "openBrowser" };
 
+/**
+ * Folder access for Normalize folder (spec §8.4.2). The agent serves it under /api/folders/
+ * (pick, open, read, write; agent/web.py + agent/folders.py) rather than as calls, because it
+ * moves file bytes. The demo transport simulates a folder.
+ */
+export interface FolderFile {
+  /** Relative to the folder, with forward slashes. */
+  path: string;
+  size: number;
+}
+
+export interface FolderListing {
+  /** The folder as the agent resolved it (absolute). */
+  folder: string;
+  /** Where copies go: `<folder>/normalized`. */
+  output: string;
+  files: FolderFile[];
+  /** More than 5000 audio files; only the first 5000 are listed. */
+  truncated: boolean;
+}
+
 export const SCALE_MIN = 0.75;
 export const SCALE_MAX = 2;
 export const VR_SCALE = 1.4;
