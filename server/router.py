@@ -33,6 +33,7 @@ from . import SERVER_VERSION, permissions
 from .permissions import DIRECTION
 from .sessions import Session
 from .timesync import pong, rtt_ms
+from .transfers import TYPES as FILE_TYPES, Refused
 from .updates import compare_versions_v2
 
 if TYPE_CHECKING:
@@ -103,7 +104,7 @@ class Router:
         received_ms = self.relay.clock.now_ms()
         text = message.get("text")
         if text is None:
-            await self._error(session, "unsupported", "Binary frames arrive with the files addon")
+            await self._binary(session, message.get("bytes") or b"")
             return None
         if len(text.encode("utf-8")) > self.relay.settings.max_frame_bytes:
             await self._error(session, "invalid", "Message too large")
@@ -238,8 +239,23 @@ class Router:
             await self._actor_settings(session, env, payload)
         elif env.type.startswith("cuelist."):
             await self._error(session, "unsupported", "Cue list storage isn't built yet", env)
+        elif env.type in FILE_TYPES:
+            try:
+                await relay.files.message(session, env, payload)
+            except Refused as exc:
+                await self._error(session, exc.code, str(exc), env, ids=exc.ids)
         else:
             await self.route(session, env)
+
+    async def _binary(self, session: Session, data: bytes) -> None:
+        """A binary frame: a file chunk (spec §5.7)."""
+        if not session.approved:
+            await self._error(session, "not_approved", "Wait for a director to approve you")
+            return
+        try:
+            await self.relay.files.chunk(session, data)
+        except Refused as exc:
+            await self._error(session, exc.code, str(exc))
 
     async def route(self, sender: Session, env: Envelope) -> None:
         if env.to == "server":
@@ -428,6 +444,7 @@ class Router:
     async def _cleanup(self, session: Session) -> None:
         relay = self.relay
         relay.registry.remove(session)
+        await relay.files.session_gone(session)
         for machine_id, info in list(relay.pending.items()):
             if info.session is session:
                 del relay.pending[machine_id]

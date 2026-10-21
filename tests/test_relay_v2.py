@@ -326,11 +326,12 @@ def test_target_required_for_routed_types(tmp_path, stack):
     assert d.until("error")["data"]["code"] == "invalid"
 
 
-def test_binary_frames_are_not_supported_yet(tmp_path, stack):
+def test_binary_frame_without_a_transfer(tmp_path, stack):
+    # Binary frames carry file chunks (tests/test_files_v2.py); one that matches no offer is refused
     client, _ = relay_client(stack, tmp_path)
     d = connect_v2(client, stack, "director", "Mira", "m-dir")
     d.ws.send_bytes(b"\x01" + bytes(20))
-    assert d.until("error")["data"]["code"] == "unsupported"
+    assert d.until("error")["data"]["code"] == "invalid"
 
 
 def test_oversized_frame(tmp_path, stack):

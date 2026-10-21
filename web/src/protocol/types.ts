@@ -65,6 +65,72 @@ export interface Denied {
   reason: string;
 }
 
+export interface FileAccept {
+  transfer_id: string;
+}
+
+/** Ends the batch at once, mid-file too: the receiver deletes the partial file. */
+export interface FileBatchCancel {
+  batch_id: string;
+  reason?: string;
+}
+
+export interface FileBatchEnd {
+  batch_id: string;
+  ok: number;
+  failed: number;
+}
+
+/** Every send from the new app is a batch, even one file. Files are offered one at a time. */
+export interface FileBatchStart {
+  batch_id: string;
+  files: number;
+  bytes: number;
+}
+
+export interface FileDeny {
+  transfer_id: string;
+  reason?: string;
+}
+
+export interface FileEnd {
+  transfer_id: string;
+  sha256?: string | null;
+  md5?: string | null;
+}
+
+/** From the receiver, or from the relay when the other side disconnected. */
+export interface FileErr {
+  transfer_id: string;
+  error?: string;
+}
+
+/**
+ * To exactly one session. `chunk_size` is set per offer: the relay's bridge passes a v0.3
+ * director's 64 KiB chunks through as they are. `md5` is for v0.3 actors (their FILEEND).
+ */
+export interface FileOffer {
+  transfer_id: string;
+  batch_id?: string | null;
+  name: string;
+  size: number;
+  chunk_size?: number;
+  sha256?: string | null;
+  md5?: string | null;
+  character?: string | null;
+}
+
+export interface FileOk {
+  transfer_id: string;
+  saved_as?: string;
+}
+
+/** Chunks written so far. The sender keeps at most MAX_IN_FLIGHT chunks unacknowledged. */
+export interface FileProgress {
+  transfer_id: string;
+  received: number;
+}
+
 export interface Hello {
   role: "director" | "assistant" | "actor" | "camera";
   name: string;
@@ -233,16 +299,16 @@ export interface MessageData {
   "soundpad.list": Record<string, unknown>;
   "soundpad.state": Record<string, unknown>;
   "soundpad.calibrate": Record<string, unknown>;
-  "file.offer": Record<string, unknown>;
-  "file.accept": Record<string, unknown>;
-  "file.deny": Record<string, unknown>;
-  "file.progress": Record<string, unknown>;
-  "file.end": Record<string, unknown>;
-  "file.ok": Record<string, unknown>;
-  "file.err": Record<string, unknown>;
-  "file.batch.start": Record<string, unknown>;
-  "file.batch.end": Record<string, unknown>;
-  "file.batch.cancel": Record<string, unknown>;
+  "file.batch.start": FileBatchStart;
+  "file.offer": FileOffer;
+  "file.accept": FileAccept;
+  "file.deny": FileDeny;
+  "file.progress": FileProgress;
+  "file.end": FileEnd;
+  "file.ok": FileOk;
+  "file.err": FileErr;
+  "file.batch.end": FileBatchEnd;
+  "file.batch.cancel": FileBatchCancel;
   "file.inventory.request": Record<string, unknown>;
   "file.inventory": Record<string, unknown>;
   "osc.param": OscParam;

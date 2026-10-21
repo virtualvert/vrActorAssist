@@ -18,6 +18,7 @@ from .router import Router
 from .sessions import Approvals, Registry, Session
 from .settings import Log, Settings
 from .timesync import Clock
+from .transfers import Transfers
 from .updates import find_update, load_manifest
 
 __all__ = ["LEGACY_VERSION", "SERVER_VERSION", "PendingEntry", "Relay"]
@@ -42,6 +43,8 @@ class Relay:
         self.pending: dict[str, PendingEntry] = {}
         # v0.3 file transfers: filename → (director session, actor session)
         self.transfers: dict[str, tuple[Session, Session]] = {}
+        # v2 file transfers (transfers.py)
+        self.files = Transfers(self)
         self.bridge = LegacyBridge(self)
         self.router = Router(self)
         self._status_task: asyncio.Task | None = None
