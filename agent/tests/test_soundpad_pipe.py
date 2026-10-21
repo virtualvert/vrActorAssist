@@ -254,21 +254,46 @@ def test_timeout_drops_the_pipe_and_reconnects_once_right_away():
         pipe.close()
 
 
-def test_backoff_while_soundpad_is_closed():
+def test_soundpad_closed_is_looked_for_again_at_a_steady_pace(monkeypatch):
+    """No pipe at all costs nothing to try, so it's tried every MISSING_RETRY_S, not with a
+    growing backoff (a just-started Soundpad waited 10 s in the M2 re-check)."""
+    from agent import soundpad_pipe
+
+    monkeypatch.setattr(soundpad_pipe, "MISSING_RETRY_S", 0.2)
     fake = FakeSoundpad()
     fake.running = False
-    pipe = make_pipe(fake, backoff_start=0.2, backoff_max=1.0)
+    pipe = make_pipe(fake, backoff_start=0.2, backoff_max=5.0)
     try:
-        with pytest.raises(SoundpadUnavailable, match="isn't running"):
-            pipe.call("IsAlive()")
-        # Inside the backoff window nothing is tried
+        for _ in range(4):  # however long it was closed
+            with pytest.raises(SoundpadUnavailable, match="isn't running"):
+                pipe.call("IsAlive()")
+            time.sleep(0.25)
+        assert pipe.missing
+        # Inside the retry window nothing is tried
         with pytest.raises(SoundpadUnavailable):
             pipe.call("IsAlive()")
         fake.running = True
+        with pytest.raises(SoundpadUnavailable):
+            pipe.call("IsAlive()")
         assert fake.connects == 0
         time.sleep(0.25)
         assert pipe.call("IsAlive()").text == "R-200"
-        assert fake.connects == 1
+        assert fake.connects == 1 and not pipe.missing
+    finally:
+        pipe.close()
+
+
+def test_backoff_when_the_pipe_is_there_but_wont_open():
+    fake = FakeSoundpad()
+    fake.refuse = PermissionError(5, "Access is denied")
+    pipe = make_pipe(fake, backoff_start=0.2, backoff_max=1.0)
+    try:
+        with pytest.raises(SoundpadUnavailable, match="couldn't be opened"):
+            pipe.call("IsAlive()")
+        assert not pipe.missing
+        fake.refuse = None
+        time.sleep(0.25)
+        assert pipe.call("IsAlive()").text == "R-200"  # first retry after backoff_start
     finally:
         pipe.close()
 

@@ -35,6 +35,9 @@
     if (c.status === "pending")
       return { tone: "warn", title: "Waiting for the director", sub: "The director approves you once. After that you join automatically." };
     if (c.status !== "connected") return { tone: "idle", title: "Not connected", sub: "Connect to your relay to receive cues." };
+    if (recentCue && !recentCue.ok) {
+      return { tone: "bad", title: "Cue failed", sub: actor?.soundpad.detail || "The last cue didn't run on this computer." };
+    }
     if (playback) {
       if (!active) return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
       const where = `${playback.title ?? "Your selected sound"} · ${mediaTime(playback.positionMs)} / ${mediaLength(playback.durationMs)}`;

@@ -27,6 +27,9 @@ TIMEOUT_S = 2.0
 LIST_TIMEOUT_S = 10.0
 BACKOFF_START_S = 0.5
 BACKOFF_MAX_S = 10.0
+# While there's no pipe at all (Soundpad closed), look again this often: trying costs nothing, and
+# a backoff up to 10 s made a just-started Soundpad wait that long (M2 re-check)
+MISSING_RETRY_S = 1.0
 # How often a waiting request looks for Soundpad's answer. Answers usually take ~0.1 ms.
 POLL_S = 0.0002
 MIN_RC_VERSION = (1, 1, 2)
@@ -486,9 +489,13 @@ class SoundpadPipe:
         try:
             transport = self._connect()
         except OSError as exc:
-            self._backoff = min(max(self._backoff * 2, self._backoff_start), self._backoff_max)
-            self._retry_at = time.monotonic() + self._backoff
             self.missing = isinstance(exc, FileNotFoundError)
+            if self.missing:
+                self._backoff = 0.0
+                self._retry_at = time.monotonic() + min(MISSING_RETRY_S, self._backoff_max)
+            else:
+                self._backoff = min(max(self._backoff * 2, self._backoff_start), self._backoff_max)
+                self._retry_at = time.monotonic() + self._backoff
             self.last_error = (
                 "Soundpad isn't running (its remote-control pipe isn't open)"
                 if self.missing
