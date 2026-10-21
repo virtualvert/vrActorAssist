@@ -508,3 +508,21 @@ def test_v03_import_of_file_settings(tmp_path):
     assert store.config.files.receive_dir == "C:/cues" and store.config.files.auto_accept
     again = ConfigStore(tmp_path / "data")
     assert again.config.files.receive_dir == "C:/cues"
+
+
+def test_batch_log_says_why_files_did_not_go(tmp_path):
+    async def scenario():
+        agent = fake_agent(tmp_path, role="director")
+        tx = Sender(agent)
+        tx.start("s_coda", "Coda", [make_file(tmp_path, "a.wav", 10), make_file(tmp_path, "b.wav", 10)])
+        await offered(agent)
+        tx.on_message({"type": "file.deny", "data": {"transfer_id": agent.files.last("file.offer")["transfer_id"], "reason": "Declined"}})
+        await offered(agent, 2)
+        tid = agent.files.last("file.offer")["transfer_id"]
+        tx.on_message({"type": "file.accept", "data": {"transfer_id": tid}})
+        await settle()
+        tx.on_message({"type": "file.err", "data": {"transfer_id": tid, "error": "Coda disconnected"}})
+        await settle()
+        assert ("warning", "Files to Coda: 0 sent, 2 not (a.wav: Declined; b.wav: Coda disconnected)") in agent.logs
+
+    asyncio.run(scenario())

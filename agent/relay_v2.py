@@ -9,6 +9,7 @@ used yet: Play in 3s is a local countdown, then cue.go (Phase 2 adds the agent-s
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -88,7 +89,7 @@ class V2Relay:
 
     def _reset(self, detail: str, status: str = "disconnected") -> None:
         if self.status == "connected":
-            self.agent.files.reset("Lost the relay connection")
+            self.agent.files.reset(detail)
         self.status = status
         self.detail = detail
         self.server_version = None
@@ -235,7 +236,11 @@ class V2Relay:
             if not data.get("ok", True):
                 hub.log("warning", f"{sender_name}: {data.get('command', 'cue')} failed: {data.get('error') or 'unknown error'}")
         elif msg_type == "error":
-            hub.log("warning", f"Relay: {data.get('message') or data.get('code')}")
+            # Errors about file messages are races at the end of a transfer, already shown in its result
+            if str(data.get("type") or "").startswith("file."):
+                logging.getLogger("vrcas").info("Relay about %s: %s", data.get("type"), data.get("message"))
+            else:
+                hub.log("warning", f"Relay: {data.get('message') or data.get('code')}")
         return None
 
     def _on_roster(self, data: dict) -> None:

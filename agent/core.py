@@ -55,6 +55,7 @@ class Agent:
         self.changed()
 
     async def shutdown(self) -> None:
+        self.hub.log("info", "Closing vrcActorSync")
         await self.relay.stop("App closed")
         await self.actor.close()
 
