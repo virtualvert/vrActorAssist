@@ -7,12 +7,14 @@
     open: boolean;
     title: string;
     side?: "right" | "left";
+    /** Room for a table: up to 60rem instead of 32rem. */
+    wide?: boolean;
     onclose: () => void;
     children: Snippet;
     footer?: Snippet;
   }
 
-  let { open, title, side = "right", onclose, children, footer }: Props = $props();
+  let { open, title, side = "right", wide = false, onclose, children, footer }: Props = $props();
   let dialog: HTMLDialogElement | undefined = $state();
 
   $effect(() => {
@@ -25,6 +27,7 @@
 <dialog
   bind:this={dialog}
   class="drawer {side}"
+  class:wide
   aria-label={title}
   onclose={onclose}
   onclick={(e) => {
@@ -71,6 +74,10 @@
     border-left: 1px solid var(--border);
     box-shadow: var(--shadow-pop);
     animation: slide-in var(--t) var(--ease-out);
+  }
+
+  .wide .panel {
+    width: min(60rem, 100%);
   }
 
   .left .panel {

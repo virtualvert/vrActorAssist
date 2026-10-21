@@ -7,6 +7,7 @@ data needs a session cookie traded for the one-time `?t=` token in the URL the a
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import secrets
@@ -15,11 +16,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import APP_NAME, APP_VERSION
 from .core import CallError
+from .folders import MAX_WRITE_BYTES, FolderError, Folders, pick_folder
 
 if TYPE_CHECKING:
     from .core import Agent
@@ -124,6 +126,69 @@ def create_app(agent: "Agent", security: Security, static_dir: Path) -> FastAPI:
         if not security.session_ok(request.cookies.get(COOKIE)):
             return JSONResponse({"error": "no session"}, status_code=401)
         return agent.snapshot()
+
+    # Normalize folder (spec §8.4.2): the page does the audio work; these only move bytes.
+    folders = Folders()
+
+    def denied(request: Request) -> JSONResponse | None:
+        if not security.origin_ok(request.headers.get("origin")):
+            return JSONResponse({"error": "forbidden origin"}, status_code=403)
+        if not security.session_ok(request.cookies.get(COOKIE)):
+            return JSONResponse({"error": "no session"}, status_code=401)
+        return None
+
+    async def json_body(request: Request) -> dict:
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, ValueError):
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def refused(exc: FolderError) -> JSONResponse:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/api/folders/pick")
+    async def folders_pick(request: Request):
+        if (response := denied(request)) is not None:
+            return response
+        try:
+            return {"path": await pick_folder()}
+        except FolderError as exc:
+            return refused(exc)
+
+    @app.post("/api/folders/open")
+    async def folders_open(request: Request):
+        if (response := denied(request)) is not None:
+            return response
+        body = await json_body(request)
+        try:
+            return await asyncio.to_thread(folders.open, str(body.get("folder", "")))
+        except FolderError as exc:
+            return refused(exc)
+
+    @app.post("/api/folders/read")
+    async def folders_read(request: Request):
+        if (response := denied(request)) is not None:
+            return response
+        body = await json_body(request)
+        try:
+            path = folders.source(str(body.get("folder", "")), str(body.get("path", "")))
+        except FolderError as exc:
+            return refused(exc)
+        return FileResponse(path, media_type="application/octet-stream")
+
+    @app.post("/api/folders/write")
+    async def folders_write(request: Request, folder: str = "", path: str = ""):
+        if (response := denied(request)) is not None:
+            return response
+        if int(request.headers.get("content-length") or 0) > MAX_WRITE_BYTES:
+            return JSONResponse({"error": "That copy is too large"}, status_code=413)
+        data = await request.body()
+        try:
+            target = await asyncio.to_thread(folders.write, folder, path, data)
+        except FolderError as exc:
+            return refused(exc)
+        return {"path": str(target)}
 
     @app.websocket("/ui/ws")
     async def ui_socket(ws: WebSocket):

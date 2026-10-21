@@ -15,6 +15,7 @@
   import ActorView from "./lib/views/ActorView.svelte";
   import CameraView from "./lib/views/CameraView.svelte";
   import DirectorView from "./lib/views/DirectorView.svelte";
+  import NormalizePanel from "./lib/views/NormalizePanel.svelte";
 
   onMount(async () => {
     app.attach(await chooseTransport());
@@ -76,6 +77,7 @@
   </div>
   <SettingsPanel />
   <LogDrawer />
+  {#if app.state.role === "director"}<NormalizePanel />{/if}
 {/if}
 
 <Toasts />

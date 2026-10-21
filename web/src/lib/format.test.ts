@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ago, duration, initials, latencyLevel, mediaTime, peerSubtitle } from "./format";
+import { ago, decibels, duration, initials, latencyLevel, mediaTime, peerSubtitle } from "./format";
 import { clampScale } from "./protocol";
 
 describe("latencyLevel", () => {
@@ -44,5 +44,15 @@ describe("clampScale", () => {
     expect(clampScale(0.1)).toBe(0.75);
     expect(clampScale(1.234)).toBe(1.25);
     expect(clampScale(Number.NaN)).toBe(1);
+  });
+});
+
+describe("decibels", () => {
+  test("one decimal, real minus sign, optional plus", () => {
+    expect(decibels(-23.44)).toBe("−23.4");
+    expect(decibels(7.96, true)).toBe("+8.0");
+    expect(decibels(7.96)).toBe("8.0");
+    expect(decibels(-0.04, true)).toBe("0.0");
+    expect(decibels(-Infinity)).toBe("—");
   });
 });

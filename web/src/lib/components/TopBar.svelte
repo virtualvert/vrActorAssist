@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Minus, Monitor, Moon, Plus, ScrollText, Settings, Sun } from "@lucide/svelte";
+  import { AudioLines, Minus, Monitor, Moon, Plus, ScrollText, Settings, Sun } from "@lucide/svelte";
   import { SCALE_STEP } from "../prefs";
   import { clampScale, type Theme } from "../protocol";
   import { ROLE_INFO } from "../roles";
@@ -54,6 +54,11 @@
     >
       {#if data.prefs.theme === "dark"}<Moon size="1.25em" />{:else if data.prefs.theme === "light"}<Sun size="1.25em" />{:else}<Monitor size="1.25em" />{/if}
     </Button>
+    {#if data.role === "director"}
+      <Button icon variant="ghost" aria-label="Normalize folder" title="Normalize folder" onclick={() => (app.normalizeOpen = true)}>
+        <AudioLines size="1.25em" />
+      </Button>
+    {/if}
     <Button icon variant="ghost" aria-label="Activity and chat" title="Activity and chat" onclick={() => app.openLog(true)}>
       <ScrollText size="1.25em" />
       {#if app.unreadLogs > 0}<span class="badge">{app.unreadLogs > 9 ? "9+" : app.unreadLogs}</span>{/if}

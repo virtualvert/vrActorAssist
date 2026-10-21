@@ -68,3 +68,12 @@ export function initials(name: string): string {
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
+
+/** Decibels with one decimal and a real minus sign; `signed` adds "+" to gains. "—" when unknown. */
+export function decibels(value: number, signed = false): string {
+  if (!Number.isFinite(value)) return "—";
+  const rounded = Math.round(value * 10) / 10;
+  const text = Math.abs(rounded).toFixed(1);
+  if (rounded < 0) return `−${text}`;
+  return signed && rounded > 0 ? `+${text}` : text;
+}

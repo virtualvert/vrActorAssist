@@ -2,8 +2,16 @@
 
 **Date:** 2026-10-17 (revised 2026-10-21)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.8
+**Version:** 0.9
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.9
+
+- **Normalize folder** (§8.4.2, production helpers step 1, §15.1) built on branch `feat/normalize-folder` and merged into `feat/web-ui` on 2026-10-21 (§20): loudness per BS.1770 / R128 with 4× true peak, measured in the director's page; normalized copies go to `<folder>/normalized/`.
+- §8.4.2 as built:
+  - Every copy is 16-bit WAV at 48 kHz (TPDF dither). MP3 output for MP3 sources isn't built; it waits on open question 12.
+  - Folder picker: the desktop window's dialog; in browser mode on Linux `kdialog` or `zenity`; otherwise a typed path.
+  - The agent reads only audio files inside folders opened in this run and writes only `.wav` files under `normalized/`.
 
 ### Changes in v0.8
 
@@ -817,7 +825,7 @@ files:
 Lines recorded at different levels sound uneven in a scene. The director's app measures each file's loudness and sends copies adjusted to one target. **High priority.**
 
 **Measure** (in the director's UI page, so nothing is added to the download):
-- Decode with Web Audio `decodeAudioData`, built into WebView2 and browsers: MP3, WAV, OGG and FLAC; AAC where the engine includes it. The agent streams the file to the page and writes the result back.
+- Decode with Web Audio `decodeAudioData`, built into WebView2 and browsers: MP3, WAV, OGG and FLAC; AAC where the engine includes it. Everything is decoded at 48 kHz, so the math sees one rate and copies come out at 48 kHz. The agent streams the file to the page and writes the result back (`/api/folders/*`, `agent/folders.py`).
 - Integrated loudness per ITU-R BS.1770-4 / EBU R128: K-weighting, 400 ms blocks with 75 % overlap, absolute gate −70 LUFS, relative gate −10 LU.
 - True peak with 4× oversampling.
 - Pure TypeScript in `web/src/lib/audio/loudness.ts`, unit-tested against the EBU Tech 3341 test signals.
@@ -826,11 +834,13 @@ Lines recorded at different levels sound uneven in a scene. The director's app m
 - `gain = target − measured`, reduced if needed so the true peak stays at or below the ceiling. No limiter or compression, so dynamics stay as recorded. If the target can't be reached, the file is marked "quieter by n dB".
 - Defaults: target **−16 LUFS**, ceiling **−1 dBTP** (open question 12). Per file: `normalize: false` or `gain_db` in the manifest (§8.4.1).
 - Copies only; originals are never changed. Copies are cached in `<project>/.vrcas/normalized/`, keyed by the source SHA-256 and the settings, so unchanged files aren't processed twice.
-- Output format: WAV stays WAV. MP3 and other lossy sources are written as MP3 at 256 kbps by an in-page encoder, a second lossy generation (open question 12).
+- Output format (built): every copy is 16-bit WAV at 48 kHz with TPDF dither, mono or stereo as the source. Writing MP3 sources back as MP3 (256 kbps, in-page encoder) isn't built; it waits on open question 12.
 
 **Where it's used:**
 - **Project sync** (§8.4.1) sends the normalized copy. Inventories and the up-to-date check use the copy's SHA-256.
 - **Normalize folder** (standalone, §15.1 step 1): the director picks a folder, and the app writes normalized copies to `<folder>/normalized/` and shows a table of file, measured loudness, gain and peak. It works right away with the v0.3 director client's batch transfer.
+  - **Folder picker:** the desktop window's own dialog; in browser mode on Linux, `kdialog` (KDE) or `zenity`; otherwise a typed or pasted path.
+  - **Limits on the agent side:** it reads only audio files inside folders opened in this run, writes only `.wav` files under `normalized/` (atomically), and refuses `..` and links leading outside.
 
 **Limits:** this evens out the files, not the playback chain. Each actor's Soundpad volume (one global setting, §8.1.5), Windows mic level and VRChat mic volume still differ. A later "level check" step in the ready check could have each actor play a reference line for the director to judge by ear.
 
@@ -1731,11 +1741,12 @@ Results close the **[window test]** items in §8.5.8.
 | Web UI (`web/`, Svelte 5 + Vite, Bun) | Role onboarding (role remembered, app reopens in it), director / actor / camera views, animated node graph (stage layout, packets only while commands travel), dark / light / system theme, UI scale 75–200 % + VR mode, reduce motion, settings, activity & chat drawer, toasts, demo session | `bun test` (22), `svelte-check` 0 errors, visual checks at desktop, 140 % VR and phone width |
 | Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad named-pipe client with `-rc` fallback (live status, version info, start-latency logging), OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
 | Relay v2 and the agent's v2 client (Phase 0, built on `feat/relay-v2` 2026-10-20, merged into `feat/web-ui` 2026-10-21) | `protocol/vrcas_protocol` + generated `web/src/protocol/types.ts`; `server/`: `/v2/ws` (handshake, session ids, routing, roster with cameras, approvals, `actor.settings`, `time.pong`, relay-measured latency), the §5.5 table on both endpoints, the `/ws` bridge with scheduling emulation; `agent/relay_v2.py` + `agent/relay.py` (v2 first, compatibility mode on a 403/404) | `pytest` 552: golden transcript from the frozen v0.3.3 relay replayed byte for byte (also with a v2 camera and assistant connected), every table row × role on `/v2/ws`, mixed sessions, scheduling on a fake clock, agents end to end with scripted v0.3 clients. Separate processes on port 5601 (relay, 3 agents, scripted v0.3 director and actor): 30/30 checks. Frozen Linux build connects over v2. Manual checklist part A (2026-10-21): the real v0.3.3 director and actor and a Windows build of the agent against a test relay, all pass (OSC skipped). The live relay runs this code since 2026-10-21 (checklist part B) |
-| Agent build (`build_agent.py`) | PyInstaller, one file or one folder. Windows: windowed (pywebview + WebView2). Linux: a console program that opens the browser | Linux one-file build on CachyOS. Windows one-file build on Windows 11: window without the browser fallback, Soundpad over the pipe while frozen, `--portable`, an actor on the live `wss://` relay; a build of the relay v2 branch in the checklist (2026-10-21). Unsigned: SmartScreen blocks downloaded copies |
-| Not built yet | the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), actor output visualizer (§9.6), tray, installer, auto-update | — |
+| Agent build (`build_agent.py`) | PyInstaller, one file or one folder. Windows: windowed (pywebview + WebView2). Linux: a console program that opens the browser | Linux one-file build on CachyOS (glibc 2.35+ when built with uv's standalone Python). Windows one-file build on Windows 11: window without the browser fallback, Soundpad over the pipe while frozen (Go / Stop / `*play:N` 41–58 ms), `--portable`, an actor on the live `wss://` relay; a build of the relay v2 branch in the checklist (2026-10-21). Unsigned: SmartScreen blocks downloaded copies |
+| Not built yet | the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), actor output visualizer (§9.6), the other production helpers (§15.1 steps 2–5), tray, installer, auto-update | — |
 | Soundpad on Windows (2026-10-19) | Probe (Appendix B) and the agent's pipe client against Soundpad 4.0.35 | Relay GO / STOP and `*play:N` end to end: Soundpad played and stopped, the actor view showed Playing with position and went back to Ready; `pytest` adds 15 tests against an in-memory Soundpad |
 | VRChat window probe (§8.5.8) | `tools/vrchat_window_probe.py`: window-manager calls only, read-only by default, `--resize` / `--restore` | Windows rows of Appendix C on the test box (2026-10-19); the agent-side helper isn't built |
-| Not verified | WebView2 detection and the browser fallback on a PC without the WebView2 Runtime | The window itself works on Windows 11 (agent build row) |
+| Normalize folder (§8.4.2, 2026-10-20) | `web/src/lib/audio/` (BS.1770 loudness, 4× true peak, 16-bit WAV writer, worker), `NormalizePanel` in the director view, `agent/folders.py` + `/api/folders/*`, demo folder | EBU Tech 3341 cases 1–5 and true-peak sweeps in `bun test`; agrees with ffmpeg's `ebur128` within 0.1 LU / 0.3 dB. End to end in headless Chromium against the agent: MP3, WAV, OGG, M4A and FLAC sources; ffmpeg reads the copies at −16.0 LUFS, or −17.0 LUFS at exactly −1.0 dBTP when peak-limited. Frozen Linux build serves the endpoints |
+| Not verified | A Windows PC without WebView2 (WebView2 detection and the browser fallback); the Normalize folder dialog inside the desktop window (Windows, Linux `--window`) | The window itself works on Windows 11 (agent build row); Normalize folder's browser-mode pickers (`kdialog`, `zenity`, typed path) work |
 
 ### 20.1 Phase 0 as Built: Deviations and Decisions
 
