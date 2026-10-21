@@ -2,8 +2,15 @@
 
 **Date:** 2026-10-17 (revised 2026-10-20)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.6
+**Version:** 0.7
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.7
+
+- **Actor output visualizer** on the stage graph (§9.6): an actor's node shows a small live level display while their Soundpad is playing, so the director can see that sound is actually coming out on their line, and a "No sound" warning when Soundpad reports PLAYING but nothing is audible.
+  - The Soundpad pipe has no audio level and reports `PLAYING` before any audio (§8.1.6), so the level is measured separately on the actor's PC (Windows Core Audio peak meter). Which meter matches the `mic` line is **unconfirmed** and gets a Windows probe (Appendix B, steps 8–9).
+  - New message `soundpad.level` and capability `soundpad.level` (§5.4, §5.5, §8.1.7). Needs the v2 relay for directors; the actor's own node works anywhere (§11.3).
+  - Build order step 6 (§15.1). Design only; nothing is built.
 
 ### Changes in v0.6
 
@@ -286,7 +293,7 @@ Any action message (`soundpad.play`, `soundpad.stop`, `cue.go`, `osc.param`, `ob
 | `cue.*` | core | `go` (play selected), `stop`, `play` (index), `ack` — legacy-compatible semantics |
 | `stage.*` | core | `state` (idle / standby / rolling), stored by the server (§8.8.1) |
 | `ready.*` | core | `request`, `status`, `ping` (§8.8.2) |
-| `soundpad.*` | soundpad addon | `play`, `stop`, `pause`, `seek`, `jump`, `volume`, `mute`, `list.request`, `list`, `state`, `ack`, `calibrate` |
+| `soundpad.*` | soundpad addon | `play`, `stop`, `pause`, `seek`, `jump`, `volume`, `mute`, `list.request`, `list`, `state`, `level` (§9.6), `ack`, `calibrate` |
 | `file.*` | files addon | `offer`, `accept`, `deny`, `progress`, `end`, `ok`, `err`, `batch.start/end/cancel` (+ binary frames), `inventory.request`, `inventory` (§8.4.1) |
 | `osc.*` | osc addon | `param`, `cue.load`, `cue.ack`, `cue.fired`, `params` (discovered avatar parameters) |
 | `cuelist.*` | server storage | `save`, `get`, `list`, `delete` |
@@ -303,7 +310,7 @@ Columns are the role of the **sender**.
 |---|---|---|---|---|
 | `chat.msg`, `chat.priv` | ✅ | ✅ | ✅ | ✅ |
 | `cue.go/stop/play`, `soundpad.play/stop/pause/seek/jump/volume/mute/list.request/calibrate` | ✅ | ✅ | ❌ | ❌ |
-| `cue.ack`, `soundpad.ack/list/state` | ❌ | ❌ | ✅ | ❌ |
+| `cue.ack`, `soundpad.ack/list/state/level` | ❌ | ❌ | ✅ | ❌ |
 | `approval.approve/deny/forget`, `actor.settings` | ✅ | ❌ | ❌ | ❌ |
 | `file.offer` + chunks | ✅ | ❌ | ❌ | ❌ |
 | `file.accept/deny/ok/err/progress` | ❌ | ❌ | ✅ | ✅ |
@@ -585,14 +592,16 @@ The default is set per actor in config. The director can override it on each pla
   - After a stop, `GetPlaybackPositionInMs()` and `GetPlaybackDurationInMs()` keep the last sound's values (once 3127 ms of a 3096 ms sound), so `STOPPED` means "no position".
 - **List changes:** poll `GetSoundFileCount()` every 5 s; push `soundpad.list` when the count changes.
 - **Director UI:** a mini transport per actor with status, title, progress bar and volume.
+- **No audio level on the pipe:** the Remote Control API has no playback level (`GetRecordingPeak()` belongs to Soundpad's recorder, Appendix A). `PLAYING` plus an advancing position means the file is progressing, not that sound reaches anyone. The actor's agent therefore measures the output level itself and reports it as `soundpad.level` (§9.6).
 
 #### 8.1.7 Config and Capabilities
 
-- **Config:** `enabled`, `path`, `auto_launch`, `default_lines`, `auto_add_received`, `auto_compensate_latency`.
+- **Config:** `enabled`, `path`, `auto_launch`, `default_lines`, `auto_add_received`, `auto_compensate_latency`, `level_meter` (on by default, §9.6.5), `silent_after_ms` (§9.6.1).
 - **Capabilities:**
   - `soundpad` (play/stop)
   - `soundpad.lines`, `soundpad.position`, `soundpad.list` (pipe available)
   - `soundpad.add` (full version)
+  - `soundpad.level` (a working output meter was found, §9.6.3)
 
 ### 8.2 Timing and Delay Compensation
 
@@ -1180,6 +1189,108 @@ registerPanel({
 - Banners for "app disconnected" and "relay disconnected", with reconnect.
 - State is restored from `GET /api/state` or `presence.roster`.
 
+### 9.6 Stage Graph: Actor Output Visualizer
+
+**Goal:** on the stage graph, an actor's node shows a small live level display while their Soundpad plays, so the director can see that sound is **actually coming out** when it's the actor's turn for a line. If Soundpad says `PLAYING` but nothing is audible, the node says so.
+
+**Why not just show `PLAYING`:** the status reads `PLAYING` 5–6 ms after the command, before any audio (§8.1.6). It also stays `PLAYING` with the volume at 0, with the wrong output device, or with a muted line (mute on the mic line is unconfirmed, §8.1.5). The pipe has no level call, so the agent measures the level itself (§9.6.3).
+
+**Rule: never fake it.** Bars are drawn only from measured samples. With no meter, the node keeps today's status-only look (§9.6.6).
+
+#### 9.6.1 What the Director Sees
+
+One state per actor node, decided on the **actor's agent** so every viewer sees the same thing:
+
+| State | When | Node |
+|---|---|---|
+| Idle | `STOPPED`, no cue waiting | Unchanged. No visualizer |
+| Cued | A cue arrived (`cue.ack`) and no audio yet. Normally under 0.1 s (§8.2.3); seconds with a scheduled start or the 3 s countdown (§8.2.2) | Slow pulse in the actor colour, flat bars |
+| Playing | `PLAYING` and an audible sample (level above the floor) | Bars follow the level; the halo brightens with it |
+| No sound | `PLAYING`, position advancing, and no audible sample in the first `silent_after_ms` (default 2000) after the position started moving | Flat amber line; sub text **No sound**, or the cause when Soundpad's state shows it: **Volume is 0**, **Muted**. Clears as soon as sound is heard |
+| Paused | `PAUSED` | Bars frozen and dimmed; sub text **Paused** |
+| Level unknown | No working meter (§9.6.6) | Today's look: halo, **Playing**, progress arc. No bars |
+
+- **Natural pauses aren't flagged.** "No sound" only covers the start of a play: once sound has been heard, a gap in the performance doesn't warn. A file that opens with more than `silent_after_ms` of silence does trigger it (open question 17).
+- **Whose turn:** every actor a cue targets runs its own state at the same time. The cue's packet animation to the node already marks the turn; the visualizer shows what happened next.
+- The director gets no popup for "No sound" by default. It is on the node, and in the cast list row. (A headset or toast alert is open question 18.)
+
+#### 9.6.2 Drawing It
+
+- **Bars:** a short row of 5 thin bars under the node's circle, between the circle and the name. Each bar is one level sample, scrolling right to left over about 1 s. There is one number per sample, so it's a rolling level trace, **not** a spectrum analyser.
+  - Bar height follows the level on a dB scale. Fast attack (~50 ms) and slow release (~300 ms), applied in the UI only.
+  - The halo's opacity follows the smoothed level, so activity still reads when the bars are too small (phone width, small nodes). Below a size threshold only the halo and the arc show.
+- **Progress arc:** a thin arc around the ring from `position_ms / duration_ms` (already in `soundpad.state`).
+- **Same data elsewhere:** the cast list row (`CastPanel`) shows the state text and the same bars. The actor's **own** node shows its own bars from local data, with no relay involved.
+- **UI rules (as for the rest of the UI):**
+  - Sizes in `rem`; new colour tokens (`--level-ok`, `--level-silent`) in `app.css` for both themes.
+  - Colour is never the only signal: the sub text and the `aria-label` carry the state. The label updates on state changes, not on every sample.
+  - `[data-motion="reduce"]`: no scrolling or pulse; one static meter bar, redrawn at most twice a second.
+  - A UI preference **Show output meters** (default on) hides the bars for people who find the motion distracting; the text states stay.
+
+#### 9.6.3 Measuring the Level (Actor Agent, Windows)
+
+- **Mechanism:** Windows Core Audio peak meters (`IAudioMeterInformation::GetPeakValue`). Reading a peak meter opens no audio stream and records nothing.
+- **When:** sample every 50 ms only while Soundpad is `PLAYING`, `SEEKING` or `PAUSED`, plus a 1 s tail. No polling while idle.
+- **Which meter**, by the output line (§8.1.4):
+
+| `lines` | Who hears it | Meter (proposed) |
+|---|---|---|
+| `speakers` | The actor | Soundpad's own audio session on the playback device (per-process meter through `IAudioSessionManager2`) |
+| `mic` | The audience in VRChat | Whatever carries Soundpad's microphone line: **unconfirmed** which device or session that is |
+| `both` | Both | The `mic` meter, because what the audience hears matters most; the speakers session if there's none |
+
+- **Per-process first.** A session meter hears only Soundpad, not VRChat or other apps. A meter on a microphone *endpoint* is used only if the probe shows that Soundpad's line has a device to itself. If the actor's real voice is mixed into the same device, the meter would light up for live speech and call it Soundpad output.
+- **Level value:** the peak of each 125 ms window, converted to dBFS and mapped from −60…0 dBFS to an integer 0…100. **Audible** means at least −50 dBFS (proposed; tuned in the probe, above the noise of the virtual device).
+- **Source label:** the agent reports `source` (`soundpad-session`, `mic-endpoint`, `none`). The node's tooltip shows what is being measured ("Meter: Soundpad speakers"), so nobody reads a speakers meter as proof that the audience heard it.
+- **Unconfirmed [Windows check]:**
+  - which meter matches each line, above all `mic` (§8.1.4);
+  - whether the meter reads before or after Soundpad's volume and the Windows volume. If before, volume 0 would still show bars, and the agent would then report "No sound / Volume is 0" from the Soundpad state instead of from the meter;
+  - whether reading a capture-endpoint meter trips Windows' microphone privacy indicator or setting;
+  - which library to use (`pycaw` is a thin wrapper over the same COM calls, or `ctypes` directly), and whether it bundles cleanly with PyInstaller.
+
+#### 9.6.4 Message and UI Contract
+
+- **Fast samples:** `soundpad.level {level, source}` from the actor to directors and assistants only (§5.5), at most 8 per second, only while playing, ending with one `{level: 0}`.
+  - Samples are lossy and never queued: if the connection is busy, the agent drops a sample rather than delay a `cue.ack` or any real message.
+  - Roughly 50 small messages a second in total when six actors play at once.
+- **Slow state:** `soundpad.state` (§8.1.6) gains `output: "cued" | "audible" | "silent" | "unknown"` and an optional `output_cause: "volume_zero" | "muted"`, sent on change like the rest of the state.
+- **Capability** `soundpad.level` (§8.1.7). Directors draw bars only for actors that advertise it.
+- **Not for timing.** What the director sees is late by RTT/2 plus up to 125 ms. It answers "is sound coming out", not "when did it start"; timing stays with §8.2.3 and §8.3.4.
+- **UI contract** (all three sides change together, as in `AGENTS.md`):
+  - `web/src/lib/protocol.ts`: `Peer` gains `output: {state, cause, source} | null`. Fast samples arrive as a separate event (`level {peerId, level, t}`) like the log and traffic events, **not** in the snapshot, so the whole state isn't re-sent 8 times a second.
+  - `agent/core.py`: `snapshot()` fills `output`; the meter publishes `level` events through the hub. The actor's own node is fed directly.
+  - `web/src/lib/demo/session.ts`: the demo session simulates a speaking actor and one whose volume is 0, so every state can be seen with `?demo=director`.
+  - `web/src/lib/graph/level.ts` (new, pure, unit-tested like `layout.ts`) holds the smoothing and the sample history; `NodeGraph.svelte` only draws. `GraphNodeSpec` gains `output`. The per-node sample buffer is mutable like node positions, so template reads go through the `frame` counter.
+
+#### 9.6.5 Settings and Privacy
+
+- **`level_meter`** (soundpad config, §8.1.7): on by default. An actor can turn it off in Settings, which says: "Lets the director see whether your Soundpad is making sound. Sends a loudness number only, never audio, and never from your microphone." Off shows **Meter off** on the node and falls back to the status-only look.
+- **Only Soundpad's output is measured.** The session meter is picked by Soundpad's process; the actor's real microphone and other apps are never read.
+- **What leaves the PC:** an integer 0–100, up to 8 times a second, while Soundpad plays. It can't be turned back into audio. It does show how loud Soundpad's sound is over time (a line's rhythm), not its content.
+- **`silent_after_ms`** (default 2000) is soundpad config on the actor's PC (§8.1.7), because the agent decides "No sound". Whether the director should set it per actor through `actor.settings` is open question 17.
+
+#### 9.6.6 Fallbacks
+
+| Situation | Result |
+|---|---|
+| Linux or macOS actor, or Soundpad simulated | No meter. Status-only look |
+| No usable meter for the chosen `lines` (for example `mic` before the probe), or `level_meter` off | Capability not advertised, or `output: "unknown"`. Status-only look; the node says so in its tooltip |
+| Legacy v0.3 actor (tkinter) | No capability. Status-only, as today |
+| Compatibility mode (v0.3 relay) | A director sees no remote levels: the pipe protocol has nowhere to put them, and chat text would appear in v0.3 clients (§11.3). The actor's **own** node works fully |
+
+**Alternatives rejected:**
+- *Animate the bars from `PLAYING` alone.* It would show activity exactly when nothing is audible, which is the case the director needs to catch.
+- *Soundpad's `GetRecordingPeak()`.* It belongs to Soundpad's recorder; using it would mean starting recordings on the actor's Soundpad.
+- *WASAPI loopback of the whole playback device.* It hears every app and captures audio, where a peak meter reads one number.
+- *Streaming the audio to the director.* That is the stream addon (§8.6), heavier, and a level is enough for "is it coming out".
+
+#### 9.6.7 Testing
+
+- `pytest`: the state machine (cued → audible → silent → paused), the floor and `silent_after_ms`, cause hints, rate limiting and dropping, all with a fake meter, like the fake pipe transport.
+- `bun test`: `level.ts` smoothing, history and the reduced-motion path.
+- Visual check on the demo session at desktop, 140 % VR and phone width, in both themes.
+- **Windows only, can't be exercised on Linux:** the Core Audio meter itself. Appendix B steps 8–9.
+
 ---
 
 ## 10. Packaging, Installs and Updates
@@ -1268,6 +1379,7 @@ registerPanel({
 | Legacy and new actors in one take | Both work. Timing on legacy actors is network-accurate; on new actors it is clock-synced |
 | New app → v0.3.x server | Compatibility mode (§5.6): the agent speaks the pipe protocol. Directors cue by `PRIV *go` per targeted actor, like the v0.3 director; actors decline `FILEREQ` with a reason |
 | New features → legacy clients | The bridge shows `stage.state` to legacy clients as a chat line (`[stage] Standby`, §8.8.1). `ready.*` and `file.inventory*` aren't translated: legacy actors show "no ready check" and an unknown sync status, and still receive files through the bridge |
+| Output visualizer (§9.6) | `soundpad.level` has no pipe-protocol equivalent and isn't translated. Legacy actors have no meter, so their nodes keep the status-only look. In compatibility mode a v0.4 director sees no remote levels; an actor's own node works |
 
 ### 11.4 Migration Path for Existing Installs
 
@@ -1333,6 +1445,7 @@ registerPanel({
 | **New:** project folder sync (`vrcactorsync.yml`) | files addon (§8.4.1) | §15.1 step 3 |
 | **New:** ready check with ping | `ready.*` (§8.8.2) | §15.1 step 4 |
 | **New:** avatar-menu and Stream Deck / MIDI triggers | control addon (§8.9) | §15.1 step 5 |
+| **New:** actor output visualizer on the stage graph, "No sound" warning | soundpad addon + web UI (§9.6) | §15.1 step 6 |
 | **Future:** P2P camera preview | stream addon | later |
 | **Future:** scene list, post-production export, "your line next" | — | later (§14) |
 
@@ -1379,8 +1492,10 @@ Agreed on 2026-10-20. Rough estimates for one developer, on top of the phases ab
 | 3 | **Project folder sync** (§8.4.1) with loudness matching on send | Phase 2 (files addon) | ~1–1.5 weeks |
 | 4 | **Ready check and ping** (§8.8.2) | Phase 0 (v2 relay) | ~3–4 days |
 | 5 | **Control input** (§8.9): avatar menu with OSCQuery and a VRCFury prefab, Companion endpoint | step 4 for Ready | ~1–1.5 weeks |
+| 6 | **Actor output visualizer** (§9.6): Windows probe of the meters first, then the agent meter, `soundpad.level`, the node display and the demo session | Phase 2 (Soundpad status); Windows test box; v2 relay for directors | ~3–5 days, plus the probe session |
 
 - Steps 1 and 2 don't need the v2 relay and can ship in the current preview.
+- Step 6 can start with the pure parts (state machine, `level.ts`, demo session, node drawing) on Linux. The meter and the `mic`-line question wait for the probe. An actor's own node works on the current relay; directors seeing other actors needs the v2 relay.
 - Later (§14): scene list, post-production export, "your line next".
 
 ---
@@ -1412,6 +1527,11 @@ Agreed on 2026-10-20. Rough estimates for one developer, on top of the phases ab
 | Accidental avatar-menu press | Unwanted Go | Go only during Standby by default; confirmation in the headset (§8.9.1) |
 | Loudness matching evens out intended differences (whispers, quiet SFX) | Wrong mix | Per-file `normalize: false` and `gain_db`; originals untouched (§8.4.2) |
 | The app rewrites a hand-edited manifest | Lost edits | Round-trip YAML, re-read before writing, atomic write, refuse on parse errors (§8.4.1) |
+| No usable meter for Soundpad's `mic` line | Director can't see what the audience hears | Probe first (Appendix B step 8); fall back to the speakers session or `unknown` and say so on the node (§9.6.3, §9.6.6) |
+| A microphone-endpoint meter also carries the actor's live voice | Shows "audible" for speech, not Soundpad | Per-process session meter first; endpoint meter only if Soundpad's line has its own device (§9.6.3) |
+| Speakers meter taken as proof the audience heard it | False confidence | Source label on the node, `both` prefers the mic meter (§9.6.3) |
+| "No sound" false alarm on a file that starts with silence | Director chases a non-problem | Warn only at the start of a play, `silent_after_ms` (§9.6.1); open question 17 |
+| Level samples crowd real cue traffic | Delayed cues | Lossy, never queued, at most 8 per second, only while playing (§9.6.4) |
 
 ---
 
@@ -1449,6 +1569,9 @@ Agreed on 2026-10-20. Rough estimates for one developer, on top of the phases ab
 14. **Avatar-menu Go (§8.9.1):** only during Standby (proposed), or always?
 15. **Project auto-sync (§8.4.1):** off, with a Sync button (proposed), or on?
 16. **Manifest name (§8.4.1):** `vrcactorsync.yml` (proposed, visible) or `.vrcactorsync.yml` (hidden by file browsers)?
+17. **"No sound" timing (§9.6.1):** 2 s after the position starts moving (proposed), and set on each actor's PC (proposed) or per actor by the director through `actor.settings`? Lines that open with long silence need a longer value.
+18. **"No sound" alert (§9.6.1):** only on the node and cast row (proposed), or also a toast for the director and a headset message (§8.7)?
+19. **Meter on the `mic` line (§9.6.3):** if no meter for it exists, is the speakers meter shown for `both` with its source label (proposed), or is the node left at `unknown`?
 
 ---
 
@@ -1465,6 +1588,7 @@ Agreed on 2026-10-20. Rough estimates for one developer, on top of the phases ab
 - [ ] Any approved actor sending a cue or `PRIV *go` to another actor is rejected
 - [ ] The director pushes an OBS profile to 3 cameras and gets `compliant` or a precise diff; Roll/Cut produces a take-log CSV
 - [ ] On Windows, one click matches a camera operator's VRChat window to the profile resolution, and the director sees `matched` or the actual size
+- [ ] An actor plays a line on `both`: the director's graph shows that actor's bars moving with the sound and returning to idle at the end. With Soundpad volume 0, the node says **No sound** within `silent_after_ms` and clears when the volume is raised
 - [ ] The local agent rejects a foreign `Host`/`Origin` or a missing token
 - [ ] The §12 test suite runs in CI
 
@@ -1534,6 +1658,8 @@ Source: Leppsoft's `SoundpadRemoteControl.java` (client version 1.1.2), which Le
 | 5 | `python tools\soundpad_probe.py --add C:\path\test.mp3` (full version) | `DoAddSound` works; the new entry's `url`/`index` |
 | 6 | `python tools\soundpad_probe.py --cli` | CLI cost compared with the pipe |
 | 7 | Reorder sounds in Soundpad, run step 1 again | Index drift: indices change, `url` stays |
+| 8 | Output meters (§9.6.3): play a long sound with `--line speakers`, then `mic`, then `both`. For each, read the peak of Soundpad's audio session on the playback device and of each capture endpoint (a small addition to the probe) | Which meter moves for which line; whether Soundpad's microphone line has a device or session of its own; whether the actor's real voice shares it; sampling cost at 50 ms |
+| 9 | Same plays at Soundpad volume 0 and 100, with Windows' per-app volume lowered, and once muted; also check whether reading a capture-endpoint meter trips the Windows microphone privacy indicator | Whether the meter reads before or after volume (decides if "No sound / Volume is 0" must come from the Soundpad state); the audible floor above the device's noise; the privacy behaviour |
 
 Send the JSON files back. Results update Appendix A, close the **[probe]** items, and set the defaults for latency compensation.
 
@@ -1592,7 +1718,7 @@ Results close the **[window test]** items in §8.5.8.
 |---|---|---|
 | Web UI (`web/`, Svelte 5 + Vite, Bun) | Role onboarding (role remembered, app reopens in it), director / actor / camera views, animated node graph (stage layout, packets only while commands travel), dark / light / system theme, UI scale 75–200 % + VR mode, reduce motion, settings, activity & chat drawer, toasts, demo session | `bun test` (22), `svelte-check` 0 errors, visual checks at desktop, 140 % VR and phone width |
 | Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad named-pipe client with `-rc` fallback (live status, version info, start-latency logging), OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
-| Not built yet | v2 relay and protocol package, the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), tray, installer, auto-update, PyInstaller build of the agent | — |
+| Not built yet | v2 relay and protocol package, the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), actor output visualizer (§9.6), tray, installer, auto-update, PyInstaller build of the agent | — |
 | Soundpad on Windows (2026-10-19) | Probe (Appendix B) and the agent's pipe client against Soundpad 4.0.35 | Relay GO / STOP and `*play:N` end to end: Soundpad played and stopped, the actor view showed Playing with position and went back to Ready; `pytest` adds 15 tests against an in-memory Soundpad |
 | VRChat window probe (§8.5.8) | `tools/vrchat_window_probe.py`: window-manager calls only, read-only by default, `--resize` / `--restore` | Windows rows of Appendix C on the test box (2026-10-19); the agent-side helper isn't built |
 | Not verified | pywebview window and WebView2 detection on Windows | Needs the Windows test box |
