@@ -68,12 +68,12 @@
 
   const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+  /** v0.4 actors announce `files`; v0.3 actors receive through the relay's bridge. */
   function canReceive(p: Peer): boolean {
-    return p.status === "online" && p.caps.includes("files");
+    return p.status === "online" && (p.caps.includes("files") || p.caps.includes("legacy"));
   }
 
   function whyNot(p: Peer): string {
-    if (p.caps.includes("legacy")) return "v0.3 app";
     if (p.status !== "online") return "offline";
     return "app too old";
   }

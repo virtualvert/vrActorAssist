@@ -7,8 +7,8 @@ top of that:
 - v0.3 messages are checked against the permission table (permissions.py) and translated for
   v2 recipients; v2 messages are translated for v0.3 recipients (`deliver`).
 - A v2 message with `at` is held for a v0.3 actor until fire_at − RTT/2 (scheduling emulation).
-- v0.3 ↔ v0.3 file transfers work as before. Files between v0.3 and v2 wait for the files addon:
-  a v0.3 director's FILEREQ to a v2 actor is declined with a reason.
+- v0.3 ↔ v0.3 file transfers work as before. Files between v0.3 and v2 are translated by
+  file_bridge.py (FILEREQ … FILEEND, BATCH_* ⇄ file.* and binary chunks).
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from shared import format_message, parse_message
 from vrcas_protocol import Envelope
 
 from . import permissions
+from .file_bridge import FileBridge
 from .permissions import LEGACY_NOTICE_TYPES, is_cue_text
 from .sessions import Session
 from .updates import compare_versions
@@ -123,6 +124,7 @@ def to_legacy(env: Envelope, sender: Session, recipient: Session) -> str | None:
 class LegacyBridge:
     def __init__(self, relay: "Relay"):
         self.relay = relay
+        self.files = FileBridge(relay)
 
     @property
     def log(self):
@@ -284,6 +286,8 @@ class LegacyBridge:
             s = self._first_actor(target)
             if s is not None and s.legacy:
                 await s.send_text(data)
+            elif s is not None:
+                await self.files.legacy_batch(session, s, msg_type, msg_data)
 
         elif msg_type == "APPROVE":
             machine_id = msg_data.get("machine_id")
@@ -342,12 +346,14 @@ class LegacyBridge:
             if s is None:
                 return
             if not s.legacy:
-                # Until the files addon exists there's no way to pass files to v2 actors
-                await session.send_text(format_message("FILEDENY", filename=filename,
-                    reason=f"{s.name} uses vrcActorSync 0.4, which can't receive files from a v0.3 director yet"))
+                await self.files.legacy_request(session, s, msg_data)
                 return
             transfers[filename] = (session, s)
             await s.send_text(data)
+        elif msg_type in ("FILESTART", "FILECHUNK", "FILEEND") and await self.files.legacy_data(session, msg_type, msg_data):
+            return  # a file on its way to a v2 actor
+        elif msg_type in ("FILEACK", "FILEDENY", "FILEOK", "FILEERR") and await self.files.legacy_actor_reply(session, msg_type, msg_data):
+            return  # a v0.3 actor answering a v2 director
         elif filename in transfers:
             director, actor = transfers[filename]
             if msg_type in ("FILEACK", "FILEDENY", "FILEOK", "FILEERR"):
@@ -368,6 +374,7 @@ class LegacyBridge:
             if info.session is session:
                 del relay.pending[machine_id]
         self.cancel_held(session)
+        asyncio.create_task(relay.files.session_gone(session))
         if session.approved and session.role == "actor":
             asyncio.create_task(self.send_user_list())
             if session.name:
@@ -480,6 +487,8 @@ class LegacyBridge:
     async def deliver(self, env: Envelope, sender: Session, recipient: Session) -> bool:
         """Send a v2 message to a v0.3 client. Returns False if it's an action the client can't
         carry (the sender gets `unsupported`). Messages with nothing to show are skipped."""
+        if env.type.startswith("file."):
+            return await self.files.deliver(env, sender, recipient)
         try:
             text = to_legacy(env, sender, recipient)
         except (Unsupported, KeyError, TypeError, ValueError):

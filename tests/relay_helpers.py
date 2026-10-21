@@ -104,6 +104,15 @@ class V2:
     def roster(self) -> dict:
         return self.until("presence.roster")["data"]
 
+    def next_chunk(self) -> bytes:
+        """The next binary frame (a file chunk); envelopes on the way are kept in .seen."""
+        while True:
+            message = self.ws.receive()
+            if message.get("bytes") is not None:
+                return message["bytes"]
+            if message.get("text") is not None:
+                self.seen.append(json.loads(message["text"]))
+
 
 def connect_v2(client: TestClient, stack: ExitStack, role: str, name: str, machine_id: str, *, secret: str | None = None,
                version: str = "0.4.0-dev", platform: str = "windows-x64", capabilities: list[str] | None = None,

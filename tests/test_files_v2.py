@@ -128,14 +128,18 @@ def test_offer_goes_to_exactly_one_session(tmp_path, stack, to, code):
     assert relay.files.by_id == {}
 
 
-def test_offer_to_a_v03_actor_is_unsupported(tmp_path, stack):
+def test_offer_to_a_v03_director_is_unsupported(tmp_path, stack):
+    # v0.3 actors receive through the bridge (tests/test_files_bridge.py); v0.3 directors can't
     client, relay = session(stack, tmp_path)
     d = join(client, stack, "director", "Mira", "m-dir")
-    connect_legacy(client, stack, "actor", "Lex", "m-old")
-    lex = next(s for s in relay.registry if s.name == "Lex")
-    d.send("file.offer", OFFER, to={"ids": [lex.id]})
-    err = errors(d)
-    assert err[0]["code"] == "unsupported" and err[0]["ids"] == [lex.id]
+    connect_legacy(client, stack, "director", "Old", "m-olddir")
+    old = next(s for s in relay.registry if s.name == "Old")
+    d.send("file.offer", OFFER, to={"ids": [old.id]})
+    got = d.sync()
+    err = [e["data"] for e in got if e["type"] == "error"]
+    assert err[0]["code"] == "unsupported" and err[0]["ids"] == [old.id]
+    # and a file.err the sending agent can tie to its transfer
+    assert [e["data"]["transfer_id"] for e in got if e["type"] == "file.err"] == [TID]
     assert relay.files.by_id == {}
 
 

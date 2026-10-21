@@ -160,7 +160,8 @@ def test_v03_osc_chat_and_files_to_v2_actor(client, stack):
     assert [e["data"]["text"] for e in got if e["type"] == "chat.priv"] == ["You're up next"]
     assert not any(e["type"].startswith("file.") for e in got)
     director_got = old_dir.sync()
-    assert "FILEDENY|line.wav|Ari uses vrcActorSync 0.4, which can't receive files from a v0.3 director yet" in director_got
+    # Ari's app doesn't announce `files` (a build from before Phase 2): declined with a reason
+    assert "FILEDENY|line.wav|Ari uses an older vrcActorSync 0.4 preview; update it to receive files" in director_got
     assert client.app.state.relay.transfers == {}
 
 
