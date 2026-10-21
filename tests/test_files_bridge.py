@@ -316,3 +316,11 @@ def test_v2_director_leaving(client, stack):
         lex.until("FILEREQ|")
     assert lex.until("BATCH_CANCEL|") == "BATCH_CANCEL|Lex|Mira disconnected"
     assert relay_of(client).files.by_id == {} and relay_of(client).bridge.files.to_legacy == {}
+
+
+def test_cancel_without_a_reason_uses_the_v03_wording(client, stack):
+    d, lex, lex_id = setup_b(client, stack)
+    d.send("file.batch.start", {"batch_id": "b1", "files": 2, "bytes": 8}, to={"ids": [lex_id]})
+    offer_b(d, lex_id, b"data")
+    d.send("file.batch.cancel", {"batch_id": "b1"}, to={"ids": [lex_id]})
+    assert frames(lex, "BATCH_CANCEL|") == ["BATCH_CANCEL|Lex|Cancelled by director"]

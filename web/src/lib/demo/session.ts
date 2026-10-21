@@ -540,7 +540,7 @@ export class DemoSession {
     for (const each of ids) {
       if (!this.#sending.has(each)) continue;
       const name = this.state.director?.files.batches.find((b) => b.id === each)?.actorName ?? "";
-      this.#endBatch(each, "cancelled", "Cancelled by the director");
+      this.#endBatch(each, "cancelled", "Cancelled by director");
       this.#log("warning", `Files to ${name} cancelled`);
     }
   }

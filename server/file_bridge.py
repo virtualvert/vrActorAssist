@@ -254,7 +254,7 @@ class FileBridge:
                 if actor is recipient and transfer.batch_id == data.get("batch_id"):
                     self.to_legacy.pop((actor, name), None)
             await recipient.send_text(format_message("BATCH_CANCEL", target=recipient.name,
-                                                     reason=clean(data.get("reason") or "Cancelled by the director")))
+                                                     reason=clean(data.get("reason") or "Cancelled by director")))
             return True
         return True
 

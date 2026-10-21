@@ -46,6 +46,8 @@ DISK_MARGIN = 50 * 1024 * 1024
 STALL_TIMEOUT_S = 60.0
 RESULT_TIMEOUT_S = 120.0
 MAX_NAME = 200
+# The v0.3.3 director's own words; v0.3 actors show "Batch cancelled by director: <reason>"
+CANCEL_REASON = "Cancelled by director"
 HASH_BLOCK = 1024 * 1024
 
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
@@ -632,7 +634,7 @@ class Sender:
                 if item.state in ("queued", "offered", "sending"):
                     item.state = "cancelled"
             try:
-                await files.send("file.batch.cancel", {"batch_id": batch.id, "reason": batch.detail or "Cancelled by the director"}, to)
+                await files.send("file.batch.cancel", {"batch_id": batch.id, "reason": batch.detail or CANCEL_REASON}, to)
             except RuntimeError:
                 pass
             self.log("warning", f"Files to {batch.actor_name} cancelled" + (f" ({current.name})" if current else ""))
