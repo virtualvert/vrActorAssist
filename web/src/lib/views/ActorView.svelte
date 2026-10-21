@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { AudioLines, Radio, Zap } from "@lucide/svelte";
+  import { AudioLines, Check, FileDown, FolderOpen, Radio, X, Zap } from "@lucide/svelte";
   import { onDestroy } from "svelte";
+  import Button from "../components/Button.svelte";
   import ConnectBanner from "../components/ConnectBanner.svelte";
   import Toggle from "../components/Toggle.svelte";
-  import { ago, mediaTime } from "../format";
+  import { ago, fileSize, mediaTime, percent } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
   import type { AppState } from "../protocol";
   import { app } from "../state.svelte";
@@ -49,6 +50,29 @@
     return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
   });
 
+  const files = $derived(actor?.files ?? null);
+  const asking = $derived(files?.incoming.filter((f) => f.state === "asking") ?? []);
+  const receiving = $derived(files?.incoming.filter((f) => f.state === "receiving") ?? []);
+
+  // A new prompt scrolls into view: the card sits at the top and the page may be scrolled down
+  let offersEl = $state<HTMLElement | undefined>();
+  let promptCount = 0;
+  $effect(() => {
+    const count = asking.length;
+    if (count > promptCount && offersEl) {
+      const still = document.documentElement.dataset.motion === "reduce";
+      offersEl.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+    }
+    promptCount = count;
+  });
+
+  /** Files left in the batch, this one included. */
+  const left = (f: { index: number | null; count: number | null }) => (f.index && f.count ? f.count - f.index + 1 : 1);
+
+  function answer(transferId: string, accept: boolean, extra: { rest?: boolean; always?: boolean } = {}) {
+    void app.call({ call: "answerFile", args: { transferId, accept, ...extra } });
+  }
+
   const SP_LABEL = { ready: "Ready", fallback: "Command line", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
   const STATUS_LABEL = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;
 
@@ -61,6 +85,33 @@
 <div class="wrap">
   <div class="view">
     <div class="banner-slot"><ConnectBanner /></div>
+
+    {#if asking.length}
+      <section class="offers card card-pad" aria-label="Files waiting for your answer" aria-live="polite" bind:this={offersEl}>
+        {#each asking as f (f.transferId)}
+          <div class="offer">
+            <span class="tool-icon role-director"><FileDown size="1.3em" /></span>
+            <div class="offer-text">
+              <strong>{f.from} wants to send {f.name}</strong>
+              <span class="small muted">
+                {fileSize(f.size)}{f.character ? ` · for ${f.character}` : ""}{f.count ? ` · file ${f.index} of ${f.count}` : ""}
+              </span>
+              {#if f.replaces}<span class="small warn-text">A file with this name is already in your folder; accepting replaces it.</span>{/if}
+            </div>
+            <div class="offer-actions">
+              <Button variant="primary" onclick={() => answer(f.transferId, true)}><Check size="1.1em" /> Accept</Button>
+              {#if left(f) > 1}
+                <Button variant="subtle" onclick={() => answer(f.transferId, true, { rest: true })}>Accept all {left(f)}</Button>
+              {/if}
+              <Button variant="ghost" onclick={() => answer(f.transferId, false)}><X size="1.1em" /> Decline</Button>
+            </div>
+          </div>
+        {/each}
+        <button type="button" class="link small" onclick={() => answer(asking[0].transferId, true, { always: true })}>
+          Accept these and future files automatically
+        </button>
+      </section>
+    {/if}
 
     <section class="hero card {hero.tone}" aria-live="polite">
       <div class="orb" aria-hidden="true">
@@ -133,6 +184,53 @@
           onchange={(oscEnabled) => app.call({ call: "setActorLocal", args: { oscEnabled } })}
         />
       </section>
+
+      {#if files}
+        <section class="card card-pad tool files">
+          <div class="tool-head">
+            <span class="tool-icon role-director"><FileDown size="1.3em" /></span>
+            <div>
+              <h3>Files from the director</h3>
+              <span class="chip">{files.autoAccept ? "Accepted automatically" : "You're asked first"}</span>
+            </div>
+          </div>
+          <div class="folder-row">
+            <span class="mono small path" title={files.receiveDir}>{files.receiveDir}</span>
+            {#if app.kind === "agent"}
+              <Button size="s" variant="subtle" onclick={() => app.call({ call: "pickReceiveDir" })}><FolderOpen size="1em" /> Change…</Button>
+            {/if}
+          </div>
+          {#each receiving as f (f.transferId)}
+            <div class="transport" aria-label="Receiving {f.name}">
+              <div class="transport-row">
+                <span class="track">{f.name}</span>
+                <span class="mono small">{percent(f.receivedBytes, f.size)} %</span>
+              </div>
+              <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent(f.receivedBytes, f.size)}>
+                <span style:width="{percent(f.receivedBytes, f.size)}%"></span>
+              </div>
+            </div>
+          {/each}
+          {#if files.recent.length}
+            <ul class="recent">
+              {#each files.recent.slice(0, 5) as r, i (i)}
+                <li class:fail={!r.ok}>
+                  <span class="track">{r.name}</span>
+                  <span class="small faint">{r.ok ? "Saved" : "Not saved"}{r.detail ? ` · ${r.detail}` : ""} · {ago(r.at, now)}</span>
+                </li>
+              {/each}
+            </ul>
+          {:else if !receiving.length}
+            <p class="faint small">Files the director sends land in this folder.</p>
+          {/if}
+          <Toggle
+            checked={files.autoAccept}
+            label="Accept files automatically"
+            description="Without asking, and replacing files that have the same name"
+            onchange={(autoAcceptFiles) => app.call({ call: "setActorLocal", args: { autoAcceptFiles } })}
+          />
+        </section>
+      {/if}
     {/if}
   </div>
 </div>
@@ -149,9 +247,11 @@
     grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
     grid-template-areas:
       "banner banner"
+      "offers offers"
       "hero stage"
-      "sp osc";
-    grid-template-rows: auto minmax(20rem, 1fr) auto;
+      "sp osc"
+      "files files";
+    grid-template-rows: auto auto minmax(20rem, 1fr) auto auto;
     gap: var(--gap);
     min-height: 100%;
     padding: var(--gap);
@@ -300,6 +400,91 @@
     grid-area: osc;
   }
 
+  .tool.files {
+    grid-area: files;
+  }
+
+  .offers {
+    grid-area: offers;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  }
+
+  .offer {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+  }
+
+  .offer-text {
+    flex: 1 1 16rem;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    overflow-wrap: anywhere;
+  }
+
+  .offer-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .warn-text {
+    color: var(--warn);
+  }
+
+  .link {
+    align-self: flex-start;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent);
+    text-decoration: underline;
+    cursor: pointer;
+    min-height: var(--target);
+  }
+
+  .folder-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+
+  .folder-row .path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .recent {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .recent li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    min-width: 0;
+  }
+
+  .recent li.fail .track {
+    color: var(--warn);
+  }
+
   .tool-head {
     display: flex;
     align-items: center;
@@ -376,8 +561,8 @@
   @container (max-width: 56rem) {
     .view {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-areas: "banner" "hero" "stage" "sp" "osc";
-      grid-template-rows: auto auto 20rem auto auto;
+      grid-template-areas: "banner" "offers" "hero" "stage" "sp" "osc" "files";
+      grid-template-rows: auto auto auto 20rem auto auto auto;
     }
 
     .hero {

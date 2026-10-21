@@ -54,6 +54,13 @@ class Session:
         except Exception:
             return False
 
+    async def send_bytes(self, data: bytes) -> bool:
+        try:
+            await self.websocket.send_bytes(data)
+            return True
+        except Exception:
+            return False
+
     async def close(self, code: int = 1000) -> None:
         try:
             await self.websocket.close(code=code)

@@ -2,8 +2,12 @@
 
 **Date:** 2026-10-17 (revised 2026-10-21)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.9
+**Version:** 0.10
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.10
+
+- Phase 2 milestone M1a built on branch `feat/phase2-files` (plan: `docs/superpowers/plans/2026-10-21-phase2-plan.md`): files between v0.4 apps over `/v2/ws` (§8.4, §5.7), with binary chunk frames, a transfer table in the relay, Send files for directors and the accept prompt for actors. Choices are in §20.2.
 
 ### Changes in v0.9
 
@@ -370,6 +374,7 @@ server → welcome {session_id, server_version, version_status, server_time, del
 - Transfers are keyed by transfer UUID. Chunks are 256 KiB; integrity is SHA-256 in `file.end`.
 - Flow control: at most 8 unacknowledged chunks are in flight, acknowledged with `file.progress`.
 - Batches and cancel keep their v0.3.0 semantics.
+- As built (§20.2): `chunk_size` is declared in each `file.offer` (256 KiB from v0.4 apps), an offer goes to exactly one session, and the relay passes chunks only from the offer's sender to its recipient after `file.accept`.
 
 ### 5.8 Schema Source of Truth
 
@@ -768,6 +773,7 @@ VRChat voice delay to each listener varies per listener and isn't measurable loc
 - **Send:** in the desktop app the agent reads from disk; in hosted mode the browser reads the file. Both use the same `file.*` messages.
 - **Cancel** stays usable for the whole batch, mid-file too. (The v0.3.3 director sends on its window thread, so its Cancel Batch only responds between files.)
 - **Character routing** (`" - Character.ext"`) is director UI logic. Port `parse_character_name` (`director_client_ws.py:875`) to TypeScript with its examples as tests.
+- As built (Phase 2 M1a, §20.2): one prompt per file when the offer arrives, saying when it replaces a copy (instead of v0.3's overwrite prompt after the data arrived); auto-accept keeps the v0.3 meaning. Received files go to `Documents\vrcActorSync` unless the actor picks another folder (the v0.3 `receive_dir` is imported). Any file type can be sent (hidden files skipped, 1 GiB per file). Auto-add to Soundpad isn't built yet; received files are recorded in `received.json` for it.
 
 #### 8.4.1 Project Folder Sync (`vrcactorsync.yml`)
 
@@ -1742,7 +1748,8 @@ Results close the **[window test]** items in §8.5.8.
 | Agent (`agent/`) | Config (installed / portable / v0.3 import), local server with Host/Origin/token guard, UI socket, pywebview window with browser fallback, compatibility-mode relay client, Soundpad named-pipe client with `-rc` fallback (live status, version info, start-latency logging), OSC | `pytest` (19) incl. end-to-end against the real `server_ws.py`; manual run of relay + director + actor agents in the browser |
 | Relay v2 and the agent's v2 client (Phase 0, built on `feat/relay-v2` 2026-10-20, merged into `feat/web-ui` 2026-10-21) | `protocol/vrcas_protocol` + generated `web/src/protocol/types.ts`; `server/`: `/v2/ws` (handshake, session ids, routing, roster with cameras, approvals, `actor.settings`, `time.pong`, relay-measured latency), the §5.5 table on both endpoints, the `/ws` bridge with scheduling emulation; `agent/relay_v2.py` + `agent/relay.py` (v2 first, compatibility mode on a 403/404) | `pytest` 552: golden transcript from the frozen v0.3.3 relay replayed byte for byte (also with a v2 camera and assistant connected), every table row × role on `/v2/ws`, mixed sessions, scheduling on a fake clock, agents end to end with scripted v0.3 clients. Separate processes on port 5601 (relay, 3 agents, scripted v0.3 director and actor): 30/30 checks. Frozen Linux build connects over v2. Manual checklist part A (2026-10-21): the real v0.3.3 director and actor and a Windows build of the agent against a test relay, all pass (OSC skipped). The live relay runs this code since 2026-10-21 (checklist part B) |
 | Agent build (`build_agent.py`) | PyInstaller, one file or one folder. Windows: windowed (pywebview + WebView2). Linux: a console program that opens the browser | Linux one-file build on CachyOS (glibc 2.35+ when built with uv's standalone Python). Windows one-file build on Windows 11: window without the browser fallback, Soundpad over the pipe while frozen (Go / Stop / `*play:N` 41–58 ms), `--portable`, an actor on the live `wss://` relay; a build of the relay v2 branch in the checklist (2026-10-21). Unsigned: SmartScreen blocks downloaded copies |
-| Not built yet | the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files addon (§8.4), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), actor output visualizer (§9.6), the other production helpers (§15.1 steps 2–5), tray, installer, auto-update | — |
+| Files between v0.4 apps (§8.4, Phase 2 M1a, branch `feat/phase2-files`) | `vrcas_protocol` `file.*` models + `chunks.py`; `server/transfers.py` (transfer table, chunk forwarding, clean-up, one `server.log` line per transfer); `agent/files.py` (Receiver, Sender); Send files panel, actor prompt and Files card, receive settings; `parseCharacterName` in TypeScript | `pytest`: relay (`tests/test_files_v2.py`, 15), agent (`agent/tests/test_files.py`, 47, incl. end to end through a relay with a cancel mid-file); `bun test` (character routing, demo session); separate processes on port 5601 (relay, director and actor agents): a 3 MB file arrives with the same SHA-256 and the relay logs it; UI in headless Chromium (demo). Windows not tested yet |
+| Not built yet | the rest of the soundpad addon (§8.1: sound references, picker, volume/pause/seek messages), timing/delay compensation (§8.2), OSC timeline editor (§8.3), files between v0.3 and v0.4 clients and auto-add to Soundpad (§8.4, Phase 2 M1b, M2), OBS addon (§8.5, including the §8.5.8 window helper), stream addon (§8.6), actor output visualizer (§9.6), the other production helpers (§15.1 steps 2–5), tray, installer, auto-update | — |
 | Soundpad on Windows (2026-10-19) | Probe (Appendix B) and the agent's pipe client against Soundpad 4.0.35 | Relay GO / STOP and `*play:N` end to end: Soundpad played and stopped, the actor view showed Playing with position and went back to Ready; `pytest` adds 15 tests against an in-memory Soundpad |
 | VRChat window probe (§8.5.8) | `tools/vrchat_window_probe.py`: window-manager calls only, read-only by default, `--resize` / `--restore` | Windows rows of Appendix C on the test box (2026-10-19); the agent-side helper isn't built |
 | Normalize folder (§8.4.2, 2026-10-20) | `web/src/lib/audio/` (BS.1770 loudness, 4× true peak, 16-bit WAV writer, worker), `NormalizePanel` in the director view, `agent/folders.py` + `/api/folders/*`, demo folder | EBU Tech 3341 cases 1–5 and true-peak sweeps in `bun test`; agrees with ffmpeg's `ebur128` within 0.1 LU / 0.3 dB. End to end in headless Chromium against the agent: MP3, WAV, OGG, M4A and FLAC sources; ffmpeg reads the copies at −16.0 LUFS, or −17.0 LUFS at exactly −1.0 dBTP when peak-limited. Frozen Linux build serves the endpoints |
@@ -1762,7 +1769,7 @@ Choices made while building the v2 relay (`feat/relay-v2`) where §5, §6 and §
 - Close codes: 4400 bad or missing hello, 4401 wrong secret, 4403 denied / forgotten / replaced, 4408 no hello within 10 s.
 - Types missing from the permission table are rejected (`unknown_type`). That's narrower than G3 ("a new addon needs no relay change"): a new addon needs rows in `server/permissions.py`, which is data only.
 - `cuelist.*` passes the permission check and then gets `error unsupported` until cue-list storage exists. `stage.*` and `ready.*` are routed but not stored, and the bridge doesn't show `stage.state` to v0.3 clients yet (§15.1 steps 2 and 4).
-- Binary frames on `/v2/ws` get `error unsupported` (files addon). Text frames are limited to 256 KiB.
+- Binary frames on `/v2/ws` carry file chunks (Phase 2 as built, below). Text frames are limited to 256 KiB.
 - Version check for v2 clients ignores suffixes (`0.4.0-dev`) and the patch number: a different major is `unsupported`, a different minor `warning`.
 - `soundpad.level` (§9.6, added to §5.4 and §5.5 while the relay was being built) has no row in `server/permissions.py` and no model yet, so the relay answers `unknown_type`. It gets both with the visualizer (§15.1 step 6).
 
@@ -1788,4 +1795,17 @@ Choices made while building the v2 relay (`feat/relay-v2`) where §5, §6 and §
 - `Connection.legacy` is `false` until a relay turns out to be v0.3 (it used to be fixed at `true`).
 - The scripted v0.3 client uses the `websockets` sync client, not `websocket-client` (§11.5).
 
-**§17 status on the v2 relay:** #2 fixed (the table applies to `/ws` too); #3 and #5 fixed for v2 sessions, while v0.3 clients keep name routing and client-supplied sender names among themselves; #4 waits for the files addon (v0.3 transfers are still keyed by file name); #6 fixed (`approval.forgotten`); #7 fixed for v2 messages (JSON), and v2 names are cleaned of `|` before they reach `/ws`.
+**§17 status on the v2 relay:** #2 fixed (the table applies to `/ws` too); #3 and #5 fixed for v2 sessions, while v0.3 clients keep name routing and client-supplied sender names among themselves; #4 fixed for v2 transfers (keyed by transfer UUID, §20.2), while v0.3 transfers are still keyed by file name; #6 fixed (`approval.forgotten`); #7 fixed for v2 messages (JSON), and v2 names are cleaned of `|` before they reach `/ws`.
+
+### 20.2 Phase 2 as Built: Deviations and Decisions
+
+Phase 2 is built in milestones on branches (plan: `docs/superpowers/plans/2026-10-21-phase2-plan.md`, decisions D1–D12 there).
+
+**Files between v0.4 apps (M1a, §5.7, §8.4)**
+- `file.offer` goes to exactly one session (`{ids: [one]}`); anything else is `invalid`. The relay keeps one entry per offer: chunk frames pass only from the offer's sender, only to its recipient, and only after that recipient's `file.accept`. Replies (`accept`, `deny`, `progress`, `ok`, `err`) always go back to the offer's sender, whatever their `to` says.
+- `chunk_size` is declared per offer (16–256 KiB; v0.4 apps use 256 KiB), so the bridge can pass a v0.3 director's 64 KiB chunks through without re-chunking (M1b). `md5` is optional next to `sha256`, for v0.3 actors' `FILEEND`. Files are limited to 1 GiB; one sender may have 16 transfers open.
+- A chunk past the end of the file, or either side disconnecting, ends the transfer; whoever is left gets `file.err` from the relay. `file.batch.cancel` ends every transfer of that batch.
+- The relay writes one `server.log` line per transfer with its result (`File Mira → Coda: Scene 4 - Diego.wav (3.0 MB): ok`), never file contents (decision D5).
+- Every send from a v0.4 director is a batch, even one file. Files go one at a time per actor; batches to different actors run side by side. A stall (no `file.progress` for 60 s) ends the batch.
+- The actor is asked once per file, when the offer arrives (decision D4); "Accept all N" accepts the rest of that batch; "accept automatically" turns auto-accept on. The receiver refuses names that aren't a plain file name (folders, `..`, characters Windows can't store, `CON`/`NUL`/…), files bigger than the free disk space, and a second offer with an open transfer id.
+- Actors announce the capability `files`; the director UI offers files only to actors that have it (decision D7). An offer to a v0.3 actor is answered with `unsupported` until M1b.

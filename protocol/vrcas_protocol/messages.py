@@ -6,10 +6,11 @@ model here yet (MODELS maps them to None); their addon defines the payload when 
 
 from __future__ import annotations
 
-from typing import Literal, Union
+from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .chunks import CHUNK_SIZE, MAX_FILE_BYTES, MIN_CHUNK_SIZE, chunk_count
 from .envelope import Role
 
 
@@ -247,6 +248,106 @@ class OscParam(Scheduled):
     value: Union[bool, int, float, str]
 
 
+# ---- files addon (spec §8.4, §5.7) ------------------------------------------------------------
+# The bytes travel as binary frames (chunks.py). Every reply goes to the session that sent the offer.
+
+# The 16-byte UUID of the binary chunk frames, as 32 hex characters
+TransferId = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+Md5 = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+
+
+def _one_hash(payload: "Payload") -> None:
+    if not getattr(payload, "sha256", None) and not getattr(payload, "md5", None):
+        raise ValueError("sha256 or md5 is required")
+
+
+class FileBatchStart(Payload):
+    """Every send from the new app is a batch, even one file. Files are offered one at a time."""
+
+    batch_id: str = Field(min_length=1, max_length=64)
+    files: int = Field(ge=0)
+    bytes: int = Field(ge=0)
+
+
+class FileOffer(Payload):
+    """To exactly one session. `chunk_size` is set per offer: the relay's bridge passes a v0.3
+    director's 64 KiB chunks through as they are. `md5` is for v0.3 actors (their FILEEND)."""
+
+    transfer_id: TransferId
+    batch_id: str | None = Field(default=None, min_length=1, max_length=64)
+    # A file name only (no folders); the receiver checks it again before writing
+    name: str = Field(min_length=1, max_length=255)
+    size: int = Field(ge=0, le=MAX_FILE_BYTES)
+    chunk_size: int = Field(default=CHUNK_SIZE, ge=MIN_CHUNK_SIZE, le=CHUNK_SIZE)
+    sha256: Sha256 | None = None
+    md5: Md5 | None = None
+    # From the file name (" - Diego.mp3"), shown to the actor
+    character: str | None = Field(default=None, max_length=64)
+
+    @model_validator(mode="after")
+    def _hashes(self) -> "FileOffer":
+        _one_hash(self)
+        return self
+
+    @property
+    def chunks(self) -> int:
+        return chunk_count(self.size, self.chunk_size)
+
+
+class FileAccept(Payload):
+    transfer_id: TransferId
+
+
+class FileDeny(Payload):
+    transfer_id: TransferId
+    reason: str = Field(default="", max_length=500)
+
+
+class FileProgress(Payload):
+    """Chunks written so far. The sender keeps at most MAX_IN_FLIGHT chunks unacknowledged."""
+
+    transfer_id: TransferId
+    received: int = Field(ge=0)
+
+
+class FileEnd(Payload):
+    transfer_id: TransferId
+    sha256: Sha256 | None = None
+    md5: Md5 | None = None
+
+    @model_validator(mode="after")
+    def _hashes(self) -> "FileEnd":
+        _one_hash(self)
+        return self
+
+
+class FileOk(Payload):
+    transfer_id: TransferId
+    # Where it went, as the receiver chooses to show it (a folder name and the file, not a full path)
+    saved_as: str = Field(default="", max_length=512)
+
+
+class FileErr(Payload):
+    """From the receiver, or from the relay when the other side disconnected."""
+
+    transfer_id: TransferId
+    error: str = Field(default="", max_length=500)
+
+
+class FileBatchEnd(Payload):
+    batch_id: str = Field(min_length=1, max_length=64)
+    ok: int = Field(ge=0)
+    failed: int = Field(ge=0)
+
+
+class FileBatchCancel(Payload):
+    """Ends the batch at once, mid-file too: the receiver deletes the partial file."""
+
+    batch_id: str = Field(min_length=1, max_length=64)
+    reason: str = Field(default="", max_length=500)
+
+
 # ---- catalogue ---------------------------------------------------------------------------------
 
 MODELS: dict[str, type[Payload] | None] = {
@@ -281,9 +382,18 @@ MODELS: dict[str, type[Payload] | None] = {
     "soundpad.stop": SoundpadStop,
     "soundpad.ack": SoundpadAck,
     **{f"soundpad.{t}": None for t in ("pause", "seek", "jump", "volume", "mute", "list.request", "list", "state", "calibrate")},
-    # files addon (binary chunks are not built yet)
-    **{f"file.{t}": None for t in ("offer", "accept", "deny", "progress", "end", "ok", "err", "batch.start", "batch.end",
-                                    "batch.cancel", "inventory.request", "inventory")},
+    # files addon (chunks are binary frames, chunks.py)
+    "file.batch.start": FileBatchStart,
+    "file.offer": FileOffer,
+    "file.accept": FileAccept,
+    "file.deny": FileDeny,
+    "file.progress": FileProgress,
+    "file.end": FileEnd,
+    "file.ok": FileOk,
+    "file.err": FileErr,
+    "file.batch.end": FileBatchEnd,
+    "file.batch.cancel": FileBatchCancel,
+    **{f"file.{t}": None for t in ("inventory.request", "inventory")},
     # osc addon
     "osc.param": OscParam,
     **{f"osc.{t}": None for t in ("cue.load", "cue.ack", "cue.fired", "params")},

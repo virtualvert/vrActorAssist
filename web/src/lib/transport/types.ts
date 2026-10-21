@@ -3,11 +3,12 @@ import type { AgentEvent, Call, FolderListing } from "../protocol";
 /** State of the link between this page and whatever drives it (agent or demo). */
 export type LinkState = "connecting" | "open" | "closed" | "unauthorized";
 
-/** Reading and writing audio files for Normalize folder (spec §8.4.2). */
+/** Folder access for Normalize folder (spec §8.4.2) and Send files (§8.4). */
 export interface FolderAccess {
   /** Native folder dialog. Null when the person cancels; throws when this machine has none. */
   pick(): Promise<string | null>;
-  open(folder: string): Promise<FolderListing>;
+  /** "audio" (default): audio files outside normalized/. "all": every non-hidden file, for sending. */
+  open(folder: string, kind?: "audio" | "all"): Promise<FolderListing>;
   read(folder: string, path: string): Promise<ArrayBuffer>;
   /** Writes `<folder>/normalized/<path>` and resolves to the full path written. */
   write(folder: string, path: string, data: Uint8Array<ArrayBuffer>): Promise<string>;

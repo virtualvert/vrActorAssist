@@ -9,7 +9,7 @@ import pytest
 
 import server  # noqa: F401  (puts protocol/ on sys.path)
 from server import permissions
-from vrcas_protocol import MODELS, make, new_id, parse, validate
+from vrcas_protocol import CHUNK_SIZE, KIND_FILE_CHUNK, MODELS, chunk_count, make, new_id, pack_chunk, parse, unpack_chunk, validate
 from vrcas_protocol.messages import Payload
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,6 +47,17 @@ SAMPLES = {
     "soundpad.stop": {"at": 9},
     "soundpad.ack": {"status": "played", "late_ms": 0},
     "osc.param": {"parameter": "RecIcon", "value": True},
+    "file.batch.start": {"batch_id": "b1", "files": 2, "bytes": 300_000},
+    "file.offer": {"transfer_id": "0f" * 16, "batch_id": "b1", "name": "Scene 4 - Diego.mp3", "size": 300_000,
+                   "sha256": "ab" * 32, "md5": "cd" * 16, "character": "Diego"},
+    "file.accept": {"transfer_id": "0f" * 16},
+    "file.deny": {"transfer_id": "0f" * 16, "reason": "Declined"},
+    "file.progress": {"transfer_id": "0f" * 16, "received": 1},
+    "file.end": {"transfer_id": "0f" * 16, "sha256": "ab" * 32},
+    "file.ok": {"transfer_id": "0f" * 16, "saved_as": "vrcActorSync/Scene 4 - Diego.mp3"},
+    "file.err": {"transfer_id": "0f" * 16, "error": "Checksum mismatch"},
+    "file.batch.end": {"batch_id": "b1", "ok": 1, "failed": 1},
+    "file.batch.cancel": {"batch_id": "b1", "reason": "Cancelled by the director"},
 }
 
 INVALID = {
@@ -57,6 +68,10 @@ INVALID = {
     "actor.settings": {"id": "s_1", "delay_ms": 999_999},
     "osc.param": {"parameter": "", "value": 1},
     "time.ping": {},
+    "file.offer": {"transfer_id": "0f" * 16, "name": "a.wav", "size": 10},  # no hash
+    "file.end": {"transfer_id": "0F" * 16, "md5": "cd" * 16},  # upper-case id
+    "file.accept": {"transfer_id": "short"},
+    "file.progress": {"transfer_id": "0f" * 16, "received": -1},
 }
 
 
@@ -127,6 +142,35 @@ def test_ulids_are_unique_and_time_ordered():
     assert len(a) == 26 and a < b
     assert len({new_id() for _ in range(1000)}) == 1000
     assert new_id()[:8] >= new_id(int(time.time() * 1000) - 60_000)[:8]
+
+
+@pytest.mark.parametrize("data", [
+    {"size": 2 * 1024**3},  # over 1 GiB
+    {"chunk_size": 512 * 1024},
+    {"chunk_size": 1024},
+    {"name": ""},
+])
+def test_file_offer_limits(data):
+    offer = {"transfer_id": "0f" * 16, "name": "a.wav", "size": 10, "md5": "cd" * 16, **data}
+    with pytest.raises(ValueError):
+        validate("file.offer", offer)
+
+
+def test_file_offer_chunk_count():
+    offer = validate("file.offer", {"transfer_id": "0f" * 16, "name": "a.wav", "size": CHUNK_SIZE * 2 + 1, "md5": "cd" * 16})
+    assert offer.chunk_size == CHUNK_SIZE and offer.chunks == 3
+    assert chunk_count(0) == 0 and chunk_count(1) == 1 and chunk_count(65536, 65536) == 1
+
+
+def test_chunk_frames():
+    frame = pack_chunk("0f" * 16, 7, b"payload")
+    assert len(frame) == 21 + 7
+    assert frame[0] == KIND_FILE_CHUNK and frame[1:17] == bytes.fromhex("0f" * 16) and frame[17:21] == b"\x00\x00\x00\x07"
+    chunk = unpack_chunk(frame)
+    assert (chunk.kind, chunk.transfer_id, chunk.index, chunk.payload) == (1, "0f" * 16, 7, b"payload")
+    assert unpack_chunk(pack_chunk("0f" * 16, 0, b"")).payload == b""
+    with pytest.raises(ValueError):
+        unpack_chunk(b"\x01short")
 
 
 def test_every_type_has_a_permission_rule():

@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import APP_NAME, APP_VERSION
 from .core import CallError
-from .folders import MAX_WRITE_BYTES, FolderError, Folders, pick_folder
+from .folders import MAX_WRITE_BYTES, FolderError, pick_folder
 
 if TYPE_CHECKING:
     from .core import Agent
@@ -127,8 +127,8 @@ def create_app(agent: "Agent", security: Security, static_dir: Path) -> FastAPI:
             return JSONResponse({"error": "no session"}, status_code=401)
         return agent.snapshot()
 
-    # Normalize folder (spec §8.4.2): the page does the audio work; these only move bytes.
-    folders = Folders()
+    # Normalize folder (spec §8.4.2) and Send files: the page does the audio work; these only move bytes.
+    folders = agent.folders
 
     def denied(request: Request) -> JSONResponse | None:
         if not security.origin_ok(request.headers.get("origin")):
@@ -162,7 +162,8 @@ def create_app(agent: "Agent", security: Security, static_dir: Path) -> FastAPI:
             return response
         body = await json_body(request)
         try:
-            return await asyncio.to_thread(folders.open, str(body.get("folder", "")))
+            kind = "all" if body.get("kind") == "all" else "audio"
+            return await asyncio.to_thread(folders.open, str(body.get("folder", "")), kind)
         except FolderError as exc:
             return refused(exc)
 

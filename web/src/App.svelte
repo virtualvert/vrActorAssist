@@ -16,6 +16,7 @@
   import CameraView from "./lib/views/CameraView.svelte";
   import DirectorView from "./lib/views/DirectorView.svelte";
   import NormalizePanel from "./lib/views/NormalizePanel.svelte";
+  import SendFilesPanel from "./lib/views/SendFilesPanel.svelte";
 
   onMount(async () => {
     app.attach(await chooseTransport());
@@ -77,7 +78,7 @@
   </div>
   <SettingsPanel />
   <LogDrawer />
-  {#if app.state.role === "director"}<NormalizePanel />{/if}
+  {#if app.state.role === "director"}<NormalizePanel /><SendFilesPanel />{/if}
 {/if}
 
 <Toasts />

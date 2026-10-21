@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AudioLines, Minus, Monitor, Moon, Plus, ScrollText, Settings, Sun } from "@lucide/svelte";
+  import { AudioLines, FileUp, Minus, Monitor, Moon, Plus, ScrollText, Settings, Sun } from "@lucide/svelte";
   import { SCALE_STEP } from "../prefs";
   import { clampScale, type Theme } from "../protocol";
   import { ROLE_INFO } from "../roles";
@@ -12,6 +12,10 @@
   const role = $derived(data.role ? ROLE_INFO[data.role] : null);
   const NEXT_THEME: Record<Theme, Theme> = { system: "dark", dark: "light", light: "system" };
   const THEME_LABEL: Record<Theme, string> = { system: "Theme: follows system", dark: "Theme: dark", light: "Theme: light" };
+
+  const sending = $derived(
+    (data.director?.files.batches ?? []).filter((b) => b.state === "waiting" || b.state === "sending").length,
+  );
 
   function bump(delta: number) {
     app.setPrefs({ scale: clampScale(data.prefs.scale + delta) });
@@ -55,6 +59,10 @@
       {#if data.prefs.theme === "dark"}<Moon size="1.25em" />{:else if data.prefs.theme === "light"}<Sun size="1.25em" />{:else}<Monitor size="1.25em" />{/if}
     </Button>
     {#if data.role === "director"}
+      <Button icon variant="ghost" aria-label="Send files" title="Send files" onclick={() => (app.sendOpen = true)}>
+        <FileUp size="1.25em" />
+        {#if sending > 0}<span class="badge">{sending}</span>{/if}
+      </Button>
       <Button icon variant="ghost" aria-label="Normalize folder" title="Normalize folder" onclick={() => (app.normalizeOpen = true)}>
         <AudioLines size="1.25em" />
       </Button>

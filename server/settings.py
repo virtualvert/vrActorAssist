@@ -25,8 +25,11 @@ class Settings:
     ping_timeout_s: float = 60.0
     # A /v2/ws client must say hello within this time
     hello_timeout_s: float = 10.0
-    # Largest v2 text frame (file chunks will be binary frames)
+    # Largest v2 text frame; file chunks are binary frames, up to max_chunk_bytes after their header
     max_frame_bytes: int = 256 * 1024
+    max_chunk_bytes: int = 256 * 1024
+    # File transfers one session may have open at once
+    max_open_transfers: int = 16
     echo_log: bool = True
 
     @property

@@ -23,6 +23,7 @@ class AppStore {
   logOpen = $state(false);
   settingsOpen = $state(false);
   normalizeOpen = $state(false);
+  sendOpen = $state(false);
   /** True while the first-run flow is on screen, even after a role has been saved. */
   onboarding = $state(false);
 
@@ -42,17 +43,20 @@ class AppStore {
     transport.start();
   }
 
-  /** File access for Normalize folder, from whichever transport drives the page. */
+  /** File access for Normalize folder and Send files, from whichever transport drives the page. */
   get folders(): FolderAccess | null {
     return this.#transport?.folders ?? null;
   }
 
-  async call(call: Call): Promise<void> {
-    if (!this.#transport) return;
+  /** Sends a call; a refusal is shown as a toast. Resolves to whether it went through. */
+  async call(call: Call): Promise<boolean> {
+    if (!this.#transport) return false;
     try {
       await this.#transport.call(call);
+      return true;
     } catch (err) {
       this.toast("error", err instanceof Error ? err.message : String(err));
+      return false;
     }
   }
 

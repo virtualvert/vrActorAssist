@@ -133,8 +133,8 @@ const agentFolders: FolderAccess = {
     const res = await postJson("/api/folders/pick", {});
     return ((await res.json()) as { path: string | null }).path;
   },
-  async open(folder) {
-    return (await (await postJson("/api/folders/open", { folder })).json()) as FolderListing;
+  async open(folder, kind = "audio") {
+    return (await (await postJson("/api/folders/open", { folder, kind })).json()) as FolderListing;
   },
   async read(folder, path) {
     return (await postJson("/api/folders/read", { folder, path })).arrayBuffer();

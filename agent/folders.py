@@ -1,7 +1,8 @@
-"""Folder access for Normalize folder (spec §8.4.2): pick, list, read sources, write copies.
+"""Folder access for Normalize folder (spec §8.4.2) and Send files (§8.4): pick, list, read, write.
 
 The page measures and converts the audio itself; the agent only moves bytes, within limits:
-- it reads only audio files inside folders the person opened in this run of the app;
+- it reads only files inside folders the person opened in this run of the app: audio files for
+  Normalize folder, any non-hidden file (up to 1 GiB) for sending;
 - it writes only `.wav` files under `<folder>/normalized/`, atomically;
 - symlinks and `..` can't lead outside those folders.
 """
@@ -20,6 +21,7 @@ OUTPUT_DIR = "normalized"
 MAX_FILES = 5000
 MAX_READ_BYTES = 300 * 1024 * 1024
 MAX_WRITE_BYTES = 1024 * 1024 * 1024
+MAX_SEND_BYTES = 1024 * 1024 * 1024
 PICKER_TITLE = "Choose a folder of audio files"
 
 
@@ -31,9 +33,11 @@ class Folders:
     def __init__(self) -> None:
         self._opened: set[Path] = set()
 
-    def open(self, folder: str) -> dict:
+    def open(self, folder: str, kind: str = "audio") -> dict:
+        """kind "audio": audio files outside normalized/ (Normalize folder). "all": every
+        non-hidden file, normalized/ included (Send files)."""
         root = resolve_root(folder)
-        files = list_audio(root)
+        files = list_all(root) if kind == "all" else list_audio(root)
         self._opened.add(root)
         return {
             "folder": str(root),
@@ -51,6 +55,18 @@ class Folders:
             raise FolderError(f"{rel} no longer exists")
         if path.stat().st_size > MAX_READ_BYTES:
             raise FolderError(f"{rel} is larger than {MAX_READ_BYTES // 2**20} MB")
+        return path
+
+    def send_source(self, folder: str, rel: str) -> Path:
+        """A file to send: any type, inside an opened folder, not hidden, at most 1 GiB."""
+        root = self._root(folder)
+        path = inside(root, rel)
+        if any(part.startswith(".") for part in PurePosixPath(rel.replace("\\", "/")).parts):
+            raise FolderError(f"{rel} is hidden")
+        if path.is_symlink() or not path.is_file():
+            raise FolderError(f"{rel} isn't a file in the folder")
+        if path.stat().st_size > MAX_SEND_BYTES:
+            raise FolderError(f"{rel} is larger than {MAX_SEND_BYTES // 2**30} GB")
         return path
 
     def write(self, folder: str, rel: str, data: bytes) -> Path:
@@ -133,6 +149,27 @@ def list_audio(root: Path) -> list[dict]:
         for name in filenames:
             path = here / name
             if name.startswith(".") or path.suffix.lower() not in AUDIO_EXTENSIONS or path.is_symlink():
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            found.append({"path": path.relative_to(root).as_posix(), "size": size})
+            if len(found) > MAX_FILES:
+                break
+    found.sort(key=lambda f: f["path"].casefold())
+    return found
+
+
+def list_all(root: Path) -> list[dict]:
+    """Every regular file under root, skipping hidden files and folders and links."""
+    found: list[dict] = []
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and not (here / d).is_symlink()]
+        for name in filenames:
+            path = here / name
+            if name.startswith(".") or path.is_symlink():
                 continue
             try:
                 size = path.stat().st_size

@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 import webbrowser
 from typing import Any, Callable
 
 from . import APP_VERSION
 from .actor_runtime import ActorRuntime
 from .config import ROLES, THEMES, ConfigStore, clamp_scale
+from .files import Files
+from .folders import FolderError, Folders, pick_folder
 from .hub import Hub
 from .relay import Relay
 
 COUNTDOWN_MS = 3000
+MAX_SEND_ITEMS = 500
 
 
 class CallError(Exception):
@@ -25,6 +29,9 @@ class Agent:
         self.store = store
         self.hub = Hub(self.snapshot)
         self.actor = ActorRuntime(store.config, changed=self.changed, log=self.hub.log)
+        # Folders opened in this run (Normalize folder, Send files); file access stays inside them
+        self.folders = Folders()
+        self.files = Files(self)
         self.relay = Relay(self)
         self.last_cue: dict | None = None
         # Set by the launcher: returns a fresh one-time URL for the local UI.
@@ -48,6 +55,7 @@ class Agent:
         self.changed()
 
     async def shutdown(self) -> None:
+        self.hub.log("info", "Closing vrcActorSync")
         await self.relay.stop("App closed")
         await self.actor.close()
 
@@ -75,6 +83,7 @@ class Agent:
                     "latencyMs": None,
                     "activity": "playing" if playing else "idle",
                     "self": True,
+                    "caps": [],
                 }
             )
             if relay.status == "connected":
@@ -105,10 +114,16 @@ class Agent:
             "targets": relay.target_ids() if cfg.role == "director" else [],
             "countdown": countdown,
             "actor": (
-                {"soundpad": self.actor.soundpad_state(), "osc": self.actor.osc_state(), "lastCue": self.last_cue}
+                {
+                    "soundpad": self.actor.soundpad_state(),
+                    "osc": self.actor.osc_state(),
+                    "lastCue": self.last_cue,
+                    "files": self.files.receiver.view(),
+                }
                 if cfg.role == "actor"
                 else None
             ),
+            "director": {"files": self.files.sender.view()} if cfg.role == "director" else None,
             "camera": (
                 {
                     "obs": {"connected": False, "detail": "OBS control isn't built yet. It arrives with the OBS addon."},
@@ -220,8 +235,76 @@ class Agent:
             cfg.osc.enabled = bool(args["oscEnabled"])
         if isinstance(args.get("soundpadPath"), str):
             cfg.soundpad.path = args["soundpadPath"].strip()
+        if isinstance(args.get("receiveDir"), str):
+            folder = args["receiveDir"].strip()
+            if folder and not Path(folder).expanduser().is_absolute():
+                raise CallError("Use the full path of the folder")
+            cfg.files.receive_dir = folder
+        if "autoAcceptFiles" in args:
+            cfg.files.auto_accept = bool(args["autoAcceptFiles"])
         self.store.save()
         await self.actor.refresh()
+
+    async def _call_pickReceiveDir(self, args: dict) -> None:
+        try:
+            folder = await pick_folder()
+        except FolderError as exc:
+            raise CallError(str(exc)) from exc
+        if folder:
+            self.config.files.receive_dir = folder
+            self.store.save()
+
+    # ---- files (spec §8.4) ----------------------------------------------------
+
+    async def _call_sendFiles(self, args: dict) -> None:
+        self._require_director()
+        relay = self.relay.impl
+        if relay.legacy or relay.status != "connected":
+            raise CallError("Sending files needs a connection to a v2 relay")
+        folder = str(args.get("folder", ""))
+        items = args.get("items")
+        if not isinstance(items, list) or not items:
+            raise CallError("Pick at least one file and who gets it")
+        if len(items) > MAX_SEND_ITEMS:
+            raise CallError(f"At most {MAX_SEND_ITEMS} files at once")
+        per_actor: dict[str, list[Path]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                raise CallError("Bad file list")
+            actor_id = str(item.get("actorId", ""))
+            session = relay.sessions.get(actor_id)
+            if session is None or session.role != "actor":
+                raise CallError("One of the actors isn't connected any more")
+            if "files" not in session.capabilities:
+                if session.legacy:
+                    raise CallError(f"{session.name} uses a v0.3 client; sending files to it needs the next relay update")
+                raise CallError(f"{session.name}'s app is too old to receive files")
+            try:
+                path = await asyncio.to_thread(self.folders.send_source, folder, str(item.get("path", "")))
+            except FolderError as exc:
+                raise CallError(str(exc)) from exc
+            per_actor.setdefault(actor_id, []).append(path)
+        for actor_id, paths in per_actor.items():
+            # One file name once per actor: the receiver keeps only one file with that name
+            names = [p.name for p in paths]
+            if len(set(names)) != len(names):
+                dupes = sorted({n for n in names if names.count(n) > 1})
+                raise CallError(f"{relay.sessions[actor_id].name} would get two files named {dupes[0]}")
+        for actor_id, paths in per_actor.items():
+            self.files.sender.start(actor_id, relay.sessions[actor_id].name, paths)
+            self.hub.log("info", f"Sending {len(paths)} file{'s' if len(paths) != 1 else ''} to {relay.sessions[actor_id].name}")
+
+    async def _call_cancelBatch(self, args: dict) -> None:
+        self._require_director()
+        await self.files.sender.cancel(str(args.get("id", "")))
+
+    async def _call_answerFile(self, args: dict) -> None:
+        await self.files.receiver.answer(
+            str(args.get("transferId", "")),
+            bool(args.get("accept")),
+            rest=bool(args.get("rest")),
+            always=bool(args.get("always")),
+        )
 
     async def _call_camera(self, args: dict) -> None:
         raise CallError("Roll and Cut need the OBS addon, which isn't built yet.")
