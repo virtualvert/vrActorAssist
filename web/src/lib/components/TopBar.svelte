@@ -33,7 +33,7 @@
   </div>
 
   {#if role}
-    <button class="role role-{role.id}" type="button" onclick={() => (app.settingsOpen = true)} title="Change role in Settings">
+    <button class="role role-{role.id}" type="button" onclick={() => (app.settingsOpen = true)} title="Change role in Settings" aria-label="Role: {role.short}">
       <role.icon size="1.15em" aria-hidden="true" />
       <span>{role.short}</span>
     </button>
@@ -52,6 +52,7 @@
     <Button
       icon
       variant="ghost"
+      class="theme"
       aria-label={THEME_LABEL[data.prefs.theme]}
       title={THEME_LABEL[data.prefs.theme]}
       onclick={() => app.setPrefs({ theme: NEXT_THEME[data.prefs.theme] })}
@@ -139,6 +140,11 @@
     flex: 1;
   }
 
+  /* The connection pill gives way first (its text ends in "…") so the buttons stay on screen. */
+  .topbar > :global(.pill) {
+    min-width: 0;
+  }
+
   .tools {
     display: flex;
     align-items: center;
@@ -187,6 +193,23 @@
 
   @container (max-width: 36rem) {
     .name {
+      display: none;
+    }
+  }
+
+  /* Phone width: the role shows as its icon and the theme lives in Settings only. */
+  @container (max-width: 34rem) {
+    .topbar {
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+    }
+
+    .role {
+      padding: 0 0.7rem;
+    }
+
+    .role span,
+    .tools :global(.theme) {
       display: none;
     }
   }
