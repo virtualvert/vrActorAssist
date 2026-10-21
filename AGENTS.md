@@ -46,10 +46,12 @@ agent/                  v0.4 desktop agent (python -m agent)
   __main__.py           CLI, port pick, uvicorn server, window vs browser
   core.py               Agent: config + relay + actor runtime; snapshot() = UI state; _call_* = UI requests
   relay.py              The relay connection: reconnect loop, Play-in-3s countdown; tries /v2/ws, else /ws
-  relay_v2.py           Protocol v2 client: hello, roster with session ids, approvals, cue.* / osc.param + cue.ack
+  relay_v2.py           Protocol v2 client: hello, roster with session ids, approvals, cue.* / osc.param + cue.ack, file.* and soundpad.* hand-off
   relay_legacy.py       Compatibility mode (v0.3 relay): REGISTER, roster from USERS/STATUS/PENDING, cues via PRIV
-  actor_runtime.py      Cues → Soundpad (pipe, else soundpad.py -rc), live playback status, VRChat OSC
+  actor_runtime.py      Cues → Soundpad (pipe, else soundpad.py -rc), sound references + drift guard, lines, volume / pause / seek / mute, list, auto-add / auto-start, live status, VRChat OSC
   soundpad_pipe.py      Soundpad named-pipe client: one worker thread, typed helpers, fake-able transport
+  sounds.py             Sound keys (hash of the path; paths never leave the actor's PC) and soundpad.list pages (≤ 500)
+  soundpad_remote.py    soundpad.* over v2: actors answer with soundpad.ack, send lists and soundpad.state; directors keep both for the UI
   files.py              Files addon: Receiver (offer checks, prompt or auto-accept, .part file, hash, rename) and Sender (batches, 8 in flight, cancel)
   folders.py            Folder access for Normalize folder and Send files: picker, listings, guarded reads, writes only under normalized/
   web.py                Local UI server: Host/Origin guard, one-time token → session cookie, /ui/ws
@@ -64,9 +66,10 @@ web/                    v0.4 UI: Svelte 5 + Vite + TypeScript, built and tested 
   src/lib/transport/    AgentTransport (/ui/ws), DemoTransport (simulated session), chooser
   src/lib/demo/         DemoSession: in-page simulation used by `bun run dev` and `?demo`; DemoFolders for Normalize folder
   src/lib/files/        Character routing for Send files (parseCharacterName, grouping, who gets what)
+  src/lib/soundpad.ts   Director's Soundpad helpers: position between reports, sound search, what an actor's app can do, line labels
   src/lib/audio/        Loudness (BS.1770 / R128, 4× true peak), WAV writer, gain/output planning; worker + engine (decodes at 48 kHz)
   src/lib/graph/        Animated node graph (d3-force) + pure layout math (layout.ts)
-  src/lib/views/        DirectorView, ActorView, CameraView, CastPanel, CueDeck, NormalizePanel, SendFilesPanel
+  src/lib/views/        DirectorView, ActorView, CameraView, CastPanel, CueDeck, NormalizePanel, SendFilesPanel, SoundpadPanel (one actor's Soundpad, opened from the cast)
   src/lib/components/   Shell pieces: TopBar, Settings, Onboarding, LogDrawer, Button, ...
   src/app.css           Design tokens: dark/light themes, --ui-scale, VR mode, motion
 
@@ -148,8 +151,8 @@ There are no tests for the v0.3 tkinter clients; test changes there by hand. Rel
 ## Known gaps (v0.4 preview)
 
 - The v2 relay is built, merged into `feat/web-ui`, and live since 2026-10-21 (manual checklist parts A and B pass). Builds from before the merge still connect in compatibility mode, and cameras on those builds stay invisible. Not built on v2 yet: the agent-side scheduler (Play in 3s is a local countdown, then Go), cue-list storage, ICE/TURN, hosting the web app, storing `stage.*`. v0.3 directors never see cameras, so a v2 director or assistant has to approve them. Session ids last until the relay restarts. Assistants aren't a role in the UI yet.
-- Files (spec §8.4) work on a v2 relay between v0.4 apps and, through the relay's bridge, between v0.3 clients and v0.4 apps (Send files to a v0.3 actor; a v0.3 director's batch to a v0.4 actor). v0.4 builds from before Phase 2 don't announce `files`: v0.3 directors get a `FILEDENY` asking them to update. v0.3 ↔ v0.3 transfers through `/ws` work as before. A v0.3.3 actor holds each file in memory: big files arrive slowly and stay in memory after a cancel (spec §20.2). Compatibility mode (v0.3 relay) has no file transfer. Received files aren't added to Soundpad yet (M2).
-- Soundpad cues (Go / Stop / `*play:N`) go through the named pipe, with `-rc` as the fallback. Actors run `*play:N`, but the director UI only sends Go / Stop / countdown, so nothing in the new app sends it yet. The rest of the soundpad addon (sound references, picker, volume / pause / seek messages) and scheduling (§8.2) aren't built.
+- Files (spec §8.4) work on a v2 relay between v0.4 apps and, through the relay's bridge, between v0.3 clients and v0.4 apps (Send files to a v0.3 actor; a v0.3 director's batch to a v0.4 actor). v0.4 builds from before Phase 2 don't announce `files`: v0.3 directors get a `FILEDENY` asking them to update. v0.3 ↔ v0.3 transfers through `/ws` work as before. A v0.3.3 actor holds each file in memory: big files arrive slowly and stay in memory after a cancel (spec §20.2). Compatibility mode (v0.3 relay) has no file transfer. Received files are added to Soundpad (full version; on by default).
+- Soundpad (spec §8.1, Phase 2 M2 on `feat/phase2-soundpad`, not merged yet): Go / Stop / `*play:N` go through the named pipe, with `-rc` as the fallback. On a v2 relay a director picks sounds from each actor's list (by `key`; paths stay on the actor's PC), chooses the line, volume, mute, pause, seek, and sees playback; Play #N reaches v0.3 actors too. v0.3 actors and compatibility mode only get Go / Stop / `*play:N`. Not built: `soundpad.calibrate` and `late_ms` (M3 timing), scheduling (§8.2), `soundpad.level` (§9.6). Soundpad itself was only exercised through an in-memory fake on Linux; the Windows check (plan §5.5) is pending.
 - No tray icon, installer or auto-updater yet; closing the window quits. In browser mode, Ctrl+C in the terminal quits. With no terminal (a Windows build without WebView2, or a Linux build started from a file manager), the only way to quit is ending the process.
 - `build_agent.py`: the Linux one-file build is tested (CachyOS): UI, relay connection, director → actor cue, `--portable`, Ctrl+C. The Windows one-file build is tested too (Windows 11, Python 3.12, PyInstaller 6.22, pywebview 6.2 on WebView2 155): the window opens without the browser fallback, the actor drives Soundpad through the named pipe while frozen, Go / Stop / countdown and `*play:N` play against a local relay, closing the window ends the process, and `--portable` keeps its data beside the exe. An actor on the live `wss://` relay (Tailscale Funnel) gets approved and plays Go / Stop. The exe is unsigned: a copy marked as downloaded gets SmartScreen's "Windows protected your PC" block. Not tried yet: a PC without the WebView2 Runtime.
 - Normalize folder (spec §8.4.2) writes 16-bit WAV at 48 kHz only; MP3 output for MP3 sources isn't built. Its folder dialog inside the desktop window (Windows, Linux `--window`) is untested; the browser-mode fallbacks (`kdialog` / `zenity` / typed path) are.
