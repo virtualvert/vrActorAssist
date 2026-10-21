@@ -335,6 +335,34 @@ class SoundpadPipe:
             await asyncio.sleep(0.01)
         return await self.action("DoStopSound()")
 
+    async def play_from_category(self, category: int, position: int, render: bool = True, capture: bool = True) -> Reply:
+        """DoPlaySoundFromCategory: `category` is the category's index, `position` 1-based within it."""
+        return await self.action(f"DoPlaySoundFromCategory({int(category)}, {int(position)}, {lines_args(render, capture)})")
+
+    async def seek(self, ms: int) -> Reply:
+        return await self.action(f"DoSeekMs({int(ms)})")
+
+    async def jump(self, ms: int) -> Reply:
+        return await self.action(f"DoJumpMs({int(ms)})")
+
+    async def set_paused(self, paused: bool) -> bool:
+        """Pause or resume only when needed (DoTogglePause flips). Returns whether anything changed."""
+        status = await self.text("GetPlayStatus()")
+        if (paused and status == "PLAYING") or (not paused and status == "PAUSED"):
+            await self.action("DoTogglePause()")
+            return True
+        return False
+
+    async def muted(self) -> bool | None:
+        return {"1": True, "0": False}.get(await self.text("IsMuted()"))
+
+    async def set_muted(self, muted: bool) -> bool:
+        """Mute or unmute only when needed (DoToggleMute flips). Returns whether anything changed."""
+        if await self.muted() == muted:
+            return False
+        await self.action("DoToggleMute()")
+        return True
+
     async def playback(self) -> Playback:
         """Status plus position and duration. Soundpad keeps the last sound's numbers after a stop,
         so a stopped player reports 0 for both."""
