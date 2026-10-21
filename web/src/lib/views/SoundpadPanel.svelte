@@ -4,14 +4,15 @@
   import Button from "../components/Button.svelte";
   import Drawer from "../components/Drawer.svelte";
   import Segmented from "../components/Segmented.svelte";
-  import { mediaTime } from "../format";
+  import { mediaLength, mediaTime } from "../format";
   import type { Lines, SoundRef } from "../protocol";
-  import { LINE_HELP, LINE_OPTIONS, positionNow, searchSounds, soundpadReach } from "../soundpad";
+  import { LINE_HELP, LINE_OPTIONS, positionNow, searchSounds, soundpadReach, steadyPosition } from "../soundpad";
   import { app } from "../state.svelte";
 
   type LineChoice = Lines | "default";
   const SHOWN = 200;
   const JUMP_MS = 5000;
+  const HOLD_MS = 1500;
   const STATUS_TEXT = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;
 
   const data = $derived(app.state!);
@@ -26,15 +27,34 @@
   let playNumber = $state<number | null>(null);
   let volumeDraft = $state<number | null>(null);
   let seekDraft = $state<number | null>(null);
+  // After a seek or a volume change the actor's next report can still carry the old value: the
+  // requested value stays on screen for a moment, so the slider doesn't jump back and forth
+  let seekHold = $state<{ ms: number; at: number } | null>(null);
+  let volumeHold = $state<{ value: number; at: number } | null>(null);
 
   // A clock for the position between reports (positions arrive at most twice a second)
   let now = $state(Date.now());
   const tick = window.setInterval(() => {
-    if (app.soundpadFor && sp?.status === "PLAYING") now = Date.now();
+    const t = Date.now();
+    if (seekHold && t - seekHold.at >= HOLD_MS) seekHold = null;
+    if (volumeHold && t - volumeHold.at >= HOLD_MS) volumeHold = null;
+    if (app.soundpadFor && (sp?.status === "PLAYING" || seekHold || volumeHold)) now = t;
   }, 200);
   onDestroy(() => window.clearInterval(tick));
 
-  const position = $derived(seekDraft ?? (sp ? positionNow(sp, now) : 0));
+  let shown: number | null = null;
+  let shownFor: string | null = null;
+  const position = $derived.by(() => {
+    if (seekDraft !== null) return seekDraft;
+    if (!sp) return 0;
+    const playing = sp.status === "PLAYING";
+    if (seekHold) return Math.min(sp.durationMs, seekHold.ms + (playing ? Math.max(0, now - seekHold.at) : 0));
+    const sound = `${peer?.id}/${sp.key ?? sp.index ?? sp.title}`;
+    shown = steadyPosition(sound === shownFor ? shown : null, positionNow(sp, now), playing);
+    shownFor = sound;
+    return shown;
+  });
+  const volume = $derived(volumeDraft ?? (volumeHold && sp?.volume !== volumeHold.value ? volumeHold.value : sp?.volume) ?? null);
   const results = $derived(list ? searchSounds(list.sounds, query) : []);
   /** Files this director sent to the actor in this session that arrived: playable by their hash. */
   const sent = $derived.by(() => {
@@ -73,6 +93,12 @@
     void app.call({ call: "transport", args: { ids: ids(), action, value } });
   }
 
+  function jump(delta: number) {
+    if (!sp) return;
+    transport("jump", delta);
+    seekHold = { ms: Math.max(0, Math.min(sp.durationMs, position + delta)), at: Date.now() };
+  }
+
   function playIndex(event: SubmitEvent) {
     event.preventDefault();
     if (playNumber && playNumber >= 1) void app.call({ call: "playIndex", args: { ids: ids(), index: Math.floor(playNumber) } });
@@ -80,6 +106,10 @@
 
   function seconds(ms: number | null): string {
     return ms === null ? "" : mediaTime(ms);
+  }
+
+  function length(ms: number | null): string {
+    return ms === null ? "" : mediaLength(ms);
   }
 </script>
 
@@ -104,7 +134,7 @@
         <div class="now-row">
           <span class="chip status-{(sp.status ?? 'STOPPED').toLowerCase()}">{STATUS_TEXT[sp.status ?? "STOPPED"]}</span>
           <span class="track">{playing ? (sp.title ?? "Their selected sound") : "Nothing playing"}</span>
-          {#if playing}<span class="mono small">{seconds(position)} / {seconds(sp.durationMs)}</span>{/if}
+          {#if playing}<span class="mono small">{seconds(position)} / {length(sp.durationMs)}</span>{/if}
         </div>
         {#if playing && sp.lines}<span class="faint small">{LINE_HELP[sp.lines]}</span>{/if}
         <input
@@ -118,7 +148,9 @@
           aria-label="Position"
           oninput={(e) => (seekDraft = Number(e.currentTarget.value))}
           onchange={(e) => {
-            transport("seek", Math.round(Number(e.currentTarget.value)));
+            const ms = Math.round(Number(e.currentTarget.value));
+            transport("seek", ms);
+            seekHold = { ms, at: Date.now() };
             seekDraft = null;
           }}
         />
@@ -129,10 +161,10 @@
             <Button variant="subtle" disabled={!playing} onclick={() => transport("pause")}><Pause size="1em" /> Pause</Button>
           {/if}
           <Button variant="stop" disabled={!playing} onclick={() => transport("stop")}><Square size="0.9em" fill="currentColor" /> Stop</Button>
-          <Button icon variant="ghost" disabled={!playing} aria-label="Back 5 seconds" title="Back 5 s" onclick={() => transport("jump", -JUMP_MS)}>
+          <Button icon variant="ghost" disabled={!playing} aria-label="Back 5 seconds" title="Back 5 s" onclick={() => jump(-JUMP_MS)}>
             <RotateCcw size="1.1em" />
           </Button>
-          <Button icon variant="ghost" disabled={!playing} aria-label="Forward 5 seconds" title="Forward 5 s" onclick={() => transport("jump", JUMP_MS)}>
+          <Button icon variant="ghost" disabled={!playing} aria-label="Forward 5 seconds" title="Forward 5 s" onclick={() => jump(JUMP_MS)}>
             <RotateCw size="1.1em" />
           </Button>
         </div>
@@ -155,15 +187,17 @@
             min="0"
             max="100"
             step="1"
-            value={volumeDraft ?? sp.volume ?? 0}
+            value={volume ?? 0}
             aria-label="Volume"
             oninput={(e) => (volumeDraft = Number(e.currentTarget.value))}
             onchange={(e) => {
-              transport("volume", Number(e.currentTarget.value));
+              const value = Number(e.currentTarget.value);
+              transport("volume", value);
+              volumeHold = { value, at: Date.now() };
               volumeDraft = null;
             }}
           />
-          <span class="mono small vol-num">{volumeDraft ?? sp.volume ?? "–"}</span>
+          <span class="mono small vol-num">{volume ?? "–"}</span>
         </div>
         <span class="faint small">Soundpad has one volume for both lines, so this changes what the audience hears too.</span>
       </section>
@@ -195,7 +229,7 @@
               <li class:current={playing && sp.key === s.key}>
                 <span class="num mono">{s.index}</span>
                 <span class="title">{s.title}</span>
-                <span class="mono small faint">{seconds(s.durationMs)}</span>
+                <span class="mono small faint">{length(s.durationMs)}</span>
                 <Button size="s" variant="subtle" aria-label="Play {s.title}" onclick={() => play({ key: s.key }, s.title)}>
                   <Play size="0.9em" fill="currentColor" /> Play
                 </Button>

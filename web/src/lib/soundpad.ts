@@ -11,6 +11,17 @@ export function positionNow(sp: Pick<PeerSoundpad, "status" | "positionMs" | "du
   return Math.max(0, Math.min(sp.durationMs, sp.positionMs + Math.max(0, now - sp.at)));
 }
 
+/**
+ * The position to show while a sound plays. Reports arrive with a varying delay (the actor reads
+ * Soundpad every 250 ms, Soundpad moves in 140 ms steps), so a fresher report can sit a little
+ * behind the running estimate; holding instead of stepping back keeps the bar from jittering.
+ * Bigger differences (a seek, another sound) are shown as they are.
+ */
+export function steadyPosition(shown: number | null, computed: number, playing: boolean, maxBack = 500): number {
+  if (!playing || shown === null) return computed;
+  return computed < shown && shown - computed <= maxBack ? shown : computed;
+}
+
 /** Case-insensitive search over titles; every word must match somewhere; `#12` finds sound 12. */
 export function searchSounds(sounds: SoundEntry[], query: string): SoundEntry[] {
   const q = query.trim().toLowerCase();

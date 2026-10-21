@@ -1,11 +1,36 @@
 <script lang="ts">
   import { CircleCheck, CircleAlert, Info, MessageCircle, TriangleAlert } from "@lucide/svelte";
+  import { onMount } from "svelte";
   import { app } from "../state.svelte";
+  import { LAYER_EVENT } from "./Drawer.svelte";
 
   const ICONS = { success: CircleCheck, error: CircleAlert, warning: TriangleAlert, info: Info, chat: MessageCircle };
+
+  // Drawers are modal dialogs in the browser's top layer, above any z-index. The toasts are a
+  // popover so they can go there too; when a drawer opens they're shown again, since the newest
+  // top-layer element is on top. Without popover support they stay as before.
+  let box = $state<HTMLDivElement | undefined>();
+
+  function place(raise = false) {
+    if (!box || typeof box.showPopover !== "function") return;
+    const open = box.matches(":popover-open");
+    if (open && (raise || !app.toasts.length)) box.hidePopover();
+    if (app.toasts.length && (raise || !open)) box.showPopover();
+  }
+
+  $effect(() => {
+    void app.toasts.length;
+    place();
+  });
+
+  onMount(() => {
+    const raise = () => place(true);
+    window.addEventListener(LAYER_EVENT, raise);
+    return () => window.removeEventListener(LAYER_EVENT, raise);
+  });
 </script>
 
-<div class="toasts" aria-live="polite">
+<div class="toasts" popover="manual" aria-live="polite" bind:this={box}>
   {#each app.toasts as t (t.id)}
     {@const Icon = ICONS[t.level]}
     <button class="toast {t.level}" type="button" onclick={() => app.dismissToast(t.id)}>
@@ -18,8 +43,13 @@
 <style>
   .toasts {
     position: fixed;
-    top: calc(var(--target) * 1.6 + 0.75rem);
-    right: 1rem;
+    inset: calc(var(--target) * 1.6 + 0.75rem) 1rem auto auto;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    overflow: visible;
     z-index: 50;
     display: flex;
     flex-direction: column;

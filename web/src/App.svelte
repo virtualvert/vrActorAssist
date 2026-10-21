@@ -25,6 +25,11 @@
 
   // Ctrl/Cmd + / − / 0 scale the whole UI (the desktop window disables browser zoom).
   function onkeydown(e: KeyboardEvent) {
+    // A held Enter presses the focused button again and again (GO, Play); only the first counts
+    if (e.repeat && e.key === "Enter" && e.target instanceof HTMLButtonElement) {
+      e.preventDefault();
+      return;
+    }
     if (!app.state || !(e.ctrlKey || e.metaKey)) return;
     const scale = app.state.prefs.scale;
     if (e.key === "=" || e.key === "+") app.setPrefs({ scale: clampScale(scale + SCALE_STEP) });

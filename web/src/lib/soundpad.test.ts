@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { positionNow, searchSounds, soundpadReach } from "./soundpad";
+import { positionNow, searchSounds, soundpadReach, steadyPosition } from "./soundpad";
 
 describe("positionNow", () => {
   const base = { positionMs: 1400, durationMs: 5000, at: 10_000 };
@@ -11,6 +11,18 @@ describe("positionNow", () => {
   test("stands still otherwise", () => {
     expect(positionNow({ ...base, status: "PAUSED" }, 20_000)).toBe(1400);
     expect(positionNow({ ...base, status: null }, 20_000)).toBe(1400);
+  });
+});
+
+describe("steadyPosition", () => {
+  test("holds instead of stepping back a little while playing", () => {
+    expect(steadyPosition(10_400, 10_100, true)).toBe(10_400);
+    expect(steadyPosition(10_400, 10_600, true)).toBe(10_600);
+  });
+  test("follows seeks, other sounds and anything not playing", () => {
+    expect(steadyPosition(10_400, 5_000, true)).toBe(5_000);
+    expect(steadyPosition(10_400, 10_100, false)).toBe(10_100);
+    expect(steadyPosition(null, 300, true)).toBe(300);
   });
 });
 
