@@ -275,9 +275,8 @@ class Agent:
             session = relay.sessions.get(actor_id)
             if session is None or session.role != "actor":
                 raise CallError("One of the actors isn't connected any more")
-            if "files" not in session.capabilities:
-                if session.legacy:
-                    raise CallError(f"{session.name} uses a v0.3 client; sending files to it needs the next relay update")
+            # v0.3 actors receive through the relay's bridge (Phase 2 M1b)
+            if "files" not in session.capabilities and not session.legacy:
                 raise CallError(f"{session.name}'s app is too old to receive files")
             try:
                 path = await asyncio.to_thread(self.folders.send_source, folder, str(item.get("path", "")))

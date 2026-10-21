@@ -46,6 +46,8 @@ DISK_MARGIN = 50 * 1024 * 1024
 STALL_TIMEOUT_S = 60.0
 RESULT_TIMEOUT_S = 120.0
 MAX_NAME = 200
+# The v0.3.3 director's own words; v0.3 actors show "Batch cancelled by director: <reason>"
+CANCEL_REASON = "Cancelled by director"
 HASH_BLOCK = 1024 * 1024
 
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f\x7f]')
@@ -466,6 +468,8 @@ class Outgoing:
     sent: int = 0
     detail: str = ""
     decision: asyncio.Future | None = None
+    # The id of the file.offer message, which a relay error names in reply_to
+    offer_id: str | None = None
     result: asyncio.Future | None = None
     progress: asyncio.Event = field(default_factory=asyncio.Event)
     chunk_size: int = CHUNK_SIZE
@@ -585,6 +589,14 @@ class Sender:
         elif msg_type == "file.err":
             self._settle(item, ("err", str(data.get("error") or "failed")))
 
+    def on_error(self, reply_to: Any, message: str) -> bool:
+        """A relay `error` about one of our offers: that file fails. True when it was ours."""
+        item = next((i for i in self._by_transfer.values() if reply_to and i.offer_id == reply_to), None)
+        if item is None:
+            return False
+        self._settle(item, ("err", message or "The relay refused the file"))
+        return True
+
     @staticmethod
     def _settle(item: Outgoing, outcome: tuple[str, str]) -> None:
         for future in (item.decision, item.result):
@@ -622,7 +634,7 @@ class Sender:
                 if item.state in ("queued", "offered", "sending"):
                     item.state = "cancelled"
             try:
-                await files.send("file.batch.cancel", {"batch_id": batch.id, "reason": batch.detail or "Cancelled by the director"}, to)
+                await files.send("file.batch.cancel", {"batch_id": batch.id, "reason": batch.detail or CANCEL_REASON}, to)
             except RuntimeError:
                 pass
             self.log("warning", f"Files to {batch.actor_name} cancelled" + (f" ({current.name})" if current else ""))
@@ -648,7 +660,7 @@ class Sender:
         if item.character:
             offer["character"] = item.character
         item.state = "offered"
-        await files.send("file.offer", offer, to)
+        item.offer_id = await files.send("file.offer", offer, to)
         self.agent.changed()
         verdict, detail = await item.decision  # no time limit: the actor may be away; Cancel ends it
         if verdict != "accept":
@@ -713,8 +725,8 @@ class Files:
             raise RuntimeError("Files need a connection to a v2 relay")
         return impl
 
-    async def send(self, msg_type: str, data: dict, to: Any) -> None:
-        await self._relay().send(msg_type, data, to)
+    async def send(self, msg_type: str, data: dict, to: Any) -> str:
+        return await self._relay().send(msg_type, data, to)
 
     async def send_frame(self, frame: bytes) -> None:
         await self._relay().send_frame(frame)

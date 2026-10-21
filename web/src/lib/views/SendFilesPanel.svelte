@@ -48,6 +48,11 @@
     ),
   );
   const recipients = $derived(new Set(plan.items.map((i) => i.actorId)).size);
+  /** v0.3 actors hold each file in memory and slow down as it grows (a limit of the v0.3 app). */
+  const BIG_FOR_V03 = 50 * 1024 * 1024;
+  const bigForV03 = $derived(
+    plan.items.some((i) => (sizeOf.get(i.path) ?? 0) > BIG_FOR_V03 && actors.find((p) => p.id === i.actorId)?.caps.includes("legacy")),
+  );
   const totalBytes = $derived(plan.items.reduce((sum, i) => sum + (sizeOf.get(i.path) ?? 0), 0));
 
   function load(): { folder?: string; cast?: Record<string, string> } {
@@ -68,12 +73,12 @@
 
   const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
+  /** v0.4 actors announce `files`; v0.3 actors receive through the relay's bridge. */
   function canReceive(p: Peer): boolean {
-    return p.status === "online" && p.caps.includes("files");
+    return p.status === "online" && (p.caps.includes("files") || p.caps.includes("legacy"));
   }
 
   function whyNot(p: Peer): string {
-    if (p.caps.includes("legacy")) return "v0.3 app";
     if (p.status !== "online") return "offline";
     return "app too old";
   }
@@ -289,6 +294,12 @@
             </tbody>
           </table>
         </div>
+        {#if bigForV03}
+          <p class="message note">
+            A file over 50 MB is going to an actor on the v0.3 app. It arrives slowly and stays in that app's memory until it restarts,
+            even after a cancel. Updating them to vrcActorSync 0.4 avoids both.
+          </p>
+        {/if}
         {#if plan.clashes.length}
           <p class="message bad">One actor would get two files named <span class="mono">{plan.clashes[0]}</span>. Leave one out or send it to someone else.</p>
         {/if}

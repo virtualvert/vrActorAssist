@@ -125,7 +125,7 @@ describe("DemoSession", () => {
     expect(storage.saved?.prefs.scale).toBe(2);
   });
 
-  test("director sends files: progress, results, a v0.3 actor refused, cancel", () => {
+  test("director sends files: progress, results, a v0.3 actor through the bridge, cancel", () => {
     const s = make(new MemoryStorage(), "director");
     clock.advance(1000, s);
     const peers = lastState().peers;
@@ -145,14 +145,14 @@ describe("DemoSession", () => {
     expect(batch.results.map((r) => r.state)).toEqual(["ok", "ok"]);
 
     s.handle({ call: "sendFiles", args: { folder: "/x", items: [{ path: "a.wav", actorId: quincey.id }] } });
-    expect(lastState().director!.files.batches).toHaveLength(1);
-    expect(events.some((e) => e.type === "toast" && e.level === "error")).toBe(true);
+    expect(lastState().director!.files.batches[1]).toMatchObject({ actorName: "Quincey", state: "sending" });
+    expect(events.some((e) => e.type === "toast" && e.level === "error")).toBe(false);
 
     s.handle({ call: "sendFiles", args: { folder: "/x", items: [{ path: "a.wav", actorId: coda.id }, { path: "b.wav", actorId: coda.id }] } });
     clock.advance(1200, s);
-    const running = lastState().director!.files.batches[1];
+    const running = lastState().director!.files.batches[2];
     s.handle({ call: "cancelBatch", args: { id: running.id } });
-    expect(lastState().director!.files.batches[1]).toMatchObject({ state: "cancelled", ok: 0, failed: 2 });
+    expect(lastState().director!.files.batches[2]).toMatchObject({ state: "cancelled", ok: 0, failed: 2 });
   });
 
   test("actor is asked about incoming files and can accept the rest of the batch", () => {

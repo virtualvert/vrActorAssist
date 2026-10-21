@@ -147,14 +147,16 @@ class V2Relay:
             pass
         return None
 
-    async def _send(self, msg_type: str, data: dict, to: Any = "server", reply_to: str | None = None) -> None:
+    async def _send(self, msg_type: str, data: dict, to: Any = "server", reply_to: str | None = None) -> str:
+        """Returns the message id (a relay error names it in reply_to)."""
         if self._ws is None:
             raise RuntimeError("Not connected to the relay")
         env = make(msg_type, data, to=to, reply_to=reply_to)
         await self._ws.send(json.dumps(env.wire(), ensure_ascii=False))
+        return env.id
 
-    async def send(self, msg_type: str, data: dict, to: Any) -> None:
-        await self._send(msg_type, data, to)
+    async def send(self, msg_type: str, data: dict, to: Any) -> str:
+        return await self._send(msg_type, data, to)
 
     async def send_frame(self, frame: bytes) -> None:
         """A binary frame (a file chunk, spec §5.7)."""
@@ -236,8 +238,11 @@ class V2Relay:
             if not data.get("ok", True):
                 hub.log("warning", f"{sender_name}: {data.get('command', 'cue')} failed: {data.get('error') or 'unknown error'}")
         elif msg_type == "error":
-            # Errors about file messages are races at the end of a transfer, already shown in its result
-            if str(data.get("type") or "").startswith("file."):
+            # A refused file offer also ends that file (relays before Phase 2 M1b send only this). Other
+            # errors about file messages are races at the end of a transfer, already shown in its result.
+            if self.agent.files.sender.on_error(env.get("reply_to"), str(data.get("message") or data.get("code") or "")):
+                pass
+            elif str(data.get("type") or "").startswith("file."):
                 logging.getLogger("vrcas").info("Relay about %s: %s", data.get("type"), data.get("message"))
             else:
                 hub.log("warning", f"Relay: {data.get('message') or data.get('code')}")

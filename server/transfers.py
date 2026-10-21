@@ -6,8 +6,7 @@ The relay doesn't read the files. It keeps one entry per offer so that:
 - replies (accept, progress, ok, ...) always reach the offer's sender, whatever `to` says;
 - when either side goes away, the other hears about it (`file.err` from the relay).
 
-Transfers to and from v0.3 clients don't come through here yet: an offer to a v0.3 client is
-answered with `unsupported`.
+Files to and from v0.3 clients use the same entries; file_bridge.py translates for the v0.3 side.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from __future__ import annotations
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from vrcas_protocol import Envelope, IdsTarget, KIND_FILE_CHUNK, chunk_count, make, unpack_chunk
 from vrcas_protocol.chunks import HEADER_SIZE
@@ -45,6 +44,8 @@ class Transfer:
     accepted: bool = False
     forwarded: int = 0
     started: float = field(default_factory=time.monotonic)
+    # file_bridge.ToLegacy for a file on its way to a v0.3 client
+    leg: Any = None
 
     @property
     def chunks(self) -> int:
@@ -85,13 +86,18 @@ class Transfers:
         """A validated file.* message (TYPES). Raises Refused; the router answers with an error."""
         router = self.relay.router
         if env.type == "file.offer":
-            transfer = self._offer(sender, env, payload)
+            try:
+                transfer = self._offer(sender, env, payload)
+            except Refused as exc:
+                # Besides the error, a file.err the sender can tie to its transfer
+                await self._send_err_to(sender, payload.transfer_id, str(exc))
+                raise
             self.by_id[transfer.id] = transfer
             await router.route(sender, env)
             return
         if env.type == "file.batch.cancel":
             for transfer in [t for t in self.open_for(sender) if t.batch_id == payload.batch_id]:
-                self._close(transfer, "cancelled")
+                self.close(transfer, "cancelled")
             await router.route(sender, env)
             return
 
@@ -113,13 +119,14 @@ class Transfers:
         env.to = IdsTarget(ids=[transfer.sender.id])
         if env.type == "file.accept":
             transfer.accepted = True
-        elif env.type == "file.ok":
-            self._close(transfer, "ok")
-        elif env.type == "file.deny":
-            self._close(transfer, f"declined ({payload.reason})" if payload.reason else "declined")
-        elif env.type == "file.err":
-            self._close(transfer, f"failed ({payload.error})" if payload.error else "failed")
+        # Routed before the entry is closed: the bridge looks the file name up for a v0.3 director
         await router.route(sender, env)
+        if env.type == "file.ok":
+            self.close(transfer, "ok")
+        elif env.type == "file.deny":
+            self.close(transfer, f"declined ({payload.reason})" if payload.reason else "declined")
+        elif env.type == "file.err":
+            self.close(transfer, f"failed ({payload.error})" if payload.error else "failed")
 
     def _offer(self, sender: Session, env: Envelope, payload) -> Transfer:
         settings = self.relay.settings
@@ -134,8 +141,7 @@ class Transfers:
         if recipient is None or recipient is sender:
             raise Refused("unknown_target", f"Not connected: {recipient_id}", [recipient_id])
         if recipient.legacy:
-            raise Refused("unsupported", f"{recipient.name} uses a v0.3 client, which can't receive files from "
-                          "vrcActorSync 0.4 yet", [recipient.id])
+            self.relay.bridge.files.check_offer(sender, recipient, payload)
         return Transfer(id=payload.transfer_id, batch_id=payload.batch_id, name=payload.name, size=payload.size,
                         chunk_size=payload.chunk_size, sender=sender, recipient=recipient)
 
@@ -166,7 +172,12 @@ class Transfers:
         if chunk.index >= transfer.chunks or len(chunk.payload) > transfer.chunk_size:
             await self.fail(transfer, f"Chunk {chunk.index} doesn't fit a {transfer.size}-byte file")
             return
-        if not await transfer.recipient.send_bytes(frame):
+        if transfer.recipient.legacy:
+            error = await self.relay.bridge.files.chunk_to_legacy(transfer, chunk)
+            if error:
+                await self.fail(transfer, error)
+                return
+        elif not await transfer.recipient.send_bytes(frame):
             await self.fail(transfer, f"{transfer.recipient.name} disconnected")
             return
         transfer.forwarded += 1
@@ -174,8 +185,8 @@ class Transfers:
     # ---- ending transfers --------------------------------------------------------------------------
 
     async def fail(self, transfer: Transfer, error: str) -> None:
-        """End a transfer from the relay's side: both ends get file.err."""
-        self._close(transfer, f"failed ({error})")
+        """End a transfer from the relay's side: both ends get file.err (v0.3 clients their own frames)."""
+        self.close(transfer, f"failed ({error})")
         for session in (transfer.sender, transfer.recipient):
             await self._send_err(session, transfer, error)
 
@@ -188,19 +199,26 @@ class Transfers:
                 other = transfer.sender
             else:
                 continue
-            self._close(transfer, f"{session.name} disconnected")
+            self.close(transfer, f"{session.name} disconnected")
             await self._send_err(other, transfer, f"{session.name} disconnected")
+        self.relay.bridge.files.forget_session(session)
 
     async def _send_err(self, session: Session, transfer: Transfer, error: str) -> None:
+        if session.legacy:
+            await self.relay.bridge.files.error_to_legacy(session, transfer, error)
+            return
+        await self._send_err_to(session, transfer.id, error)
+
+    async def _send_err_to(self, session: Session, transfer_id: str, error: str) -> None:
         if session.legacy or not session.id:
             return
-        env = make("file.err", {"transfer_id": transfer.id, "error": error}, to={"ids": [session.id]},
+        env = make("file.err", {"transfer_id": transfer_id, "error": error[:500]}, to={"ids": [session.id]},
                    from_="server", ts=self.relay.clock.now_ms())
         from .router import frame
 
         await session.send_text(frame(env))
 
-    def _close(self, transfer: Transfer, result: str) -> None:
+    def close(self, transfer: Transfer, result: str) -> None:
         if self.by_id.pop(transfer.id, None) is None:
             return
         self.recent[transfer.id] = None

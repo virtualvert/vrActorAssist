@@ -1,6 +1,7 @@
 """Files addon (agent/files.py): receiving, sending, and both through a real v2 relay."""
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -508,6 +509,130 @@ def test_v03_import_of_file_settings(tmp_path):
     assert store.config.files.receive_dir == "C:/cues" and store.config.files.auto_accept
     again = ConfigStore(tmp_path / "data")
     assert again.config.files.receive_dir == "C:/cues"
+
+
+def test_sender_relay_error_ends_the_file(tmp_path):
+    """A relay before M1b answers an offer to a v0.3 actor with only an `error`."""
+
+    async def scenario():
+        agent = fake_agent(tmp_path, role="director")
+        ids = iter(f"m{i}" for i in range(100))
+
+        async def send(msg_type, data, to):
+            agent.files.sent.append((msg_type, data, to))
+            return next(ids)
+
+        agent.files.send = send
+        tx = Sender(agent)
+        batch = tx.start("s_lex", "Lex", [make_file(tmp_path, "a.wav", 10)])
+        await offered(agent)
+        offer_msg_id = "m1"  # batch.start was m0
+        assert not tx.on_error("someone-else", "x")
+        assert tx.on_error(offer_msg_id, "Lex uses a v0.3 client, which can't receive files from vrcActorSync 0.4 yet")
+        await settle()
+        view = batch.view()
+        assert view["state"] == "done" and view["failed"] == 1
+        assert "v0.3 client" in view["results"][0]["detail"]
+
+    asyncio.run(scenario())
+
+
+# ---- v0.3 clients through the relay's bridge (Phase 2 M1b) ------------------------------------------
+
+
+def test_v2_director_to_scripted_v03_actor(relay, tmp_path, monkeypatch):  # noqa: F811
+    from .test_relay_v2 import legacy_client, read_until
+
+    running, state = relay
+    url = f"127.0.0.1:{running.port}"
+    src = tmp_path / "project"
+    src.mkdir()
+    data = os.urandom(300_000)
+    (src / "Scene 4 - Lex.wav").write_bytes(data)
+
+    async def scenario():
+        director = make_agent(tmp_path, monkeypatch, "Mira", "director", "m-mira", url, SECRET)
+        lex = None
+        try:
+            await director.start()
+            await wait_for(lambda: director.relay.status == "connected")
+            lex = legacy_client(running.url, "lex", "Lex")
+            lex.send("REGISTER|Lex|m-lex|actor||0.3.3|windows-x64")
+            await read_until(lex, "DENIED|")
+            await wait_for(lambda: director.snapshot()["pending"])
+            await director.handle_call("approve", {"id": director.snapshot()["pending"][0]["id"]})
+            await read_until(lex, "USERS|")
+            await wait_for(lambda: any(p["name"] == "Lex" for p in director.snapshot()["peers"]))
+            peer = next(p for p in director.snapshot()["peers"] if p["name"] == "Lex")
+            assert peer["caps"] == ["legacy"]
+
+            director.folders.open(str(src), "all")
+            await director.handle_call("sendFiles", {"folder": str(src), "items": [{"path": "Scene 4 - Lex.wav", "actorId": peer["id"]}]})
+            got = await read_until(lex, "FILEREQ|")
+            assert not [f for f in got if f.startswith("BATCH_")]  # a one-file batch looks like a single send
+            assert got[-1] == f"FILEREQ|Mira|Lex|Scene 4 - Lex.wav|{len(data)}|{hashlib.md5(data).hexdigest()}"
+            lex.send("FILEACK|Scene 4 - Lex.wav|1|C:/cues")
+            frames_ = await read_until(lex, "FILEEND|", timeout=10)
+            pieces = [f.split("|", 3)[3] for f in frames_ if f.startswith("FILECHUNK|")]
+            received = b"".join(base64.b64decode(p) for p in pieces)
+            assert received == data
+            assert frames_[-1] == f"FILEEND|Scene 4 - Lex.wav|{hashlib.md5(received).hexdigest()}"
+            lex.send("FILEOK|Scene 4 - Lex.wav|C:/cues/Scene 4 - Lex.wav")
+            await wait_for(lambda: director.snapshot()["director"]["files"]["batches"][0]["state"] == "done")
+            batch = director.snapshot()["director"]["files"]["batches"][0]
+            assert (batch["ok"], batch["failed"]) == (1, 0)
+            assert state.files.by_id == {}
+        finally:
+            if lex is not None:
+                lex.close()
+            await director.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_scripted_v03_director_to_v2_actor(relay, tmp_path, monkeypatch):  # noqa: F811
+    from .test_relay_v2 import legacy_client, read_until
+
+    running, state = relay
+    url = f"127.0.0.1:{running.port}"
+    data = os.urandom(150_000)
+    md5 = hashlib.md5(data).hexdigest()
+
+    async def scenario():
+        coda = make_agent(tmp_path, monkeypatch, "Coda", "actor", "m-coda", url)
+        coda.config.files.receive_dir = str(tmp_path / "inbox")
+        old = None
+        try:
+            old = legacy_client(running.url, "old", "Old")
+            old.send(f"REGISTER|Old|m-old|director|{SECRET}|0.3.3|windows-x64")
+            await read_until(old, "PENDING|")
+            await coda.start()
+            got = await read_until(old, 'PENDING|[{')
+            assert '"machine_id": "m-coda"' in got[-1]
+            old.send("APPROVE|m-coda")
+            await wait_for(lambda: coda.relay.status == "connected")
+            await read_until(old, "USERS|Coda")
+
+            old.send(f"BATCH_START|Coda|1|{len(data)}")
+            old.send(f"FILEREQ|Director|Coda|line.wav|{len(data)}|{md5}")
+            await wait_for(lambda: coda.snapshot()["actor"]["files"]["incoming"])
+            offer = coda.snapshot()["actor"]["files"]["incoming"][0]
+            assert (offer["name"], offer["from"], offer["count"]) == ("line.wav", "Old", 1)
+            await coda.handle_call("answerFile", {"transferId": offer["transferId"], "accept": True})
+            assert (await read_until(old, "FILEACK|"))[-1] == "FILEACK|line.wav|1|"
+            old.send("FILESTART|line.wav|3|65536")
+            for i, o in enumerate(range(0, len(data), 65536)):
+                old.send(f"FILECHUNK|line.wav|{i}|{base64.b64encode(data[o:o + 65536]).decode()}")
+            old.send(f"FILEEND|line.wav|{md5}")
+            assert (await read_until(old, "FILEOK|"))[-1] == "FILEOK|line.wav|inbox/line.wav"
+            old.send("BATCH_END|Coda|1|0")
+            assert (tmp_path / "inbox" / "line.wav").read_bytes() == data
+            await wait_for(lambda: coda.snapshot()["actor"]["files"]["recent"][0]["ok"])
+            assert state.files.by_id == {}
+        finally:
+            if old is not None:
+                old.close()
+            await coda.shutdown()
 
 
 def test_batch_log_says_why_files_did_not_go(tmp_path):

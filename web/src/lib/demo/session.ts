@@ -41,7 +41,7 @@ interface CastMember {
   name: string;
   role: Role;
   baseLatency: number;
-  /** Runs the v0.3 client: can't receive files from the new app yet. */
+  /** Runs the v0.3 client (receives files through the relay's bridge). */
   legacy?: boolean;
 }
 
@@ -442,8 +442,8 @@ export class DemoSession {
     const now = this.#clock.now();
     for (const [actorId, paths] of byActor) {
       const peer = this.state.peers.find((p) => p.id === actorId);
-      if (!peer || !peer.caps.includes("files")) {
-        this.#toast("error", `${peer?.name ?? "That actor"} can't receive files from the new app yet`);
+      if (!peer || !(peer.caps.includes("files") || peer.caps.includes("legacy"))) {
+        this.#toast("error", `${peer?.name ?? "That actor"}'s app is too old to receive files`);
         continue;
       }
       // The demo folder's sizes, else pretend ones (0.4–2.4 MB, stable per name)
@@ -540,7 +540,7 @@ export class DemoSession {
     for (const each of ids) {
       if (!this.#sending.has(each)) continue;
       const name = this.state.director?.files.batches.find((b) => b.id === each)?.actorName ?? "";
-      this.#endBatch(each, "cancelled", "Cancelled by the director");
+      this.#endBatch(each, "cancelled", "Cancelled by director");
       this.#log("warning", `Files to ${name} cancelled`);
     }
   }
