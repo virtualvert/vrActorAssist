@@ -1,9 +1,9 @@
-"""Connection to a v0.3.x relay (server_ws.py) over its pipe-delimited protocol on /ws.
+"""Compatibility mode: the v0.3 pipe protocol on /ws, for relays without /v2/ws (spec §5.6).
 
-This lets the new app work with today's server. The legacy protocol only tells us actor
-names (USERS), latency (STATUS, directors only) and pending approvals (PENDING), so the
-roster is thinner than with the v2 relay: other directors are inferred from chat, and
-camera operators are invisible to everyone else until the v2 relay lands.
+agent/relay.py uses this when a relay answers /v2/ws with 403 or 404. The v0.3 protocol only
+tells us actor names (USERS), latency (STATUS, directors only) and pending approvals (PENDING),
+so the roster is thinner than on a v2 relay: other directors are inferred from chat, and camera
+operators are invisible to everyone else.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed, InvalidURI, WebSocketException
+from websockets.exceptions import ConnectionClosed
 
 from shared import format_message, get_machine_id, get_platform_id, parse_message
 
@@ -26,9 +26,6 @@ from . import APP_VERSION
 if TYPE_CHECKING:
     from .core import Agent
 
-BACKOFF_START_S = 1.0
-BACKOFF_MAX_S = 30.0
-COUNTDOWN_S = 3.0
 CUE_FLASH_S = 3.0
 # The relay parses versions as integers, so send "0.4.0" rather than "0.4.0-dev".
 WIRE_VERSION = APP_VERSION.split("-")[0]
@@ -87,6 +84,33 @@ def version_tuple(version: str) -> tuple[int, ...]:
         return (0,)
 
 
+def connect_kwargs(url: str) -> dict:
+    kwargs = {"open_timeout": 10, "ping_interval": 30, "ping_timeout": 10, "max_size": 2**24}
+    if url.startswith("wss://"):
+        kwargs["ssl"] = ssl_context()
+    return kwargs
+
+
+async def perform_cue(relay, command: str, sender: str, sender_peer: str) -> tuple[bool, str | None]:
+    """Run a cue (`*go`, `*stop`, `*play:N`) on this actor's machine and show it in the UI.
+    Shared by both protocols; each one acknowledges the cue its own way."""
+    agent = relay.agent
+    hub = agent.hub
+    hub.traffic(sender_peer, ["self"], "stop" if "stop" in command else "cue")
+    ok, error = await agent.actor.run_cue(command)
+    agent.last_cue = {"command": command, "at": int(time.time() * 1000), "ok": ok}
+    if ok:
+        relay.self_playing_until = 0.0 if "stop" in command else time.monotonic() + CUE_FLASH_S
+        state = agent.actor.soundpad_state()["state"]
+        note = {"simulated": " (simulated)", "disabled": " (Soundpad is off)", "fallback": " (via Soundpad.exe -rc)"}.get(state, "")
+        hub.log("success", f"{command} from {sender}{note}")
+    else:
+        hub.log("error", f"{command} failed: {error}")
+    agent.changed()
+    asyncio.get_running_loop().call_later(CUE_FLASH_S + 0.1, agent.changed)
+    return ok, error
+
+
 @dataclass
 class RemoteActor:
     name: str
@@ -94,7 +118,16 @@ class RemoteActor:
     timed_out: bool = False
 
 
+def machine_id() -> str:
+    # VRCAS_MACHINE_ID lets several agents share one PC (testing); normally it's per machine.
+    return os.environ.get("VRCAS_MACHINE_ID") or get_machine_id()
+
+
 class LegacyRelay:
+    """One protocol of agent/relay.py's Relay, which owns the reconnect loop and the countdown."""
+
+    legacy = True
+
     def __init__(self, agent: "Agent"):
         self.agent = agent
         self.status = "disconnected"
@@ -105,39 +138,11 @@ class LegacyRelay:
         self.directors: set[str] = set()
         self.pending: list[dict] = []
         self.targets: set[str] = set()
-        self.countdown_ends: float | None = None
         self.self_playing_until = 0.0
         self._ws = None
-        self._task: asyncio.Task | None = None
-        self._countdown_task: asyncio.Task | None = None
-        # VRCAS_MACHINE_ID lets several agents share one PC (testing); normally it's per machine.
-        self._machine_id = os.environ.get("VRCAS_MACHINE_ID") or get_machine_id()
+        self._machine_id = machine_id()
 
-    # ---- lifecycle --------------------------------------------------------
-
-    @property
-    def running(self) -> bool:
-        return self._task is not None and not self._task.done()
-
-    def start(self) -> None:
-        if self.running:
-            return
-        self._task = asyncio.get_running_loop().create_task(self._run())
-
-    async def stop(self, detail: str = "Disconnected") -> None:
-        task, self._task = self._task, None
-        self._cancel_countdown()
-        if task:
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-        self._reset(detail)
-
-    async def restart(self) -> None:
-        await self.stop("Reconnecting…")
-        self.start()
+    # ---- connection -------------------------------------------------------
 
     def _reset(self, detail: str, status: str = "disconnected") -> None:
         self.status = status
@@ -154,39 +159,10 @@ class LegacyRelay:
         self.detail = detail
         self.agent.changed()
 
-    async def _run(self) -> None:
-        backoff = BACKOFF_START_S
-        cfg = self.agent.config
-        try:
-            url = ws_url(cfg.server_url)
-        except ValueError as exc:
-            self._set("error", str(exc))
-            return
-        self.host = host_of(url)
-        while True:
-            self._set("connecting", f"Connecting to {self.host}…")
-            fatal = None
-            try:
-                fatal = await self._session(url)
-                backoff = BACKOFF_START_S
-            except asyncio.CancelledError:
-                raise
-            except (OSError, WebSocketException, InvalidURI, asyncio.TimeoutError) as exc:
-                self.agent.hub.log("warning", f"Relay connection failed: {exc}")
-            if fatal:
-                self._reset(fatal, status="error")
-                return
-            self._reset(f"Lost connection to {self.host}. Retrying in {int(backoff)} s…", status="connecting")
-            await asyncio.sleep(backoff)
-            backoff = min(backoff * 2, BACKOFF_MAX_S)
-
     async def _session(self, url: str) -> str | None:
         """One connection. Returns a message when we must not reconnect (e.g. bad secret)."""
         cfg = self.agent.config
-        kwargs = {"open_timeout": 10, "ping_interval": 30, "ping_timeout": 10, "max_size": 2**24}
-        if url.startswith("wss://"):
-            kwargs["ssl"] = ssl_context()
-        async with connect(url, **kwargs) as ws:
+        async with connect(url, **connect_kwargs(url)) as ws:
             self._ws = ws
             self.agent.hub.log("info", f"Connected to {self.host}, registering as {cfg.role}…")
             await ws.send(
@@ -314,20 +290,9 @@ class LegacyRelay:
         self.agent.hub.log("chat", f"(private) {text}", sender)
 
     async def _run_cue(self, command: str, sender: str) -> None:
-        hub = self.agent.hub
-        hub.traffic(self._peer_id(sender), ["self"], "stop" if "stop" in command else "cue")
-        ok, error = await self.agent.actor.run_cue(command)
-        self.agent.last_cue = {"command": command, "at": int(time.time() * 1000), "ok": ok}
+        ok, _ = await perform_cue(self, command, sender, self._peer_id(sender))
         if ok:
             await self.send(format_message("ACK", actor=clean(self.agent.config.name), command=command, status="OK"))
-            self.self_playing_until = 0.0 if "stop" in command else time.monotonic() + CUE_FLASH_S
-            state = self.agent.actor.soundpad_state()["state"]
-            note = {"simulated": " (simulated)", "disabled": " (Soundpad is off)", "fallback": " (via Soundpad.exe -rc)"}.get(state, "")
-            hub.log("success", f"{command} from {sender}{note}")
-        else:
-            hub.log("error", f"{command} failed: {error}")
-        self.agent.changed()
-        asyncio.get_running_loop().call_later(CUE_FLASH_S + 0.1, self.agent.changed)
 
     def _on_users(self, names: list[str]) -> None:
         own = self.agent.config.name
@@ -359,36 +324,9 @@ class LegacyRelay:
 
     # ---- director actions -------------------------------------------------
 
-    async def cue(self, command: str) -> None:
-        if command == "countdown":
-            if self._countdown_task is None:
-                self.countdown_ends = time.time() + COUNTDOWN_S
-                self._countdown_task = asyncio.get_running_loop().create_task(self._countdown())
-                self.agent.hub.log("info", "⏱ Playing in 3 seconds…")
-                self.agent.changed()
-            return
-        if command == "stop" and self._countdown_task is not None:
-            self._cancel_countdown()
-            self.agent.hub.log("info", "■ Countdown cancelled")
-        await self._send_cue("*go" if command == "go" else "*stop")
-
-    async def _countdown(self) -> None:
-        try:
-            await asyncio.sleep(COUNTDOWN_S)
-            self._countdown_task = None
-            self.countdown_ends = None
-            await self._send_cue("*go")
-        except asyncio.CancelledError:
-            pass
-        finally:
-            self.agent.changed()
-
-    def _cancel_countdown(self) -> None:
-        if self._countdown_task is not None:
-            self._countdown_task.cancel()
-        self._countdown_task = None
-        self.countdown_ends = None
-        self.agent.changed()
+    async def send_cue(self, kind: str) -> None:
+        """Go or Stop to the targeted actors: one `PRIV *go` / `*stop` each, like the v0.3 director."""
+        await self._send_cue("*go" if kind == "go" else "*stop")
 
     async def _send_cue(self, command: str) -> None:
         names = [n for n in sorted(self.targets) if n in self.actors and not self.actors[n].timed_out]
@@ -405,6 +343,12 @@ class LegacyRelay:
     def set_targets(self, ids: list[str]) -> None:
         self.targets = {i.split(":", 1)[1] for i in ids if i.startswith("actor:") and i.split(":", 1)[1] in self.actors}
         self.agent.changed()
+
+    def clear_targets(self) -> None:
+        self.targets.clear()
+
+    def target_ids(self) -> list[str]:
+        return sorted(f"actor:{n}" for n in self.targets if n in self.actors)
 
     async def approve(self, pending_id: str) -> None:
         machine_id = pending_id.removeprefix("pending:")

@@ -142,24 +142,28 @@ def data_dir(portable: bool | None = None) -> Path:
     return base / APP_DIR
 
 
-def migrate_legacy(folder: Path) -> Config | None:
+def migrate_legacy(folder: Path, role: str | None = None) -> Config | None:
     """Build a config from the v0.3 client files (actor_config.json / director_config.json).
 
-    The role comes from whichever file exists, so an existing actor opens straight into the
-    actor view. With both present the user picks the role on first launch.
+    The role comes from `role` (--role), else from whichever file exists, so an existing actor
+    opens straight into the actor view. With both present the user picks the role on first
+    launch. The director secret comes along only while the role is director or still open.
     """
     actor = _read_json(folder / "actor_config.json")
     director = _read_json(folder / "director_config.json")
     if actor is None and director is None:
         return None
     cfg = Config()
-    if actor is not None and director is None:
+    if role in ROLES:
+        cfg.role = role
+    elif actor is not None and director is None:
         cfg.role = "actor"
     elif director is not None and actor is None:
         cfg.role = "director"
     if director:
         cfg.server_url = _str(director.get("server_url"))
-        cfg.secret = _str(director.get("secret"))
+        if cfg.role in (None, "director"):
+            cfg.secret = _str(director.get("secret"))
     if actor:
         cfg.server_url = _str(actor.get("server_url")) or cfg.server_url
         cfg.name = _str(actor.get("actor_name"))
@@ -186,18 +190,18 @@ def _read_json(path: Path) -> dict | None:
 class ConfigStore:
     """Loads once, saves atomically on every change."""
 
-    def __init__(self, folder: Path, legacy_folder: Path | None = None):
+    def __init__(self, folder: Path, legacy_folder: Path | None = None, role: str | None = None):
         self.folder = folder
         self.path = folder / CONFIG_FILE
         self.migrated = False
-        self.config = self._load(legacy_folder)
+        self.config = self._load(legacy_folder, role)
 
-    def _load(self, legacy_folder: Path | None) -> Config:
+    def _load(self, legacy_folder: Path | None, role: str | None) -> Config:
         data = _read_json(self.path)
         if data is not None:
             return Config.from_dict(data)
         if legacy_folder is not None:
-            legacy = migrate_legacy(legacy_folder)
+            legacy = migrate_legacy(legacy_folder, role)
             if legacy is not None:
                 self.migrated = True
                 self.config = legacy

@@ -75,6 +75,18 @@ def test_both_v03_files_leave_the_role_open(tmp_path):
     assert cfg.secret == "s3"
 
 
+def test_role_from_the_command_line_keeps_the_secret_out(tmp_path):
+    # An actor or camera config never holds the director secret (manual checklist, Windows box)
+    (tmp_path / "actor_config.json").write_text(json.dumps({"server_url": "ws://a", "actor_name": "Coda"}))
+    (tmp_path / "director_config.json").write_text(json.dumps({"server_url": "ws://d", "secret": "s3"}))
+    for role in ("actor", "camera"):
+        store = ConfigStore(tmp_path / role, legacy_folder=tmp_path, role=role)
+        assert (store.config.role, store.config.secret) == (role, "")
+        assert "s3" not in (tmp_path / role / "config.json").read_text()
+    director = ConfigStore(tmp_path / "director", legacy_folder=tmp_path, role="director")
+    assert (director.config.role, director.config.secret) == ("director", "s3")
+
+
 def test_existing_config_wins_over_legacy(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"role": "director", "name": "D"}))
     (tmp_path / "actor_config.json").write_text(json.dumps({"actor_name": "Coda"}))

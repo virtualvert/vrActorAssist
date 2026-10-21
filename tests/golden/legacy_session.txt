@@ -1,0 +1,477 @@
+## dir → REGISTER|Mira|m-dir|director|golden-secret|0.3.3|windows-x64
+dir    ← APPROVED
+dir    ← VERSION|ok|0.3.3|
+dir    ← USERS|
+dir    ← PENDING|[]
+dir    ← MSG|Mira|~sync 1
+## bad → REGISTER|Nope|m-bad|director|wrong-secret|0.3.3|windows-x64
+dir    ← MSG|Mira|~sync 2
+bad    ← DENIED|Invalid secret
+bad    ← <closed>
+## coda → REGISTER|Coda|m-coda|actor||0.3.2|windows-x64
+dir    ← PENDING|[{"machine_id": "m-coda", "name": "Coda"}]
+dir    ← MSG|Mira|~sync 3
+coda   ← DENIED|Pending approval
+coda   ← DENIED|Not approved
+## coda → MSG|Coda|anyone there?
+dir    ← MSG|Mira|~sync 4
+coda   ← DENIED|Not approved
+coda   ← DENIED|Not approved
+## dir → APPROVE|m-coda
+dir    ← MSG|SERVER|Coda joined
+dir    ← USERS|Coda
+dir    ← PENDING|[]
+dir    ← MSG|Mira|~sync 5
+coda   ← APPROVED
+coda   ← VERSION|warning|0.3.3|Client v0.3.2 may have issues with server v0.3.3. Some features may not work.
+coda   ← UPDATE|0.3.3|https://example.invalid/actor.exe|aa11|Golden notes
+coda   ← MSG|SERVER|Coda joined
+coda   ← USERS|Coda
+coda   ← MSG|Mira|~sync 5
+## ari → REGISTER|Ari|m-ari|actor||0.3.3|windows-x64
+dir    ← PENDING|[{"machine_id": "m-ari", "name": "Ari"}]
+dir    ← MSG|Mira|~sync 6
+coda   ← MSG|Mira|~sync 6
+ari    ← DENIED|Pending approval
+ari    ← DENIED|Not approved
+## dir → APPROVE|m-ari
+dir    ← MSG|SERVER|Ari joined
+dir    ← USERS|Coda,Ari
+dir    ← PENDING|[]
+dir    ← MSG|Mira|~sync 7
+coda   ← MSG|SERVER|Ari joined
+coda   ← USERS|Coda,Ari
+coda   ← MSG|Mira|~sync 7
+ari    ← APPROVED
+ari    ← VERSION|ok|0.3.3|
+ari    ← MSG|SERVER|Ari joined
+ari    ← USERS|Coda,Ari
+ari    ← MSG|Mira|~sync 7
+## old → REGISTER|Oldie|m-old|actor|
+dir    ← PENDING|[{"machine_id": "m-old", "name": "Oldie"}]
+dir    ← MSG|Mira|~sync 8
+coda   ← MSG|Mira|~sync 8
+ari    ← MSG|Mira|~sync 8
+old    ← DENIED|Pending approval
+old    ← DENIED|Not approved
+## dir → APPROVE|m-old
+dir    ← MSG|SERVER|Oldie joined
+dir    ← USERS|Coda,Ari,Oldie
+dir    ← PENDING|[]
+dir    ← MSG|Mira|~sync 9
+coda   ← MSG|SERVER|Oldie joined
+coda   ← USERS|Coda,Ari,Oldie
+coda   ← MSG|Mira|~sync 9
+ari    ← MSG|SERVER|Oldie joined
+ari    ← USERS|Coda,Ari,Oldie
+ari    ← MSG|Mira|~sync 9
+old    ← APPROVED
+old    ← MSG|SERVER|Oldie joined
+old    ← USERS|Coda,Ari,Oldie
+old    ← MSG|Mira|~sync 9
+## eve → REGISTER|Eve|m-eve|actor||0.3.3|windows-x64
+dir    ← PENDING|[{"machine_id": "m-eve", "name": "Eve"}]
+dir    ← MSG|Mira|~sync 10
+coda   ← MSG|Mira|~sync 10
+ari    ← MSG|Mira|~sync 10
+old    ← MSG|Mira|~sync 10
+eve    ← DENIED|Pending approval
+eve    ← DENIED|Not approved
+## dir → DENY|m-eve
+dir    ← PENDING|[]
+dir    ← MSG|Mira|~sync 11
+coda   ← MSG|Mira|~sync 11
+ari    ← MSG|Mira|~sync 11
+old    ← MSG|Mira|~sync 11
+eve    ← DENIED|Denied by director
+eve    ← <closed>
+## dir → APPROVE|m-unknown
+dir    ← MSG|Mira|~sync 12
+coda   ← MSG|Mira|~sync 12
+ari    ← MSG|Mira|~sync 12
+old    ← MSG|Mira|~sync 12
+## dir → CMD|go
+dir    ← CMD|go
+dir    ← MSG|Mira|~sync 13
+coda   ← CMD|go
+coda   ← MSG|Mira|~sync 13
+ari    ← CMD|go
+ari    ← MSG|Mira|~sync 13
+old    ← CMD|go
+old    ← MSG|Mira|~sync 13
+## dir → CMD|stop|extra
+dir    ← CMD|stop
+dir    ← MSG|Mira|~sync 14
+coda   ← CMD|stop
+coda   ← MSG|Mira|~sync 14
+ari    ← CMD|stop
+ari    ← MSG|Mira|~sync 14
+old    ← CMD|stop
+old    ← MSG|Mira|~sync 14
+## dir → PRIV|Mira|Coda|*go
+dir    ← MSG|Mira|~sync 15
+coda   ← PRIV|Mira|Coda|*go
+coda   ← MSG|Mira|~sync 15
+ari    ← MSG|Mira|~sync 15
+old    ← MSG|Mira|~sync 15
+## dir → PRIV|Mira|Coda|*stop
+dir    ← MSG|Mira|~sync 16
+coda   ← PRIV|Mira|Coda|*stop
+coda   ← MSG|Mira|~sync 16
+ari    ← MSG|Mira|~sync 16
+old    ← MSG|Mira|~sync 16
+## dir → PRIV|Mira|Ari|*play:3
+dir    ← MSG|Mira|~sync 17
+coda   ← MSG|Mira|~sync 17
+ari    ← PRIV|Mira|Ari|*play:3
+ari    ← MSG|Mira|~sync 17
+old    ← MSG|Mira|~sync 17
+## dir → PRIV|Mira|Nobody|*go
+dir    ← MSG|SERVER|Actor 'Nobody' not found
+dir    ← MSG|Mira|~sync 18
+coda   ← MSG|Mira|~sync 18
+ari    ← MSG|Mira|~sync 18
+old    ← MSG|Mira|~sync 18
+## coda → ACK|Coda|*go|OK
+dir    ← MSG|Coda|~sync 19
+coda   ← MSG|Coda|~sync 19
+ari    ← MSG|Coda|~sync 19
+old    ← MSG|Coda|~sync 19
+## dir → OSC_CUE|Coda|RecIcon|true
+dir    ← MSG|Mira|~sync 20
+coda   ← OSC_CUE|Coda|RecIcon|true
+coda   ← MSG|Mira|~sync 20
+ari    ← MSG|Mira|~sync 20
+old    ← MSG|Mira|~sync 20
+## dir → OSC_CUE|Nobody|RecIcon|true
+dir    ← MSG|Mira|~sync 21
+coda   ← MSG|Mira|~sync 21
+ari    ← MSG|Mira|~sync 21
+old    ← MSG|Mira|~sync 21
+## coda → CMD|go
+dir    ← MSG|Coda|~sync 22
+coda   ← MSG|SERVER|Permission denied: only the director can send CMD
+coda   ← MSG|Coda|~sync 22
+ari    ← MSG|Coda|~sync 22
+old    ← MSG|Coda|~sync 22
+## coda → PRIV|Coda|Ari|*go
+dir    ← MSG|Coda|~sync 23
+coda   ← MSG|SERVER|Permission denied: only the director can send PRIV
+coda   ← MSG|Coda|~sync 23
+ari    ← MSG|Coda|~sync 23
+old    ← MSG|Coda|~sync 23
+## coda → OSC_CUE|Ari|Wave|1
+dir    ← MSG|Coda|~sync 24
+coda   ← MSG|SERVER|Permission denied: only the director can send OSC_CUE
+coda   ← MSG|Coda|~sync 24
+ari    ← MSG|Coda|~sync 24
+old    ← MSG|Coda|~sync 24
+## coda → FILEREQ|Coda|Ari|evil.exe|4|00
+dir    ← MSG|Coda|~sync 25
+coda   ← MSG|SERVER|Permission denied: only the director can send FILEREQ
+coda   ← MSG|Coda|~sync 25
+ari    ← MSG|Coda|~sync 25
+old    ← MSG|Coda|~sync 25
+## coda → APPROVE|m-x
+dir    ← MSG|Coda|~sync 26
+coda   ← MSG|Coda|~sync 26
+ari    ← MSG|Coda|~sync 26
+old    ← MSG|Coda|~sync 26
+## coda → FORGET_NAME|Ari
+dir    ← MSG|Coda|~sync 27
+coda   ← MSG|Coda|~sync 27
+ari    ← MSG|Coda|~sync 27
+old    ← MSG|Coda|~sync 27
+## coda → MSG|Coda|line?
+dir    ← MSG|Coda|line?
+dir    ← MSG|Coda|~sync 28
+coda   ← MSG|Coda|line?
+coda   ← MSG|Coda|~sync 28
+ari    ← MSG|Coda|line?
+ari    ← MSG|Coda|~sync 28
+old    ← MSG|Coda|line?
+old    ← MSG|Coda|~sync 28
+## dir → MSG|Mira|Places ¡Acción! 🎬 a|b
+dir    ← MSG|Mira|Places ¡Acción! 🎬 a|b
+dir    ← MSG|Mira|~sync 29
+coda   ← MSG|Mira|Places ¡Acción! 🎬 a|b
+coda   ← MSG|Mira|~sync 29
+ari    ← MSG|Mira|Places ¡Acción! 🎬 a|b
+ari    ← MSG|Mira|~sync 29
+old    ← MSG|Mira|Places ¡Acción! 🎬 a|b
+old    ← MSG|Mira|~sync 29
+## coda → PRIV|Coda|Mira|need a minute
+dir    ← PRIV|Coda|Mira|need a minute
+dir    ← MSG|Coda|~sync 30
+coda   ← MSG|Coda|~sync 30
+ari    ← MSG|Coda|~sync 30
+old    ← MSG|Coda|~sync 30
+## ari → PRIV|Ari|Coda|hi *wave*
+dir    ← MSG|Ari|~sync 31
+coda   ← PRIV|Ari|Coda|hi *wave*
+coda   ← MSG|Ari|~sync 31
+ari    ← MSG|Ari|~sync 31
+old    ← MSG|Ari|~sync 31
+## coda → FILECHUNK|x.wav|notanumber|zz
+dir    ← MSG|Coda|~sync 32
+coda   ← MSG|Coda|~sync 32
+ari    ← MSG|Coda|~sync 32
+old    ← MSG|Coda|~sync 32
+## dir → BATCH_START|Coda|2|10
+dir    ← MSG|Mira|~sync 33
+coda   ← BATCH_START|Coda|2|10
+coda   ← MSG|Mira|~sync 33
+ari    ← MSG|Mira|~sync 33
+old    ← MSG|Mira|~sync 33
+## dir → FILEREQ|Mira|Coda|line1.wav|4|3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7
+dir    ← MSG|Mira|~sync 34
+coda   ← FILEREQ|Mira|Coda|line1.wav|4|3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7
+coda   ← MSG|Mira|~sync 34
+ari    ← MSG|Mira|~sync 34
+old    ← MSG|Mira|~sync 34
+## coda → FILEACK|line1.wav|1|C:/cues
+dir    ← FILEACK|line1.wav|1|C:/cues
+dir    ← MSG|Coda|~sync 35
+coda   ← MSG|Coda|~sync 35
+ari    ← MSG|Coda|~sync 35
+old    ← MSG|Coda|~sync 35
+## dir → FILESTART|line1.wav|1|65536
+dir    ← MSG|Mira|~sync 36
+coda   ← FILESTART|line1.wav|1|65536
+coda   ← MSG|Mira|~sync 36
+ari    ← MSG|Mira|~sync 36
+old    ← MSG|Mira|~sync 36
+## dir → FILECHUNK|line1.wav|0|ZGF0YQ==
+dir    ← MSG|Mira|~sync 37
+coda   ← FILECHUNK|line1.wav|0|ZGF0YQ==
+coda   ← MSG|Mira|~sync 37
+ari    ← MSG|Mira|~sync 37
+old    ← MSG|Mira|~sync 37
+## dir → FILEEND|line1.wav|3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7
+dir    ← MSG|Mira|~sync 38
+coda   ← FILEEND|line1.wav|3a6eb0790f39ac87c94f3856b2dd2c5d110e6811602261a9a923d3bb23adc8b7
+coda   ← MSG|Mira|~sync 38
+ari    ← MSG|Mira|~sync 38
+old    ← MSG|Mira|~sync 38
+## coda → FILEOK|line1.wav|C:/cues/line1.wav
+dir    ← FILEOK|line1.wav|C:/cues/line1.wav
+dir    ← MSG|Coda|~sync 39
+coda   ← MSG|Coda|~sync 39
+ari    ← MSG|Coda|~sync 39
+old    ← MSG|Coda|~sync 39
+## dir → FILEREQ|Mira|Coda|line2.wav|6|00ff
+dir    ← MSG|Mira|~sync 40
+coda   ← FILEREQ|Mira|Coda|line2.wav|6|00ff
+coda   ← MSG|Mira|~sync 40
+ari    ← MSG|Mira|~sync 40
+old    ← MSG|Mira|~sync 40
+## coda → FILEDENY|line2.wav|Declined by actor
+dir    ← FILEDENY|line2.wav|Declined by actor
+dir    ← MSG|Coda|~sync 41
+coda   ← MSG|Coda|~sync 41
+ari    ← MSG|Coda|~sync 41
+old    ← MSG|Coda|~sync 41
+## dir → BATCH_END|Coda|1|1
+dir    ← MSG|Mira|~sync 42
+coda   ← BATCH_END|Coda|1|1
+coda   ← MSG|Mira|~sync 42
+ari    ← MSG|Mira|~sync 42
+old    ← MSG|Mira|~sync 42
+## coda → FILEACK|line2.wav|1|C:/cues
+dir    ← MSG|Coda|~sync 43
+coda   ← MSG|Coda|~sync 43
+ari    ← MSG|Coda|~sync 43
+old    ← MSG|Coda|~sync 43
+## dir → BATCH_START|Ari|1|4
+dir    ← MSG|Mira|~sync 44
+coda   ← MSG|Mira|~sync 44
+ari    ← BATCH_START|Ari|1|4
+ari    ← MSG|Mira|~sync 44
+old    ← MSG|Mira|~sync 44
+## dir → FILEREQ|Mira|Ari|sfx.wav|4|00
+dir    ← MSG|Mira|~sync 45
+coda   ← MSG|Mira|~sync 45
+ari    ← FILEREQ|Mira|Ari|sfx.wav|4|00
+ari    ← MSG|Mira|~sync 45
+old    ← MSG|Mira|~sync 45
+## dir → BATCH_CANCEL|Ari|Cancelled by director
+dir    ← MSG|Mira|~sync 46
+coda   ← MSG|Mira|~sync 46
+ari    ← BATCH_CANCEL|Ari|Cancelled by director
+ari    ← MSG|Mira|~sync 46
+old    ← MSG|Mira|~sync 46
+## ari → FILEERR|sfx.wav|Cancelled
+dir    ← FILEERR|sfx.wav|Cancelled
+dir    ← MSG|Ari|~sync 47
+coda   ← MSG|Ari|~sync 47
+ari    ← MSG|Ari|~sync 47
+old    ← MSG|Ari|~sync 47
+## dir → FILEREQ|Mira|Nobody|ghost.wav|4|00
+dir    ← MSG|Mira|~sync 48
+coda   ← MSG|Mira|~sync 48
+ari    ← MSG|Mira|~sync 48
+old    ← MSG|Mira|~sync 48
+## dir2 → REGISTER|Bo|m-dir2|director|golden-secret|0.3.2|linux-x64
+dir    ← MSG|SERVER|⚠ Warning: Bo has connected as another director
+dir    ← USERS|Coda,Ari,Oldie
+dir    ← PENDING|[]
+dir    ← MSG|Bo|~sync 49
+coda   ← USERS|Coda,Ari,Oldie
+coda   ← MSG|Bo|~sync 49
+ari    ← USERS|Coda,Ari,Oldie
+ari    ← MSG|Bo|~sync 49
+old    ← USERS|Coda,Ari,Oldie
+old    ← MSG|Bo|~sync 49
+dir2   ← APPROVED
+dir2   ← VERSION|warning|0.3.3|Client v0.3.2 may have issues with server v0.3.3. Some features may not work.
+dir2   ← UPDATE|0.3.3|https://example.invalid/director|dd22|Golden notes
+dir2   ← MSG|SERVER|⚠ Warning: Mira is already connected
+dir2   ← USERS|Coda,Ari,Oldie
+dir2   ← PENDING|[]
+dir2   ← MSG|Bo|~sync 49
+## dir → REFRESH
+dir    ← USERS|Coda,Ari,Oldie
+dir    ← PENDING|[]
+dir    ← MSG|Mira|~sync 50
+coda   ← USERS|Coda,Ari,Oldie
+coda   ← MSG|Mira|~sync 50
+ari    ← USERS|Coda,Ari,Oldie
+ari    ← MSG|Mira|~sync 50
+old    ← USERS|Coda,Ari,Oldie
+old    ← MSG|Mira|~sync 50
+dir2   ← USERS|Coda,Ari,Oldie
+dir2   ← PENDING|[]
+dir2   ← MSG|Mira|~sync 50
+## coda → REFRESH
+dir    ← USERS|Coda,Ari,Oldie
+dir    ← MSG|Coda|~sync 51
+coda   ← USERS|Coda,Ari,Oldie
+coda   ← MSG|Coda|~sync 51
+ari    ← USERS|Coda,Ari,Oldie
+ari    ← MSG|Coda|~sync 51
+old    ← USERS|Coda,Ari,Oldie
+old    ← MSG|Coda|~sync 51
+dir2   ← USERS|Coda,Ari,Oldie
+dir2   ← MSG|Coda|~sync 51
+## coda2 → REGISTER|Coda|m-coda|actor||0.3.2|windows-x64
+dir    ← MSG|Coda|~sync 52
+dir    ← MSG|SERVER|Coda joined
+dir    ← MSG|SERVER|Coda left
+dir    ← USERS|Ari,Oldie,Coda
+dir    ← USERS|Ari,Oldie,Coda
+coda   ← <closed>
+coda   ← MSG|SERVER|Reconnected from another location
+ari    ← MSG|Coda|~sync 52
+ari    ← MSG|SERVER|Coda joined
+ari    ← MSG|SERVER|Coda left
+ari    ← USERS|Ari,Oldie,Coda
+ari    ← USERS|Ari,Oldie,Coda
+old    ← MSG|Coda|~sync 52
+old    ← MSG|SERVER|Coda joined
+old    ← MSG|SERVER|Coda left
+old    ← USERS|Ari,Oldie,Coda
+old    ← USERS|Ari,Oldie,Coda
+dir2   ← MSG|Coda|~sync 52
+dir2   ← MSG|SERVER|Coda joined
+dir2   ← MSG|SERVER|Coda left
+dir2   ← USERS|Ari,Oldie,Coda
+dir2   ← USERS|Ari,Oldie,Coda
+coda2  ← APPROVED
+coda2  ← MSG|Coda|~sync 52
+coda2  ← MSG|SERVER|Coda joined
+coda2  ← MSG|SERVER|Coda left
+coda2  ← UPDATE|0.3.3|https://example.invalid/actor.exe|aa11|Golden notes
+coda2  ← USERS|Ari,Oldie,Coda
+coda2  ← USERS|Ari,Oldie,Coda
+coda2  ← VERSION|warning|0.3.3|Client v0.3.2 may have issues with server v0.3.3. Some features may not work.
+## dir → PRIV|Mira|Coda|*go
+dir    ← MSG|Mira|~sync 53
+ari    ← MSG|Mira|~sync 53
+old    ← MSG|Mira|~sync 53
+dir2   ← MSG|Mira|~sync 53
+coda2  ← PRIV|Mira|Coda|*go
+coda2  ← MSG|Mira|~sync 53
+## dir → FORGET_NAME|Ari
+dir    ← USERS|Ari,Oldie,Coda
+dir    ← PENDING|[{"machine_id": "m-ari", "name": "Ari"}]
+dir    ← MSG|Mira|~sync 54
+ari    ← MSG|SERVER|You have been forgotten. Reconnect to request approval.
+ari    ← USERS|Ari,Oldie,Coda
+ari    ← MSG|Mira|~sync 54
+old    ← USERS|Ari,Oldie,Coda
+old    ← MSG|Mira|~sync 54
+dir2   ← USERS|Ari,Oldie,Coda
+dir2   ← PENDING|[{"machine_id": "m-ari", "name": "Ari"}]
+dir2   ← MSG|Mira|~sync 54
+coda2  ← USERS|Ari,Oldie,Coda
+coda2  ← MSG|Mira|~sync 54
+## ari closes
+dir    ← MSG|Mira|~sync 55
+dir    ← MSG|SERVER|Ari left
+dir    ← USERS|Oldie,Coda
+old    ← MSG|Mira|~sync 55
+old    ← MSG|SERVER|Ari left
+old    ← USERS|Oldie,Coda
+dir2   ← MSG|Mira|~sync 55
+dir2   ← MSG|SERVER|Ari left
+dir2   ← USERS|Oldie,Coda
+coda2  ← MSG|Mira|~sync 55
+coda2  ← MSG|SERVER|Ari left
+coda2  ← USERS|Oldie,Coda
+## ari2 → REGISTER|Ari|m-ari|actor||0.3.3|windows-x64
+dir    ← MSG|Mira|~sync 56
+old    ← MSG|Mira|~sync 56
+dir2   ← MSG|Mira|~sync 56
+coda2  ← MSG|Mira|~sync 56
+ari2   ← DENIED|Pending approval
+ari2   ← DENIED|Not approved
+## dir → APPROVE|m-ari
+dir    ← MSG|SERVER|Ari joined
+dir    ← USERS|Oldie,Coda,Ari
+dir    ← PENDING|[]
+dir    ← MSG|Mira|~sync 57
+old    ← MSG|SERVER|Ari joined
+old    ← USERS|Oldie,Coda,Ari
+old    ← MSG|Mira|~sync 57
+dir2   ← MSG|SERVER|Ari joined
+dir2   ← USERS|Oldie,Coda,Ari
+dir2   ← PENDING|[]
+dir2   ← MSG|Mira|~sync 57
+coda2  ← MSG|SERVER|Ari joined
+coda2  ← USERS|Oldie,Coda,Ari
+coda2  ← MSG|Mira|~sync 57
+ari2   ← APPROVED
+ari2   ← VERSION|ok|0.3.3|
+ari2   ← MSG|SERVER|Ari joined
+ari2   ← USERS|Oldie,Coda,Ari
+ari2   ← MSG|Mira|~sync 57
+## dir → FORGET_NAME|Nobody
+dir    ← MSG|Mira|~sync 58
+old    ← MSG|Mira|~sync 58
+dir2   ← MSG|Mira|~sync 58
+coda2  ← MSG|Mira|~sync 58
+ari2   ← MSG|Mira|~sync 58
+## old closes
+dir    ← MSG|Mira|~sync 59
+dir    ← MSG|SERVER|Oldie left
+dir    ← USERS|Coda,Ari
+dir2   ← MSG|Mira|~sync 59
+dir2   ← MSG|SERVER|Oldie left
+dir2   ← USERS|Coda,Ari
+coda2  ← MSG|Mira|~sync 59
+coda2  ← MSG|SERVER|Oldie left
+coda2  ← USERS|Coda,Ari
+ari2   ← MSG|Mira|~sync 59
+ari2   ← MSG|SERVER|Oldie left
+ari2   ← USERS|Coda,Ari
+## dir2 closes
+dir    ← MSG|Mira|~sync 60
+coda2  ← MSG|Mira|~sync 60
+ari2   ← MSG|Mira|~sync 60
+## dir → MSG|Mira|wrap
+dir    ← MSG|Mira|wrap
+dir    ← MSG|Mira|~sync 61
+coda2  ← MSG|Mira|wrap
+coda2  ← MSG|Mira|~sync 61
+ari2   ← MSG|Mira|wrap
+ari2   ← MSG|Mira|~sync 61

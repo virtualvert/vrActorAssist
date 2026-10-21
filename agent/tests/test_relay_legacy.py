@@ -1,8 +1,11 @@
-"""End-to-end against the real v0.3 relay (server_ws.py) running in-process."""
+"""End-to-end against the real v0.3 relay (the released server_ws.py) running in-process."""
 
 import asyncio
+import importlib.util
 import socket
 import time
+from functools import cache
+from pathlib import Path
 
 import pytest
 import uvicorn
@@ -25,6 +28,16 @@ def test_ws_url_normalisation():
         ws_url("  ")
 
 
+@cache
+def legacy_harness():
+    """tests/legacy_client.py (frozen v0.3.3 relay, scripted v0.3 client), loaded by path."""
+    path = Path(__file__).resolve().parents[2] / "tests" / "legacy_client.py"
+    spec = importlib.util.spec_from_file_location("vrcas_legacy_harness", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -32,16 +45,9 @@ def free_port() -> int:
 
 
 @pytest.fixture
-def relay(tmp_path, monkeypatch):
-    import server_ws
-
-    monkeypatch.setattr(server_ws, "APPROVED_FILE", tmp_path / "approved.json")
-    monkeypatch.setattr(server_ws, "LOG_FILE", tmp_path / "server.log")
-    monkeypatch.setattr(server_ws, "SERVER_SECRET", SECRET)
-    monkeypatch.setattr(server_ws, "approved_actors", {})
-    monkeypatch.setattr(server_ws, "pending_actors", {})
-    monkeypatch.setattr(server_ws, "clients", {})
-    return server_ws.app
+def relay(tmp_path):
+    """The released v0.3.3 relay (frozen copy in tests/legacy_relay/): it has no /v2/ws."""
+    return legacy_harness().load_v033_relay(tmp_path / "relay", SECRET).app
 
 
 def make_agent(tmp_path, monkeypatch, name, role, machine_id, url, secret=""):
@@ -74,6 +80,9 @@ def test_director_and_actor_flow(relay, tmp_path, monkeypatch):
         try:
             await director.start()
             await wait_for(lambda: director.relay.status == "connected")
+            # The v0.3 relay has no /v2/ws: the agent fell back to compatibility mode
+            assert director.snapshot()["connection"]["legacy"] is True
+            assert any("compatibility mode" in e["text"] for e in director.hub._logs)
 
             await actor.start()
             await wait_for(lambda: actor.relay.status == "pending")

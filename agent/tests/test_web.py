@@ -50,7 +50,8 @@ def test_state_needs_a_session(env):
     state = client.get("/api/state").json()
     assert state["role"] is None
     assert state["connection"]["status"] == "disconnected"
-    assert state["connection"]["legacy"] is True
+    # Unknown until a relay answers; only a v0.3 relay turns compatibility mode on
+    assert state["connection"]["legacy"] is False
 
 
 def test_secret_never_reaches_the_ui(env):
