@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(folder / "logs")
     log = logging.getLogger("vrcas")
 
-    store = ConfigStore(folder, legacy_folder=exe_dir())
+    store = ConfigStore(folder, legacy_folder=exe_dir(), role=args.role)
     cfg = store.config
     if args.role:
         cfg.role = args.role
