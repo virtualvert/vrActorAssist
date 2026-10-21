@@ -380,6 +380,7 @@ class Receiver:
         await self._send("file.ok", {"transfer_id": item.transfer_id, "saved_as": saved_as}, item.sender_id)
         self._remember(item, True, "replaced your copy" if item.replaces else "")
         self._record(item, actual_sha)
+        self.agent.actor.on_file_received(str(item.target))
         self.log("success", f"Received {item.name} ({size_text(item.size)}, sha256 {actual_sha[:12]}…) from "
                             f"{item.sender_name} → {item.target}")
 
@@ -441,6 +442,14 @@ class Receiver:
 def _write_at(handle, offset: int, payload: bytes) -> None:
     handle.seek(offset)
     handle.write(payload)
+
+
+def received_path(folder: Path, sha256: str) -> str | None:
+    """The newest received file with this SHA-256 that's still on disk (for `{sha256}` sound refs)."""
+    for entry in reversed(load_received(folder / RECEIVED_LOG)):
+        if entry.get("sha256") == sha256 and os.path.isfile(str(entry.get("path", ""))):
+            return str(entry["path"])
+    return None
 
 
 def load_received(path: Path) -> list[dict]:
@@ -519,7 +528,8 @@ class Batch:
             },
             "state": self.state,
             "detail": self.detail,
-            "results": [{"name": f.name, "state": f.state, "detail": f.detail} for f in self.files],
+            "results": [{"name": f.name, "state": f.state, "detail": f.detail,
+                         "sha256": f.sha256 if f.state == "ok" else None} for f in self.files],
         }
 
 

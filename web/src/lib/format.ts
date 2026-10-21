@@ -62,6 +62,11 @@ export function mediaTime(ms: number): string {
   return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 
+/** A sound's length, rounded to the second like Soundpad's own list (49.6 s → 0:50). */
+export function mediaLength(ms: number): string {
+  return mediaTime(Math.round(Math.max(0, ms) / 1000) * 1000);
+}
+
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return "?";

@@ -27,6 +27,9 @@ TIMEOUT_S = 2.0
 LIST_TIMEOUT_S = 10.0
 BACKOFF_START_S = 0.5
 BACKOFF_MAX_S = 10.0
+# While there's no pipe at all (Soundpad closed), look again this often: trying costs nothing, and
+# a backoff up to 10 s made a just-started Soundpad wait that long (M2 re-check)
+MISSING_RETRY_S = 1.0
 # How often a waiting request looks for Soundpad's answer. Answers usually take ~0.1 ms.
 POLL_S = 0.0002
 MIN_RC_VERSION = (1, 1, 2)
@@ -269,6 +272,9 @@ class SoundpadPipe:
         self._thread: threading.Thread | None = None
         self.info: SoundpadInfo | None = None
         self.last_error: str | None = "Not connected yet"
+        # The last connect found no pipe at all: Soundpad isn't running. `Soundpad.exe -rc` would
+        # start it then, so the agent doesn't fall back to the command line (laptop run, M2).
+        self.missing = False
 
     # ---- lifecycle (any thread) ---------------------------------------------
 
@@ -286,6 +292,11 @@ class SoundpadPipe:
     @property
     def connected(self) -> bool:
         return self._transport is not None
+
+    def reconnect_now(self) -> None:
+        """The next request tries the pipe at once instead of waiting out the backoff (a cue
+        shouldn't fail because Soundpad came back a moment ago)."""
+        self._retry_at = 0.0
 
     # ---- requests -----------------------------------------------------------
 
@@ -334,6 +345,34 @@ class SoundpadPipe:
         while await self.text("GetPlayStatus()") == "SEEKING" and time.monotonic() < deadline:
             await asyncio.sleep(0.01)
         return await self.action("DoStopSound()")
+
+    async def play_from_category(self, category: int, position: int, render: bool = True, capture: bool = True) -> Reply:
+        """DoPlaySoundFromCategory: `category` is the category's index, `position` 1-based within it."""
+        return await self.action(f"DoPlaySoundFromCategory({int(category)}, {int(position)}, {lines_args(render, capture)})")
+
+    async def seek(self, ms: int) -> Reply:
+        return await self.action(f"DoSeekMs({int(ms)})")
+
+    async def jump(self, ms: int) -> Reply:
+        return await self.action(f"DoJumpMs({int(ms)})")
+
+    async def set_paused(self, paused: bool) -> bool:
+        """Pause or resume only when needed (DoTogglePause flips). Returns whether anything changed."""
+        status = await self.text("GetPlayStatus()")
+        if (paused and status == "PLAYING") or (not paused and status == "PAUSED"):
+            await self.action("DoTogglePause()")
+            return True
+        return False
+
+    async def muted(self) -> bool | None:
+        return {"1": True, "0": False}.get(await self.text("IsMuted()"))
+
+    async def set_muted(self, muted: bool) -> bool:
+        """Mute or unmute only when needed (DoToggleMute flips). Returns whether anything changed."""
+        if await self.muted() == muted:
+            return False
+        await self.action("DoToggleMute()")
+        return True
 
     async def playback(self) -> Playback:
         """Status plus position and duration. Soundpad keeps the last sound's numbers after a stop,
@@ -450,10 +489,20 @@ class SoundpadPipe:
         try:
             transport = self._connect()
         except OSError as exc:
-            self._backoff = min(max(self._backoff * 2, self._backoff_start), self._backoff_max)
-            self._retry_at = time.monotonic() + self._backoff
-            self.last_error = "Soundpad isn't running (its remote-control pipe isn't open)"
+            self.missing = isinstance(exc, FileNotFoundError)
+            if self.missing:
+                self._backoff = 0.0
+                self._retry_at = time.monotonic() + min(MISSING_RETRY_S, self._backoff_max)
+            else:
+                self._backoff = min(max(self._backoff * 2, self._backoff_start), self._backoff_max)
+                self._retry_at = time.monotonic() + self._backoff
+            self.last_error = (
+                "Soundpad isn't running (its remote-control pipe isn't open)"
+                if self.missing
+                else f"Soundpad's remote-control pipe couldn't be opened ({exc})"
+            )
             raise SoundpadUnavailable(self.last_error) from exc
+        self.missing = False
         try:
             self.info = self._handshake(transport)
         except (OSError, TimeoutError) as exc:

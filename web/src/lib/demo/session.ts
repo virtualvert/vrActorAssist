@@ -10,11 +10,15 @@ import {
   type Call,
   type CameraLocal,
   type IncomingFile,
+  type Lines,
   type LogLevel,
   type Peer,
+  type PeerSoundpad,
   type Prefs,
   type Role,
   type SendBatch,
+  type SoundEntry,
+  type SoundRef,
   type SoundpadPlayback,
   type TrafficKind,
 } from "../protocol";
@@ -75,9 +79,30 @@ const DEMO_BYTES_PER_S = 3 * 1024 * 1024;
 const DEMO_ACCEPT_MS = 900;
 const INCOMING_FILES_AFTER_MS = 9000;
 const RECEIVE_DIR = "C:\\Users\\you\\Documents\\vrcActorSync";
+/** Juno's Soundpad isn't running in the demo, so the "unavailable" look shows up. */
+const SOUNDPAD_OFF = "Juno";
+const SELECTED_SOUND_MS = 6000;
+const DEMO_SOUNDPAD_EXE = "C:\\Program Files\\Soundpad\\Soundpad.exe";
+
+/** A stable 16-hex-digit key, like the agent's hash of a sound's path. */
+export function demoKey(text: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (const ch of text) {
+    a = Math.imul(a ^ ch.charCodeAt(0), 0x01000193) >>> 0;
+    b = Math.imul(b ^ ch.charCodeAt(0), 0x5bd1e995) >>> 0;
+  }
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+}
+
+/** The pretend sound list of a demo actor. */
+export function demoSounds(name: string): SoundEntry[] {
+  const titles = [`Scene 1 - ${name}`, `Scene 2 - ${name}`, `Scene 3 - ${name}`, "Door slam", "Room tone", `Scene 4 - ${name} (alt)`, "Applause", "Phone ring"];
+  return titles.map((title, i) => ({ index: i + 1, key: demoKey(`${name}/${title}`), title, durationMs: 3000 + ((i * 1700) % 9000) }));
+}
 
 function stoppedPlayback(): SoundpadPlayback {
-  return { status: "STOPPED", positionMs: 0, durationMs: 0, title: null };
+  return { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, lines: null };
 }
 
 export function peerId(name: string): string {
@@ -103,6 +128,8 @@ export class DemoSession {
   /** Simulated sends (director role): when each batch's current file started, and its sizes. */
   #sending = new Map<string, { started: number; sizes: number[]; index: number; accepted: boolean }>();
   #sizeOf: (path: string) => number | undefined;
+  /** Demo actors' Soundpad clocks: when the current sound started (adjusted for pauses and seeks). */
+  #spStart = new Map<string, number>();
 
   constructor(
     clock: DemoClock,
@@ -214,6 +241,10 @@ export class DemoSession {
             this.state.actor.osc.ready = call.args.oscEnabled;
           }
           if (call.args.receiveDir !== undefined) this.state.actor.files.receiveDir = call.args.receiveDir.trim() || RECEIVE_DIR;
+          if (call.args.defaultLines !== undefined) this.state.actor.soundpad.defaultLines = call.args.defaultLines;
+          if (call.args.autoAddReceived !== undefined) this.state.actor.soundpad.autoAddReceived = call.args.autoAddReceived;
+          if (call.args.autoLaunch !== undefined) this.state.actor.soundpad.autoLaunch = call.args.autoLaunch;
+          if (call.args.soundpadPath !== undefined) this.state.actor.soundpad.path = call.args.soundpadPath.trim();
           if (call.args.autoAcceptFiles !== undefined) this.state.actor.files.autoAccept = call.args.autoAcceptFiles;
         }
         break;
@@ -228,6 +259,28 @@ export class DemoSession {
         break;
       case "answerFile":
         this.#answerFile(call.args.transferId, call.args.accept, call.args.rest ?? false, call.args.always ?? false);
+        break;
+      case "play":
+        this.#play(call.args.ids, call.args.sound, call.args.lines, call.args.volume, call.args.label);
+        break;
+      case "playIndex":
+        this.#play(call.args.ids, { index: call.args.index }, undefined, undefined, `Sound ${call.args.index}`);
+        break;
+      case "transport":
+        this.#transport(call.args.ids, call.args.action, call.args.value);
+        break;
+      case "requestSounds": {
+        const peer = this.state.peers.find((p) => p.id === call.args.id);
+        if (peer?.soundpad?.available) {
+          const sounds = demoSounds(peer.name);
+          this.#emit({ type: "sounds", peerId: peer.id, sounds, categories: [{ index: 2, name: "EP3" }], total: sounds.length, at: this.#clock.now() });
+        }
+        break;
+      }
+      case "detectSoundpad":
+        if (this.state.actor) this.state.actor.soundpad.path = DEMO_SOUNDPAD_EXE;
+        this.#log("info", `Soundpad found: ${DEMO_SOUNDPAD_EXE}`);
+        this.#toast("success", "Soundpad found");
         break;
       case "pickReceiveDir":
         if (this.state.actor) this.state.actor.files.receiveDir = "C:\\Users\\you\\Music\\Lines";
@@ -262,6 +315,7 @@ export class DemoSession {
       this.#advanceSelfPlayback(now);
       this.#advanceSends(now);
       this.#advanceIncoming(now);
+      this.#advanceSoundpads(now);
       if (this.state.role !== "director" && now >= this.#nextIncomingCue) {
         this.#nextIncomingCue = now + INCOMING_CUE_EVERY_MS;
         this.#incomingCue();
@@ -366,6 +420,7 @@ export class DemoSession {
     for (const p of targets) {
       this.#playingUntil.set(p.id, now + 4000 + Math.round(this.#clock.random() * 4000));
       p.activity = "playing";
+      this.#spPlay(p, { title: null, index: null, key: null, lines: "both", durationMs: SELECTED_SOUND_MS });
     }
     for (const cam of this.state.peers.filter((p) => p.role === "camera" && p.status === "online")) {
       cam.activity = "rolling";
@@ -381,6 +436,7 @@ export class DemoSession {
     const targets = this.#onlineActors().filter((p) => this.state.targets.includes(p.id));
     for (const p of this.state.peers) {
       if (!p.self) p.activity = "idle";
+      if (p.soundpad?.available && targets.includes(p)) this.#spSet(p, { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, index: null, key: null, lines: null });
     }
     this.#playingUntil.clear();
     this.#traffic("self", targets.map((p) => p.id), "stop");
@@ -432,6 +488,92 @@ export class DemoSession {
     if (member) this.#later(5000, () => this.#addPending(member));
   }
 
+  // ---- Soundpad on demo actors (director) ---------------------------------
+
+  #spSet(p: Peer, patch: Partial<PeerSoundpad>): void {
+    if (!p.soundpad) return;
+    p.soundpad = { ...p.soundpad, ...patch, at: this.#clock.now() };
+    this.#changed = true;
+  }
+
+  #spPlay(p: Peer, what: { title: string | null; index: number | null; key: string | null; lines: Lines; durationMs: number }): void {
+    if (!p.soundpad?.available) return;
+    this.#spStart.set(p.id, this.#clock.now());
+    this.#spSet(p, { status: "PLAYING", positionMs: 0, ...what });
+  }
+
+  #play(ids: string[], sound: SoundRef, lines: Lines | undefined, volume: number | undefined, label: string | undefined): void {
+    if (this.state.connection.status !== "connected") return;
+    const played: Peer[] = [];
+    for (const id of ids) {
+      const p = this.state.peers.find((q) => q.id === id && q.role === "actor");
+      if (!p) continue;
+      const legacy = p.caps.includes("legacy");
+      const simple = ("index" in sound || "selected" in sound) && (lines ?? "both") === "both" && volume === undefined;
+      if (legacy && !simple) {
+        this.#toast("error", `${p.name} uses the v0.3 app, which can only play the selected sound or a sound by number`);
+        continue;
+      }
+      if (!legacy && !p.soundpad?.available) {
+        this.#log("warning", `${p.name}: play — ${p.soundpad?.detail || "Soundpad isn't answering"}`);
+        continue;
+      }
+      const list = demoSounds(p.name);
+      const entry = "key" in sound ? list.find((s) => s.key === sound.key) : "index" in sound ? list.find((s) => s.index === sound.index) : undefined;
+      if (volume !== undefined) this.#spSet(p, { volume });
+      this.#spPlay(p, {
+        title: entry?.title ?? ("sha256" in sound ? (label ?? "Sent file") : null),
+        index: entry?.index ?? null,
+        key: entry?.key ?? null,
+        lines: lines ?? "both",
+        durationMs: entry?.durationMs ?? SELECTED_SOUND_MS,
+      });
+      p.activity = "playing";
+      this.#playingUntil.set(p.id, this.#clock.now() + (entry?.durationMs ?? SELECTED_SOUND_MS));
+      played.push(p);
+    }
+    if (played.length) {
+      this.#traffic("self", played.map((p) => p.id), "cue");
+      this.#log("success", `▶ ${label ?? "Sound"} → ${played.map((p) => p.name).join(", ")}`);
+    }
+  }
+
+  #transport(ids: string[], action: string, value: number | undefined): void {
+    const now = this.#clock.now();
+    for (const id of ids) {
+      const p = this.state.peers.find((q) => q.id === id);
+      const sp = p?.soundpad;
+      if (!p || !sp?.available) continue;
+      const started = this.#spStart.get(id) ?? now;
+      if (action === "pause" && sp.status === "PLAYING") this.#spSet(p, { status: "PAUSED", positionMs: now - started });
+      else if (action === "resume" && sp.status === "PAUSED") {
+        this.#spStart.set(id, now - sp.positionMs);
+        this.#spSet(p, { status: "PLAYING" });
+      } else if (action === "stop") {
+        this.#spSet(p, { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, index: null, key: null, lines: null });
+        p.activity = "idle";
+      } else if (action === "volume" && value !== undefined) this.#spSet(p, { volume: value });
+      else if (action === "mute" || action === "unmute") this.#spSet(p, { muted: action === "mute" });
+      else if ((action === "seek" || action === "jump") && value !== undefined && sp.status !== "STOPPED") {
+        const target = Math.max(0, Math.min(sp.durationMs, action === "seek" ? value : sp.positionMs + value));
+        this.#spStart.set(id, now - target);
+        this.#spSet(p, { positionMs: target });
+      }
+    }
+    if (action !== "volume") this.#traffic("self", ids, action === "stop" ? "stop" : "cue");
+  }
+
+  /** Positions move in ~140 ms steps, like the real Soundpad. */
+  #advanceSoundpads(now: number): void {
+    for (const p of this.state.peers) {
+      const sp = p.soundpad;
+      if (!sp?.available || sp.status !== "PLAYING") continue;
+      const position = now - (this.#spStart.get(p.id) ?? now);
+      if (position >= sp.durationMs) this.#spSet(p, { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, index: null, key: null, lines: null });
+      else this.#spSet(p, { positionMs: Math.floor(position / 140) * 140 });
+    }
+  }
+
   // ---- files (director sends) --------------------------------------------
 
   #sendFiles(items: { path: string; actorId: string }[]): void {
@@ -462,7 +604,7 @@ export class DemoSession {
         current: null,
         state: "sending",
         detail: "",
-        results: paths.map((p) => ({ name: baseName(p), state: "queued", detail: "" })),
+        results: paths.map((p) => ({ name: baseName(p), state: "queued", detail: "", sha256: null })),
       };
       director.files.batches = [...director.files.batches.slice(-9), batch];
       this.#sending.set(id, { started: now, sizes, index: 0, accepted: false });
@@ -503,6 +645,7 @@ export class DemoSession {
       batch.sentBytes = run.sizes.slice(0, run.index).reduce((a, b) => a + b, 0) + sent;
       if (sent >= size) {
         result.state = "ok";
+        result.sha256 = demoKey(`sha/${result.name}`).repeat(4);
         this.#nextFile(batch, run, now, true);
       }
     }
@@ -626,7 +769,7 @@ export class DemoSession {
       this.state.actor.lastCue = { command: "*go", at: now, ok: true };
       if (this.state.actor.soundpad.enabled) {
         this.#selfPlayStart = now;
-        this.state.actor.soundpad.playback = { status: "PLAYING", positionMs: 0, durationMs: SELF_SOUND_MS, title: null };
+        this.state.actor.soundpad.playback = { status: "PLAYING", positionMs: 0, durationMs: SELF_SOUND_MS, title: null, lines: "both" };
       }
       const how = this.state.actor.soundpad.enabled ? "played the selected sound (simulated)" : "Soundpad is off, nothing played";
       this.#log("success", `▶ GO from ${director.name} — ${how}`);
@@ -740,6 +883,7 @@ export class DemoSession {
       activity: "idle",
       self: true,
       caps: [],
+      soundpad: null,
     };
   }
 
@@ -752,7 +896,28 @@ export class DemoSession {
       latencyMs: member.baseLatency,
       activity: "idle",
       self: false,
-      caps: member.legacy ? ["legacy"] : member.role === "actor" ? ["soundpad", "osc", "files"] : [],
+      caps: member.legacy
+        ? ["legacy"]
+        : member.role === "actor"
+          ? ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add", "osc", "files"]
+          : [],
+      soundpad:
+        member.role === "actor" && !member.legacy
+          ? {
+              available: member.name !== SOUNDPAD_OFF,
+              status: member.name !== SOUNDPAD_OFF ? "STOPPED" : null,
+              positionMs: 0,
+              durationMs: 0,
+              title: null,
+              index: null,
+              key: null,
+              lines: null,
+              volume: member.name !== SOUNDPAD_OFF ? 80 : null,
+              muted: member.name !== SOUNDPAD_OFF ? false : null,
+              detail: member.name === SOUNDPAD_OFF ? "Soundpad isn't running (its remote-control pipe isn't open)" : "",
+              at: this.#clock.now(),
+            }
+          : null,
     };
   }
 
@@ -765,7 +930,19 @@ export class DemoSession {
     this.state.actor =
       role === "actor"
         ? ({
-            soundpad: { enabled: true, state: "simulated", detail: "Demo — no Soundpad needed", info: null, playback: stoppedPlayback() },
+            soundpad: {
+              enabled: true,
+              state: "simulated",
+              detail: "Demo — no Soundpad needed",
+              info: null,
+              playback: stoppedPlayback(),
+              volume: 80,
+              muted: false,
+              defaultLines: "both",
+              autoAddReceived: true,
+              autoLaunch: false,
+              path: "",
+            },
             osc: { enabled: true, host: "127.0.0.1", port: 9000, ready: true },
             lastCue: null,
             files: { receiveDir: RECEIVE_DIR, autoAccept: false, incoming: [], recent: [] },

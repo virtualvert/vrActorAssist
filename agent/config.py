@@ -42,10 +42,19 @@ class Prefs:
     reduce_motion: bool = False
 
 
+LINES = ("both", "speakers", "mic")
+
+
 @dataclass
 class SoundpadConfig:
     enabled: bool = True
     path: str = ""
+    # Output line when the director doesn't pick one (spec §8.1.4)
+    default_lines: str = "both"
+    # Add received files to Soundpad (full version only), so the director can play them (§8.4)
+    auto_add_received: bool = True
+    # Start Soundpad.exe when its pipe isn't there (§8.1.1)
+    auto_launch: bool = False
 
 
 @dataclass
@@ -95,7 +104,14 @@ class Config:
         )
 
         sp = data.get("soundpad") if isinstance(data.get("soundpad"), dict) else {}
-        cfg.soundpad = SoundpadConfig(enabled=bool(sp.get("enabled", True)), path=_str(sp.get("path")))
+        lines = sp.get("default_lines")
+        cfg.soundpad = SoundpadConfig(
+            enabled=bool(sp.get("enabled", True)),
+            path=_str(sp.get("path")),
+            default_lines=lines if lines in LINES else "both",
+            auto_add_received=bool(sp.get("auto_add_received", True)),
+            auto_launch=bool(sp.get("auto_launch", False)),
+        )
 
         osc = data.get("osc") if isinstance(data.get("osc"), dict) else {}
         cfg.osc = OscConfig(

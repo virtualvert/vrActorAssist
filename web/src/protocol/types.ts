@@ -31,6 +31,11 @@ export type ApprovalForgotten = Record<string, never>;
 /** To a client that has to wait for a director. */
 export type ApprovalPending = Record<string, never>;
 
+export interface CategoryEntry {
+  index: number;
+  name: string;
+}
+
 export interface ChatMsg {
   text: string;
 }
@@ -201,8 +206,21 @@ export interface RosterSession {
   delay_ms?: number;
 }
 
-/** One of: path, sha256, index, category + position, selected (§8.1.3). */
+export interface SoundEntry {
+  index: number;
+  key: string;
+  title: string;
+  duration_ms?: number | null;
+}
+
+/**
+ * One of: key, path, sha256, index, category + position, selected (§8.1.3).
+ *
+ * `key` is how directors pick from an actor's list: a hash of the sound's path on the actor's PC,
+ * so the path itself never leaves it (Phase 2 decision D6). The actor's agent maps it back.
+ */
 export interface SoundRef {
+  key?: string | null;
   path?: string | null;
   sha256?: string | null;
   index?: number | null;
@@ -215,6 +233,40 @@ export interface SoundpadAck {
   status: string;
   late_ms?: number | null;
   error?: string | null;
+  command?: string | null;
+}
+
+/** Relative: negative jumps back. */
+export interface SoundpadJump {
+  ms: number;
+}
+
+/**
+ * One page of an actor's All-sounds list (at most LIST_PAGE sounds, so a page stays well
+ * under the relay's frame limit). `first` is the index of the page's first sound.
+ */
+export interface SoundpadList {
+  total: number;
+  first: number;
+  sounds?: SoundEntry[];
+  categories?: CategoryEntry[];
+  last?: boolean;
+}
+
+/**
+ * Ask an actor for its sound list; it answers with soundpad.list pages and pushes new ones
+ * when the list changes.
+ */
+export type SoundpadListRequest = Record<string, never>;
+
+export interface SoundpadMute {
+  muted: boolean;
+}
+
+/** Idempotent: pause when `paused`, resume otherwise (the actor checks the state first). */
+export interface SoundpadPause {
+  at?: number | null;
+  paused: boolean;
 }
 
 export interface SoundpadPlay {
@@ -226,8 +278,36 @@ export interface SoundpadPlay {
   cuelist_id?: string | null;
 }
 
+/** Absolute position in ms. */
+export interface SoundpadSeek {
+  ms: number;
+}
+
+/**
+ * An actor's Soundpad, for directors: at most twice a second while playing, on change, and
+ * every 10 s. `available` is false while Soundpad is off, missing or not answering.
+ */
+export interface SoundpadState {
+  available: boolean;
+  status?: "STOPPED" | "PLAYING" | "PAUSED" | "SEEKING" | null;
+  position_ms?: number;
+  duration_ms?: number;
+  title?: string | null;
+  index?: number | null;
+  key?: string | null;
+  lines?: "both" | "speakers" | "mic" | null;
+  volume?: number | null;
+  muted?: boolean | null;
+  detail?: string;
+}
+
 export interface SoundpadStop {
   at?: number | null;
+}
+
+/** 0–100. Soundpad has one volume for both lines, so this changes what the audience hears too. */
+export interface SoundpadVolume {
+  value: number;
 }
 
 export interface TimePing {
@@ -290,14 +370,14 @@ export interface MessageData {
   "soundpad.play": SoundpadPlay;
   "soundpad.stop": SoundpadStop;
   "soundpad.ack": SoundpadAck;
-  "soundpad.pause": Record<string, unknown>;
-  "soundpad.seek": Record<string, unknown>;
-  "soundpad.jump": Record<string, unknown>;
-  "soundpad.volume": Record<string, unknown>;
-  "soundpad.mute": Record<string, unknown>;
-  "soundpad.list.request": Record<string, unknown>;
-  "soundpad.list": Record<string, unknown>;
-  "soundpad.state": Record<string, unknown>;
+  "soundpad.pause": SoundpadPause;
+  "soundpad.seek": SoundpadSeek;
+  "soundpad.jump": SoundpadJump;
+  "soundpad.volume": SoundpadVolume;
+  "soundpad.mute": SoundpadMute;
+  "soundpad.list.request": SoundpadListRequest;
+  "soundpad.list": SoundpadList;
+  "soundpad.state": SoundpadState;
   "soundpad.calibrate": Record<string, unknown>;
   "file.batch.start": FileBatchStart;
   "file.offer": FileOffer;

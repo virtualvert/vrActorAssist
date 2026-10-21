@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { AudioLines, Check, FileDown, FolderOpen, Radio, X, Zap } from "@lucide/svelte";
+  import { AudioLines, Check, FileDown, FolderOpen, Radio, Volume2, VolumeX, X, Zap } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import Button from "../components/Button.svelte";
   import ConnectBanner from "../components/ConnectBanner.svelte";
   import Toggle from "../components/Toggle.svelte";
-  import { ago, fileSize, mediaTime, percent } from "../format";
+  import { ago, fileSize, mediaLength, mediaTime, percent } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
   import type { AppState } from "../protocol";
+  import { OWN_LINE_HELP, OWN_LINE_OPTIONS } from "../soundpad";
   import { app } from "../state.svelte";
 
   interface Props {
@@ -34,9 +35,12 @@
     if (c.status === "pending")
       return { tone: "warn", title: "Waiting for the director", sub: "The director approves you once. After that you join automatically." };
     if (c.status !== "connected") return { tone: "idle", title: "Not connected", sub: "Connect to your relay to receive cues." };
+    if (recentCue && !recentCue.ok) {
+      return { tone: "bad", title: "Cue failed", sub: actor?.soundpad.detail || "The last cue didn't run on this computer." };
+    }
     if (playback) {
       if (!active) return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
-      const where = `${playback.title ?? "Your selected sound"} · ${mediaTime(playback.positionMs)} / ${mediaTime(playback.durationMs)}`;
+      const where = `${playback.title ?? "Your selected sound"} · ${mediaTime(playback.positionMs)} / ${mediaLength(playback.durationMs)}`;
       return playback.status === "PAUSED" ? { tone: "warn", title: "Paused", sub: where } : { tone: "go", title: "Playing", sub: where };
     }
     if (self?.activity === "playing" || recentCue) {
@@ -73,8 +77,9 @@
     void app.call({ call: "answerFile", args: { transferId, accept, ...extra } });
   }
 
-  const SP_LABEL = { ready: "Ready", fallback: "Command line", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
+  const SP_LABEL = { ready: "Ready", closed: "Not running", fallback: "Command line", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
   const STATUS_LABEL = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;
+  const LINE_LABEL = Object.fromEntries(OWN_LINE_OPTIONS.map((o) => [o.value, o.label]));
 
   function edition(trial: boolean | null): string {
     if (trial === null) return "edition unknown";
@@ -154,11 +159,25 @@
             <div class="transport-row">
               <span class="chip status-{playback.status.toLowerCase()}">{STATUS_LABEL[playback.status]}</span>
               <span class="track">{playback.title ?? "Selected sound"}</span>
-              <span class="mono small">{mediaTime(playback.positionMs)} / {mediaTime(playback.durationMs)}</span>
+              <span class="mono small">{mediaTime(playback.positionMs)} / {mediaLength(playback.durationMs)}</span>
             </div>
             <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}>
               <span style:width="{progress}%"></span>
             </div>
+            {#if playback.lines}
+              <span class="small muted">On {LINE_LABEL[playback.lines].toLowerCase()} · {OWN_LINE_HELP[playback.lines]}</span>
+            {/if}
+          </div>
+        {/if}
+        {#if actor.soundpad.enabled}
+          {@const sp = actor.soundpad}
+          <div class="levels small" aria-label="Soundpad levels">
+            {#if sp.volume !== null}
+              <span class="level" class:warn-text={sp.muted}>
+                {#if sp.muted}<VolumeX size="1.05em" aria-hidden="true" /> Muted · volume {sp.volume}{:else}<Volume2 size="1.05em" aria-hidden="true" /> Volume {sp.volume}{/if}
+              </span>
+            {/if}
+            <span class="level muted" title={OWN_LINE_HELP[sp.defaultLines]}>Default line: {LINE_LABEL[sp.defaultLines]}</span>
           </div>
         {/if}
         <p class="faint small">{actor.soundpad.detail}</p>
@@ -514,6 +533,7 @@
 
   .sp-ready { color: var(--ok); }
   .sp-simulated,
+  .sp-closed,
   .sp-fallback { color: var(--warn); }
   .sp-missing { color: var(--bad); }
 
@@ -542,6 +562,20 @@
   .status-playing,
   .status-seeking { color: var(--go); }
   .status-paused { color: var(--warn); }
+
+  .levels {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem 1.1rem;
+    flex-wrap: wrap;
+  }
+
+  .level {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 600;
+  }
 
   .bar {
     height: 0.375rem;

@@ -1,4 +1,4 @@
-import type { AgentEvent, AppState, Call, LogEntry, LogLevel, Prefs, Traffic } from "./protocol";
+import type { AgentEvent, AppState, Call, LogEntry, LogLevel, Prefs, SoundList, Traffic } from "./protocol";
 import type { LinkState, Transport } from "./transport";
 import type { FolderAccess } from "./transport/types";
 import { applyPrefs } from "./prefs";
@@ -24,6 +24,10 @@ class AppStore {
   settingsOpen = $state(false);
   normalizeOpen = $state(false);
   sendOpen = $state(false);
+  /** Director: the actor whose Soundpad panel is open (peer id), if any. */
+  soundpadFor = $state<string | null>(null);
+  /** Director: actors' sound lists, by peer id (they arrive as "sounds" events). */
+  sounds = $state<Record<string, SoundList>>({});
   /** True while the first-run flow is on screen, even after a role has been saved. */
   onboarding = $state(false);
 
@@ -109,6 +113,11 @@ class AppStore {
       case "traffic":
         for (const fn of this.#traffic) fn(event.traffic);
         break;
+      case "sounds": {
+        const { type: _type, ...list } = event;
+        this.sounds = { ...this.sounds, [list.peerId]: list };
+        break;
+      }
       case "result":
         break;
     }

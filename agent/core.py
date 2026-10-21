@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 import webbrowser
@@ -11,13 +12,22 @@ from typing import Any, Callable
 from . import APP_VERSION
 from .actor_runtime import ActorRuntime
 from .config import ROLES, THEMES, ConfigStore, clamp_scale
-from .files import Files
+import soundpad
+
+from vrcas_protocol import validate
+
+from .config import LINES
+from .files import Files, received_path
 from .folders import FolderError, Folders, pick_folder
 from .hub import Hub
 from .relay import Relay
+from .soundpad_remote import LINES_TEXT, SoundpadRemote
 
 COUNTDOWN_MS = 3000
 MAX_SEND_ITEMS = 500
+# Cues and Soundpad controls repeated with the same arguments this soon are dropped (Agent._repeated)
+REPEATABLE_CALLS = {"cue", "play", "playIndex", "transport"}
+REPEAT_S = 0.15
 
 
 class CallError(Exception):
@@ -32,8 +42,11 @@ class Agent:
         # Folders opened in this run (Normalize folder, Send files); file access stays inside them
         self.folders = Folders()
         self.files = Files(self)
+        self.soundpad = SoundpadRemote(self)
+        self.actor.received_lookup = lambda sha256: received_path(store.folder, sha256)
         self.relay = Relay(self)
         self.last_cue: dict | None = None
+        self._last_control: tuple[str, float] | None = None
         # Set by the launcher: returns a fresh one-time URL for the local UI.
         self.ui_url: Callable[[], str] | None = None
 
@@ -84,6 +97,7 @@ class Agent:
                     "activity": "playing" if playing else "idle",
                     "self": True,
                     "caps": [],
+                    "soundpad": None,
                 }
             )
             if relay.status == "connected":
@@ -141,8 +155,21 @@ class Agent:
         handler = getattr(self, f"_call_{name}", None)
         if handler is None:
             raise CallError(f"Unknown request: {name}")
+        if self._repeated(name, args or {}):
+            return
         await handler(args or {})
         self.changed()
+
+    def _repeated(self, name: str, args: dict) -> bool:
+        """The same cue or Soundpad control again within REPEAT_S of the last one: a held key or a
+        double click, so it's dropped. A stream of them stays one (laptop run, M2: a stuck key sent
+        ~350 plays 35–40 ms apart)."""
+        if name not in REPEATABLE_CALLS:
+            return False
+        key = name + json.dumps(args, sort_keys=True, default=str)
+        now = time.monotonic()
+        last, self._last_control = self._last_control, (key, now)
+        return last is not None and last[0] == key and now - last[1] < REPEAT_S
 
     async def _call_setRole(self, args: dict) -> None:
         role = args.get("role")
@@ -242,8 +269,112 @@ class Agent:
             cfg.files.receive_dir = folder
         if "autoAcceptFiles" in args:
             cfg.files.auto_accept = bool(args["autoAcceptFiles"])
+        if args.get("defaultLines") in LINES:
+            cfg.soundpad.default_lines = args["defaultLines"]
+        if "autoAddReceived" in args:
+            cfg.soundpad.auto_add_received = bool(args["autoAddReceived"])
+        if "autoLaunch" in args:
+            cfg.soundpad.auto_launch = bool(args["autoLaunch"])
         self.store.save()
         await self.actor.refresh()
+
+    async def _call_detectSoundpad(self, args: dict) -> None:
+        path = await asyncio.to_thread(soundpad.find_soundpad_exe)
+        if not path:
+            raise CallError("Soundpad.exe wasn't found in Program Files or Steam. Enter its location by hand.")
+        self.config.soundpad.path = path
+        self.store.save()
+        await self.actor.refresh()
+        self.hub.log("info", f"Soundpad found: {path}")
+        self.hub.toast("success", "Soundpad found")
+
+    # ---- Soundpad on actors (spec §8.1) ---------------------------------------
+
+    def _v2_actors(self, args: dict, what: str):
+        """The v2 relay connection and the actor session ids in args["ids"]."""
+        self._require_director()
+        relay = self.relay.impl
+        if relay.status != "connected":
+            raise CallError("Not connected to the relay")
+        if relay.legacy:
+            raise CallError(f"{what} needs the v0.4 relay; this one is v0.3")
+        ids = [i for i in args.get("ids", []) if isinstance(i, str) and getattr(relay.sessions.get(i), "role", "") == "actor"]
+        if not ids:
+            raise CallError("Pick an actor first")
+        return relay, ids
+
+    def _names(self, relay, ids: list[str]) -> str:
+        return ", ".join(relay.sessions[i].name for i in ids)
+
+    async def _call_play(self, args: dict) -> None:
+        relay, ids = self._v2_actors(args, "Playing a chosen sound")
+        data: dict[str, Any] = {"sound": args.get("sound")}
+        if args.get("lines") is not None:
+            data["lines"] = args["lines"]
+        if args.get("volume") is not None:
+            data["volume"] = args["volume"]
+        if args.get("startMs"):
+            data["start_ms"] = args["startMs"]
+        try:
+            validate("soundpad.play", data)
+        except ValueError as exc:
+            raise CallError(f"Can't play that: {exc}") from exc
+        await self._relay_action(relay.send("soundpad.play", data, {"ids": ids}))
+        label = str(args.get("label") or "sound")[:120]
+        lines = LINES_TEXT.get(str(data.get("lines")), "their default line")
+        self.hub.log("success", f"▶ {label} → {self._names(relay, ids)} ({lines})")
+        self.hub.traffic("self", ids, "cue")
+
+    async def _call_playIndex(self, args: dict) -> None:
+        self._require_director()
+        index = args.get("index")
+        if isinstance(index, bool) or not isinstance(index, int) or index < 1:
+            raise CallError("Enter a sound number from 1 up")
+        impl = self.relay.impl
+        if impl.status != "connected":
+            raise CallError("Not connected to the relay")
+        ids = [i for i in args.get("ids", []) if isinstance(i, str)]
+        if impl.legacy:
+            names = await impl.send_play_index(ids, index)
+            if not names:
+                raise CallError("Pick an actor first")
+            self.hub.log("success", f"▶ Sound {index} → {', '.join(names)}")
+            self.hub.traffic("self", [f"actor:{n}" for n in names], "cue")
+            return
+        relay, ids = self._v2_actors(args, "Play #N")
+        await self._relay_action(relay.send("cue.play", {"index": index}, {"ids": ids}))
+        self.hub.log("success", f"▶ Sound {index} → {self._names(relay, ids)}")
+        self.hub.traffic("self", ids, "cue")
+
+    async def _call_transport(self, args: dict) -> None:
+        relay, ids = self._v2_actors(args, "Soundpad controls")
+        action, value = args.get("action"), args.get("value")
+        messages = {
+            "pause": ("soundpad.pause", {"paused": True}),
+            "resume": ("soundpad.pause", {"paused": False}),
+            "mute": ("soundpad.mute", {"muted": True}),
+            "unmute": ("soundpad.mute", {"muted": False}),
+            "volume": ("soundpad.volume", {"value": value}),
+            "seek": ("soundpad.seek", {"ms": value}),
+            "jump": ("soundpad.jump", {"ms": value}),
+            "stop": ("soundpad.stop", {}),
+        }
+        if action not in messages:
+            raise CallError("Unknown Soundpad control")
+        msg_type, data = messages[action]
+        try:
+            validate(msg_type, data)
+        except ValueError as exc:
+            raise CallError(f"Can't {action}: {exc}") from exc
+        await self._relay_action(relay.send(msg_type, data, {"ids": ids}))
+        self.hub.traffic("self", ids, "stop" if action == "stop" else "cue")
+
+    async def _call_requestSounds(self, args: dict) -> None:
+        relay, ids = self._v2_actors({"ids": [args.get("id")]}, "The sound list")
+        cached = self.soundpad.lists.get(ids[0])
+        if cached:
+            self.hub.event(cached)  # show the last list right away; a fresh one follows
+        await self._relay_action(relay.send("soundpad.list.request", {}, {"ids": ids}))
 
     async def _call_pickReceiveDir(self, args: dict) -> None:
         try:

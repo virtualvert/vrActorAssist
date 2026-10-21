@@ -9,12 +9,13 @@ operators are invisible to everyone else.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import ssl
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -111,6 +112,38 @@ async def perform_cue(relay, command: str, sender: str, sender_peer: str) -> tup
     return ok, error
 
 
+class ActionQueue:
+    """An actor's cues, soundpad.* and OSC messages, run one at a time in the order they came, off
+    the receive loop. Awaiting them inline held up pings, Stop and everything else for as long as
+    Soundpad took (5 s on the laptop, M2 finding B). Shared by both protocols."""
+
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[Callable[[], Awaitable[None]]] = asyncio.Queue()
+        self._task: asyncio.Task | None = None
+
+    def put(self, job: Callable[[], Awaitable[None]]) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.get_running_loop().create_task(self._run(self._queue))
+        self._queue.put_nowait(job)
+
+    async def _run(self, queue: asyncio.Queue) -> None:
+        while True:
+            job = await queue.get()
+            try:
+                await job()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - one bad action mustn't stop the rest
+                logging.getLogger("vrcas").exception("An actor action failed")
+
+    def clear(self) -> None:
+        """Disconnected: drop what's waiting (its replies couldn't be sent anyway)."""
+        task, self._task = self._task, None
+        if task is not None:
+            task.cancel()
+        self._queue = asyncio.Queue()
+
+
 @dataclass
 class RemoteActor:
     name: str
@@ -141,10 +174,12 @@ class LegacyRelay:
         self.self_playing_until = 0.0
         self._ws = None
         self._machine_id = machine_id()
+        self._actions = ActionQueue()
 
     # ---- connection -------------------------------------------------------
 
     def _reset(self, detail: str, status: str = "disconnected") -> None:
+        self._actions.clear()
         self.status = status
         self.detail = detail
         self.server_version = None
@@ -236,7 +271,8 @@ class LegacyRelay:
             await self._on_private(msg.get("sender", ""), msg.get("text", ""))
         elif msg_type == "CMD":
             if role == "actor":
-                await self._run_cue(msg.get("command", ""), "the director")
+                command = msg.get("command", "")
+                self._actions.put(lambda: self._run_cue(command, "the director"))
         elif msg_type == "USERS":
             self._on_users([u for u in msg.get("users", []) if u])
         elif msg_type == "STATUS":
@@ -250,9 +286,7 @@ class LegacyRelay:
             self.agent.changed()
         elif msg_type == "OSC_CUE":
             if role == "actor":
-                ok, text = self.agent.actor.send_osc(msg.get("parameter", ""), msg.get("value", ""))
-                hub.log("success" if ok else "warning", f"[OSC] {text}")
-                hub.traffic("server", ["self"], "cue")
+                self._actions.put(lambda: self._send_osc(msg.get("parameter", ""), msg.get("value", "")))
         elif msg_type == "FILEREQ":
             filename = msg.get("filename", "")
             await self.send(format_message("FILEDENY", filename=filename, reason="File transfer isn't in the v0.4 preview yet"))
@@ -285,9 +319,14 @@ class LegacyRelay:
         if self.agent.config.role == "actor" and text.startswith("*"):
             if sender and sender not in self.actors:
                 self.directors.add(sender)
-            await self._run_cue(text, sender or "the director")
+            self._actions.put(lambda: self._run_cue(text, sender or "the director"))
             return
         self.agent.hub.log("chat", f"(private) {text}", sender)
+
+    async def _send_osc(self, parameter: str, value: str) -> None:
+        ok, text = self.agent.actor.send_osc(parameter, value)
+        self.agent.hub.log("success" if ok else "warning", f"[OSC] {text}")
+        self.agent.hub.traffic("server", ["self"], "cue")
 
     async def _run_cue(self, command: str, sender: str) -> None:
         ok, _ = await perform_cue(self, command, sender, self._peer_id(sender))
@@ -339,6 +378,14 @@ class LegacyRelay:
         symbol = "▶" if command == "*go" else "■"
         self.agent.hub.log("success" if command == "*go" else "info", f"{symbol} {command[1:].upper()} → {', '.join(names)}")
         self.agent.hub.traffic("self", [f"actor:{n}" for n in names], "cue" if command == "*go" else "stop")
+
+    async def send_play_index(self, ids: list[str], index: int) -> list[str]:
+        """`*play:N` to the given actors (peer ids `actor:<name>`), like the v0.3 director's PRIV."""
+        names = [i.removeprefix("actor:") for i in ids if i.removeprefix("actor:") in self.actors]
+        sender = clean(self.agent.config.name) or "Director"
+        for name in names:
+            await self.send(format_message("PRIV", sender=sender, target=name, text=f"*play:{index}"))
+        return names
 
     def set_targets(self, ids: list[str]) -> None:
         self.targets = {i.split(":", 1)[1] for i in ids if i.startswith("actor:") and i.split(":", 1)[1] in self.actors}
@@ -397,6 +444,6 @@ class LegacyRelay:
 
 
 def _peer(pid: str, name: str, role: str, status: str = "online", latency: int | None = None,
-          caps: list[str] | None = None) -> dict:
-    return {"id": pid, "name": name, "role": role, "status": status, "latencyMs": latency, "activity": "idle",
-            "self": False, "caps": list(caps or [])}
+          caps: list[str] | None = None, soundpad: dict | None = None, activity: str = "idle") -> dict:
+    return {"id": pid, "name": name, "role": role, "status": status, "latencyMs": latency, "activity": activity,
+            "self": False, "caps": list(caps or []), "soundpad": soundpad}

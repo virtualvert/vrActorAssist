@@ -212,9 +212,17 @@ class CueAck(Payload):
 # ---- addon messages the relay translates for v0.3 clients --------------------------------------
 
 
-class SoundRef(Payload):
-    """One of: path, sha256, index, category + position, selected (§8.1.3)."""
+SoundKey = Annotated[str, Field(pattern=r"^[0-9a-f]{16}$")]
+Lines = Literal["both", "speakers", "mic"]
 
+
+class SoundRef(Payload):
+    """One of: key, path, sha256, index, category + position, selected (§8.1.3).
+
+    `key` is how directors pick from an actor's list: a hash of the sound's path on the actor's PC,
+    so the path itself never leaves it (Phase 2 decision D6). The actor's agent maps it back."""
+
+    key: SoundKey | None = None
     path: str | None = None
     sha256: str | None = None
     index: int | None = Field(default=None, ge=1)
@@ -225,7 +233,7 @@ class SoundRef(Payload):
 
 class SoundpadPlay(Scheduled):
     sound: SoundRef
-    lines: Literal["both", "speakers", "mic"] | None = None
+    lines: Lines | None = None
     volume: int | None = Field(default=None, ge=0, le=100)
     start_ms: int | None = Field(default=None, ge=0)
     cuelist_id: str | None = None
@@ -235,10 +243,85 @@ class SoundpadStop(Scheduled):
     pass
 
 
+class SoundpadPause(Scheduled):
+    """Idempotent: pause when `paused`, resume otherwise (the actor checks the state first)."""
+
+    paused: bool
+
+
+class SoundpadSeek(Payload):
+    """Absolute position in ms."""
+
+    ms: int = Field(ge=0, le=86_400_000)
+
+
+class SoundpadJump(Payload):
+    """Relative: negative jumps back."""
+
+    ms: int = Field(ge=-86_400_000, le=86_400_000)
+
+
+class SoundpadVolume(Payload):
+    """0–100. Soundpad has one volume for both lines, so this changes what the audience hears too."""
+
+    value: int = Field(ge=0, le=100)
+
+
+class SoundpadMute(Payload):
+    muted: bool
+
+
+class SoundpadListRequest(Payload):
+    """Ask an actor for its sound list; it answers with soundpad.list pages and pushes new ones
+    when the list changes."""
+
+
+class SoundEntry(Payload):
+    index: int = Field(ge=1)
+    key: SoundKey
+    title: str = Field(max_length=300)
+    duration_ms: int | None = None
+
+
+class CategoryEntry(Payload):
+    index: int = Field(ge=1)
+    name: str = Field(max_length=300)
+
+
+class SoundpadList(Payload):
+    """One page of an actor's All-sounds list (at most LIST_PAGE sounds, so a page stays well
+    under the relay's frame limit). `first` is the index of the page's first sound."""
+
+    total: int = Field(ge=0)
+    first: int = Field(ge=1)
+    sounds: list[SoundEntry] = Field(default_factory=list, max_length=500)
+    categories: list[CategoryEntry] = Field(default_factory=list, max_length=500)
+    last: bool = True
+
+
+class SoundpadState(Payload):
+    """An actor's Soundpad, for directors: at most twice a second while playing, on change, and
+    every 10 s. `available` is false while Soundpad is off, missing or not answering."""
+
+    available: bool
+    status: Literal["STOPPED", "PLAYING", "PAUSED", "SEEKING"] | None = None
+    position_ms: int = 0
+    duration_ms: int = 0
+    title: str | None = Field(default=None, max_length=300)
+    index: int | None = None
+    key: SoundKey | None = None
+    lines: Lines | None = None
+    volume: int | None = Field(default=None, ge=0, le=100)
+    muted: bool | None = None
+    detail: str = Field(default="", max_length=500)
+
+
 class SoundpadAck(Payload):
     status: str
     late_ms: int | None = None
     error: str | None = None
+    # Which message this answers (soundpad.play, soundpad.volume, ...)
+    command: str | None = None
 
 
 class OscParam(Scheduled):
@@ -381,7 +464,15 @@ MODELS: dict[str, type[Payload] | None] = {
     "soundpad.play": SoundpadPlay,
     "soundpad.stop": SoundpadStop,
     "soundpad.ack": SoundpadAck,
-    **{f"soundpad.{t}": None for t in ("pause", "seek", "jump", "volume", "mute", "list.request", "list", "state", "calibrate")},
+    "soundpad.pause": SoundpadPause,
+    "soundpad.seek": SoundpadSeek,
+    "soundpad.jump": SoundpadJump,
+    "soundpad.volume": SoundpadVolume,
+    "soundpad.mute": SoundpadMute,
+    "soundpad.list.request": SoundpadListRequest,
+    "soundpad.list": SoundpadList,
+    "soundpad.state": SoundpadState,
+    "soundpad.calibrate": None,
     # files addon (chunks are binary frames, chunks.py)
     "file.batch.start": FileBatchStart,
     "file.offer": FileOffer,

@@ -2,6 +2,7 @@
   import { ExternalLink, Glasses, Monitor, Moon, Sun } from "@lucide/svelte";
   import { clampScale, SCALE_MAX, SCALE_MIN, VR_SCALE, type Theme } from "../protocol";
   import { ROLE_INFO, ROLE_ORDER } from "../roles";
+  import { OWN_LINE_HELP, OWN_LINE_OPTIONS } from "../soundpad";
   import { app } from "../state.svelte";
   import Button from "./Button.svelte";
   import ConnectForm from "./ConnectForm.svelte";
@@ -25,9 +26,6 @@
     { label: "Large", scale: 1.2 },
     { label: "VR", scale: VR_SCALE },
   ];
-
-  // The agent reports the path it uses in the detail line; the field starts empty (= auto-detect).
-  let soundpadPath = $state("");
 
   function setVr(on: boolean) {
     app.setPrefs(on ? { vrMode: true, scale: Math.max(prefs.scale, VR_SCALE) } : { vrMode: false });
@@ -109,19 +107,43 @@
           description={data.actor.soundpad.detail}
           onchange={(soundpadEnabled) => app.call({ call: "setActorLocal", args: { soundpadEnabled } })}
         />
-        {#if app.kind === "agent"}
-          <label class="field">
-            <span>Soundpad.exe location</span>
+        <div class="field">
+          <span>Soundpad.exe location</span>
+          <div class="with-button">
             <input
               class="input mono"
-              value={soundpadPath}
+              aria-label="Soundpad.exe location"
+              value={data.actor.soundpad.path}
               placeholder="Found automatically when empty"
               spellcheck="false"
               onchange={(e) => app.call({ call: "setActorLocal", args: { soundpadPath: e.currentTarget.value } })}
             />
-            <small>Only needed when Soundpad lives outside Program Files or Steam.</small>
-          </label>
-        {/if}
+            <Button variant="subtle" onclick={() => app.call({ call: "detectSoundpad" })}>Detect</Button>
+          </div>
+          <small>Only needed when Soundpad lives outside Program Files or Steam. Detect looks there and fills it in.</small>
+        </div>
+        <div class="field">
+          <span>Default output line</span>
+          <Segmented
+            label="Default output line"
+            options={OWN_LINE_OPTIONS}
+            value={data.actor.soundpad.defaultLines}
+            onchange={(defaultLines) => app.call({ call: "setActorLocal", args: { defaultLines } })}
+          />
+          <small>For sounds the director plays without picking a line: {OWN_LINE_HELP[data.actor.soundpad.defaultLines].toLowerCase()}. Go and sound numbers always play on both.</small>
+        </div>
+        <Toggle
+          checked={data.actor.soundpad.autoAddReceived}
+          label="Add received files to Soundpad"
+          description="So the director can play them right after sending. Needs the full version of Soundpad."
+          onchange={(autoAddReceived) => app.call({ call: "setActorLocal", args: { autoAddReceived } })}
+        />
+        <Toggle
+          checked={data.actor.soundpad.autoLaunch}
+          label="Start Soundpad when it isn't running"
+          description="If Soundpad is closed, the app starts it (once per run)."
+          onchange={(autoLaunch) => app.call({ call: "setActorLocal", args: { autoLaunch } })}
+        />
         <Toggle
           checked={data.actor.osc.enabled}
           label="VRChat OSC"

@@ -214,6 +214,7 @@ def test_v2_director_to_v03_actor(client, stack, msg_type, data, legacy):
 
 @pytest.mark.parametrize("data", [
     {"sound": {"path": "C:\\a.mp3"}},
+    {"sound": {"key": "0123456789abcdef"}},
     {"sound": {"selected": True}, "lines": "speakers"},
     {"sound": {"index": 1}, "volume": 50},
 ])
@@ -224,6 +225,23 @@ def test_v2_actions_v03_cant_do(client, stack, data):
     err = v2_dir.until("error")
     assert err["reply_to"] == msg and err["data"]["code"] == "unsupported" and err["data"]["ids"] == [coda_id(client)]
     assert not any(m.startswith("PRIV") for m in coda.sync())
+
+
+@pytest.mark.parametrize("msg_type, data", [
+    ("soundpad.pause", {"paused": True}),
+    ("soundpad.seek", {"ms": 1000}),
+    ("soundpad.jump", {"ms": -500}),
+    ("soundpad.volume", {"value": 40}),
+    ("soundpad.mute", {"muted": True}),
+    ("soundpad.list.request", {}),
+])
+def test_soundpad_controls_v03_cant_do(client, stack, msg_type, data):
+    v2_dir = connect_v2(client, stack, "director", "Bo", "m-bo")
+    coda = connect_legacy(client, stack, "actor", "Coda", "m-coda")
+    msg = v2_dir.send(msg_type, data, to={"ids": [coda_id(client)]})
+    err = v2_dir.until("error")
+    assert err["reply_to"] == msg and err["data"]["code"] == "unsupported" and err["data"]["ids"] == [coda_id(client)]
+    assert not [m for m in coda.sync() if not m.startswith("MSG|")]
 
 
 def test_v2_broadcasts_reach_both_kinds(client, stack):

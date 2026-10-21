@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** Sent after a drawer opens, so the toasts can move above it (Toasts.svelte). */
+  export const LAYER_EVENT = "vrcas:layer";
+</script>
+
 <script lang="ts">
   import type { Snippet } from "svelte";
   import { X } from "@lucide/svelte";
@@ -19,7 +24,10 @@
 
   $effect(() => {
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
+    if (open && !dialog.open) {
+      dialog.showModal();
+      window.dispatchEvent(new Event(LAYER_EVENT));
+    }
     else if (!open && dialog.open) dialog.close();
   });
 </script>

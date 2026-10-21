@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Check, UserPlus, Trash, X } from "@lucide/svelte";
+  import { AudioLines, Check, UserPlus, Trash, X } from "@lucide/svelte";
   import Button from "../components/Button.svelte";
   import StatusDot from "../components/StatusDot.svelte";
   import { initials, latencyLevel, peerSubtitle } from "../format";
   import type { AppState, Peer } from "../protocol";
+  import { soundpadReach } from "../soundpad";
   import { app } from "../state.svelte";
 
   interface Props {
@@ -37,6 +38,14 @@
   }
 
   const selectable = $derived(actors.filter((p) => p.status !== "pending"));
+
+  /** The Soundpad button's tooltip; `off` marks an actor whose Soundpad isn't answering. */
+  function soundpadHint(p: Peer): { text: string; off: boolean } {
+    const reach = soundpadReach(p);
+    if (reach !== "full") return { text: `${p.name}'s Soundpad: Go, Stop and a sound by number (older app)`, off: false };
+    if (p.soundpad && !p.soundpad.available) return { text: `${p.name}'s Soundpad isn't answering`, off: true };
+    return { text: `${p.name}'s Soundpad: sounds, line, volume`, off: false };
+  }
 </script>
 
 <aside class="cast card">
@@ -88,6 +97,12 @@
             </span>
           </button>
           <StatusDot level={latencyLevel(p.status, p.latencyMs)} pulse={p.activity === "playing"} />
+          {#if p.status !== "pending"}
+            {@const hint = soundpadHint(p)}
+            <Button size="s" icon variant="ghost" class={hint.off ? "sp-off" : ""} aria-label="{p.name}'s Soundpad" title={hint.text} onclick={() => (app.soundpadFor = p.id)}>
+              <AudioLines size="1.05em" />
+            </Button>
+          {/if}
           <Button
             size="s"
             icon={confirmForget !== p.id}
@@ -296,6 +311,10 @@
   .sub.lvl-poor { color: var(--bad); }
   .sub.playing { color: var(--actor); }
   .sub.rec { color: var(--live); }
+
+  .actor-row :global(.sp-off) {
+    color: var(--warn);
+  }
 
   .empty {
     padding: 1.5rem 0.75rem;

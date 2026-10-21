@@ -47,7 +47,48 @@ export interface Peer {
    * show as `legacy`. Empty for yourself and on a v0.3 relay.
    */
   caps: string[];
+  /** An actor's Soundpad as its app reports it (v2 relay); null for others and before the first report. */
+  soundpad: PeerSoundpad | null;
 }
+
+export type Lines = "both" | "speakers" | "mic";
+
+/** soundpad.state from an actor (spec §8.1.6). Position moves in ~140 ms steps; interpolate from `at`. */
+export interface PeerSoundpad {
+  /** False while Soundpad is off, missing or not answering (`detail` says why). */
+  available: boolean;
+  status: PlayStatus | null;
+  positionMs: number;
+  durationMs: number;
+  title: string | null;
+  index: number | null;
+  key: string | null;
+  lines: Lines | null;
+  volume: number | null;
+  muted: boolean | null;
+  detail: string;
+  /** When the agent received this report (ms since epoch). */
+  at: number;
+}
+
+/** A sound in an actor's list: the key stands for the file on their PC (its path isn't sent). */
+export interface SoundEntry {
+  index: number;
+  key: string;
+  title: string;
+  durationMs: number | null;
+}
+
+export interface SoundList {
+  peerId: string;
+  sounds: SoundEntry[];
+  categories: { index: number; name: string }[];
+  total: number;
+  at: number;
+}
+
+/** How to name a sound to an actor (spec §8.1.3). */
+export type SoundRef = { key: string } | { sha256: string } | { index: number } | { selected: true } | { category: string; position: number };
 
 export interface PendingActor {
   id: string;
@@ -55,10 +96,12 @@ export interface PendingActor {
 }
 
 /**
- * ready: Soundpad answers on its remote-control pipe. fallback: it doesn't, so cues go through
+ * ready: Soundpad answers on its remote-control pipe. closed: Soundpad isn't running, so cues
+ * can't play (the app never starts it through a cue). fallback: it runs but its pipe can't be
+ * used, so cues go through
  * `Soundpad.exe -rc` (no playback status). missing: neither works.
  */
-export type SoundpadState = "ready" | "fallback" | "simulated" | "missing" | "disabled";
+export type SoundpadState = "ready" | "closed" | "fallback" | "simulated" | "missing" | "disabled";
 export type PlayStatus = "STOPPED" | "PLAYING" | "PAUSED" | "SEEKING";
 
 export interface SoundpadInfo {
@@ -75,6 +118,8 @@ export interface SoundpadPlayback {
   durationMs: number;
   /** Known when the cue named the sound (`*play:N`), not for Go (Soundpad's selected sound). */
   title: string | null;
+  /** Where the sound plays (spec §8.1.4); null while stopped. */
+  lines: Lines | null;
 }
 
 export interface ActorLocal {
@@ -85,6 +130,17 @@ export interface ActorLocal {
     /** Only while the pipe is connected. */
     info: SoundpadInfo | null;
     playback: SoundpadPlayback | null;
+    /** 0–100; null when unknown. One volume for both lines (spec §8.1.5). */
+    volume: number | null;
+    muted: boolean | null;
+    /** Output line when the director doesn't pick one. */
+    defaultLines: Lines;
+    /** Add received files to Soundpad (full version). */
+    autoAddReceived: boolean;
+    /** Start Soundpad.exe when it isn't running. */
+    autoLaunch: boolean;
+    /** Soundpad.exe as set in Settings or by Detect; empty = found automatically. */
+    path: string;
   };
   osc: { enabled: boolean; host: string; port: number; ready: boolean };
   lastCue: { command: string; at: number; ok: boolean } | null;
@@ -145,7 +201,8 @@ export interface SendBatch {
   current: { name: string; size: number; sent: number; waiting: boolean } | null;
   state: "waiting" | "sending" | "done" | "cancelled" | "failed";
   detail: string;
-  results: { name: string; state: SendFileState; detail: string }[];
+  /** `sha256` is set for files that arrived, so the director can play them ("Sent files"). */
+  results: { name: string; state: SendFileState; detail: string; sha256: string | null }[];
 }
 
 export interface DirectorLocal {
@@ -207,6 +264,7 @@ export type AgentEvent =
   | { type: "log"; entry: LogEntry }
   | { type: "traffic"; traffic: Traffic }
   | { type: "toast"; level: LogLevel; text: string }
+  | ({ type: "sounds" } & SoundList)
   | { type: "result"; id: number; ok: boolean; error?: string };
 
 export type Call =
@@ -223,8 +281,28 @@ export type Call =
   | { call: "forget"; args: { id: string } }
   | {
       call: "setActorLocal";
-      args: { soundpadEnabled?: boolean; oscEnabled?: boolean; soundpadPath?: string; receiveDir?: string; autoAcceptFiles?: boolean };
+      args: {
+        soundpadEnabled?: boolean;
+        oscEnabled?: boolean;
+        soundpadPath?: string;
+        receiveDir?: string;
+        autoAcceptFiles?: boolean;
+        defaultLines?: Lines;
+        autoAddReceived?: boolean;
+        autoLaunch?: boolean;
+      };
     }
+  | { call: "detectSoundpad" }
+  /** Director → actors' Soundpad (v2 relay). `lines` left out = each actor's default. `label` is only for the log. */
+  | { call: "play"; args: { ids: string[]; sound: SoundRef; lines?: Lines; volume?: number; startMs?: number; label?: string } }
+  /** `*play:N`: works for v0.3 actors and on a v0.3 relay too. */
+  | { call: "playIndex"; args: { ids: string[]; index: number } }
+  | {
+      call: "transport";
+      args: { ids: string[]; action: "pause" | "resume" | "stop" | "mute" | "unmute" | "volume" | "seek" | "jump"; value?: number };
+    }
+  /** The actor's sound list arrives as a "sounds" event (the last one first, if known). */
+  | { call: "requestSounds"; args: { id: string } }
   | { call: "pickReceiveDir" }
   | { call: "answerFile"; args: { transferId: string; accept: boolean; rest?: boolean; always?: boolean } }
   /** Files from a folder opened with `folders.open(folder, "all")`, each with the actor who gets it. */

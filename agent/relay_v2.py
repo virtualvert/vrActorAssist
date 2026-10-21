@@ -19,15 +19,19 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 from shared import get_platform_id
 
 from . import APP_VERSION
-from .relay_legacy import _peer, connect_kwargs, machine_id, perform_cue, version_tuple
+from .relay_legacy import ActionQueue, _peer, connect_kwargs, machine_id, perform_cue, version_tuple
 from vrcas_protocol import make, now_ms
 
 if TYPE_CHECKING:
     from .core import Agent
 
-# What an actor's agent can do (the director UI shows controls per capability)
-ACTOR_CAPABILITIES = ["soundpad", "osc", "files"]
-CUE_TYPES = {"cue.go", "cue.stop", "cue.play", "soundpad.play", "soundpad.stop"}
+# What an actor's agent can do (the director UI shows controls per capability). Fixed per build;
+# whether Soundpad is up right now comes in soundpad.state (Phase 2 decision D7).
+ACTOR_CAPABILITIES = ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add", "osc", "files"]
+CUE_TYPES = {"cue.go", "cue.stop", "cue.play"}
+SOUNDPAD_ACTIONS = {"soundpad.play", "soundpad.stop", "soundpad.pause", "soundpad.seek", "soundpad.jump",
+                    "soundpad.volume", "soundpad.mute", "soundpad.list.request", "soundpad.calibrate"}
+SOUNDPAD_REPORTS = {"soundpad.state", "soundpad.list", "soundpad.ack"}
 
 
 class V2Unavailable(Exception):
@@ -84,12 +88,15 @@ class V2Relay:
         self._seen_actors: set[str] = set()
         self._ws = None
         self._machine_id = machine_id()
+        self._actions = ActionQueue()
 
     # ---- connection -------------------------------------------------------
 
     def _reset(self, detail: str, status: str = "disconnected") -> None:
+        self._actions.clear()
         if self.status == "connected":
             self.agent.files.reset(detail)
+        self.agent.soundpad.stop()
         self.status = status
         self.detail = detail
         self.server_version = None
@@ -179,6 +186,7 @@ class V2Relay:
             self.server_version = data.get("server_version")
             first = self.status != "connected"
             self._set("connected", f"Connected as {role}")
+            self.agent.soundpad.start()
             if first:
                 hub.log("success", f"Connected to {self.host} as {role} (v2 relay {self.server_version})")
                 if role != "director":
@@ -226,12 +234,16 @@ class V2Relay:
             hub.log("chat", f"(private) {data.get('text', '')}", sender.name if sender else "?")
         elif msg_type in CUE_TYPES:
             if role == "actor":
-                await self._run_cue(env, msg_type, data, sender_name)
+                self._actions.put(lambda: self._run_cue(env, msg_type, data, sender_name))
+        elif msg_type in SOUNDPAD_ACTIONS:
+            if role == "actor":
+                self._actions.put(lambda: self.agent.soundpad.on_actor_message(env, sender_name))
+        elif msg_type in SOUNDPAD_REPORTS:
+            if role == "director":
+                self.agent.soundpad.on_director_message(env, sender.name if sender else "An actor")
         elif msg_type == "osc.param":
             if role == "actor":
-                ok, text = self.agent.actor.send_osc(str(data.get("parameter", "")), data.get("value", ""))
-                hub.log("success" if ok else "warning", f"[OSC] {text}")
-                hub.traffic(env.get("from") or "server", ["self"], "cue")
+                self._actions.put(lambda: self._send_osc(env, data))
         elif isinstance(msg_type, str) and msg_type.startswith("file."):
             await self.agent.files.on_message(env, sender.name if sender else "the director")
         elif msg_type == "cue.ack":
@@ -264,6 +276,7 @@ class V2Relay:
                 capabilities=[c for c in entry.get("capabilities", []) if isinstance(c, str)],
             )
         self.sessions = sessions
+        self.agent.soundpad.forget_missing(set(sessions))
         for s in sessions.values():
             if s.role == "actor" and s.id not in self._seen_actors:
                 # Same default as the v0.3 director: new actors receive cues until unticked.
@@ -275,6 +288,11 @@ class V2Relay:
             if isinstance(p, dict)
         ]
         self.agent.changed()
+
+    async def _send_osc(self, env: dict, data: dict) -> None:
+        ok, text = self.agent.actor.send_osc(str(data.get("parameter", "")), data.get("value", ""))
+        self.agent.hub.log("success" if ok else "warning", f"[OSC] {text}")
+        self.agent.hub.traffic(env.get("from") or "server", ["self"], "cue")
 
     async def _run_cue(self, env: dict, msg_type: str, data: dict, sender: str) -> None:
         command = cue_command(msg_type, data)
@@ -357,6 +375,8 @@ class V2Relay:
                 continue
             # The UI has no assistant role yet; assistants direct too
             role = "director" if s.role == "assistant" else s.role
+            sp = self.agent.soundpad.peer_view(s.id) if s.role == "actor" else None
+            playing = bool(sp and sp["available"] and sp["status"] in ("PLAYING", "SEEKING"))
             out.append(_peer(s.id, s.name, role, status="timeout" if s.timed_out else "online", latency=s.latency_ms,
-                             caps=s.capabilities))
+                             caps=s.capabilities, soundpad=sp, activity="playing" if playing else "idle"))
         return out

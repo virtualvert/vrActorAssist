@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Play, Square, Timer } from "@lucide/svelte";
+  import { Hash, Play, Square, Timer } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import Button from "../components/Button.svelte";
   import type { AppState } from "../protocol";
@@ -40,12 +40,37 @@
   });
 
   const blockReason = $derived(!connected ? "Not connected" : !targeted.length ? "No actors targeted" : undefined);
+
+  // *play:N: sound N of each targeted actor's All-sounds list; every app version plays it
+  let soundNumber = $state<number | null>(null);
+  const validNumber = $derived(soundNumber !== null && Number.isInteger(soundNumber) && soundNumber >= 1);
+
+  function playNumber(event: SubmitEvent) {
+    event.preventDefault();
+    if (!validNumber || blockReason || counting) return;
+    void app.call({ call: "playIndex", args: { ids: data.targets, index: soundNumber! } });
+  }
 </script>
 
 <div class="deck card">
   <div class="summary">
     <span class="eyebrow">Cue</span>
     <span class="who" class:empty={!targeted.length || !connected}>{summary}</span>
+    <form class="by-number" onsubmit={playNumber} aria-label="Play a sound by number on the targeted actors">
+      <label class="number">
+        <Hash size="0.95em" aria-hidden="true" />
+        <input class="input mono" type="number" min="1" step="1" bind:value={soundNumber} placeholder="N" aria-label="Sound number" />
+      </label>
+      <Button
+        type="submit"
+        size="s"
+        variant="subtle"
+        disabled={!!blockReason || counting || !validNumber}
+        title={blockReason ?? "Plays this number from each targeted actor's All-sounds list"}
+      >
+        <Play size="0.9em" fill="currentColor" /> Play #{validNumber ? soundNumber : "N"}
+      </Button>
+    </form>
   </div>
   <div class="buttons">
     <Button variant="go" size="xl" disabled={!!blockReason || counting} title={blockReason} onclick={() => app.call({ call: "cue", args: { command: "go" } })}>
@@ -84,13 +109,15 @@
 
   .summary {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 0.75rem;
     min-width: 0;
     padding: 0 0.25rem;
   }
 
   .who {
+    flex: 1 1 12rem;
+    min-width: 0;
     font-weight: 650;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -100,6 +127,25 @@
   .who.empty {
     color: var(--text-3);
     font-weight: 500;
+  }
+
+  .by-number {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .number {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--text-3);
+  }
+
+  .number input {
+    width: 4.5rem;
+    min-height: calc(var(--target) * 0.85);
   }
 
   .buttons {
@@ -127,6 +173,10 @@
   }
 
   @container (max-width: 34rem) {
+    .summary {
+      flex-wrap: wrap;
+    }
+
     .buttons {
       grid-template-columns: 1fr 1fr;
     }
