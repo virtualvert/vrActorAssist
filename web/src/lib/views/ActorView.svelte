@@ -54,6 +54,21 @@
   const asking = $derived(files?.incoming.filter((f) => f.state === "asking") ?? []);
   const receiving = $derived(files?.incoming.filter((f) => f.state === "receiving") ?? []);
 
+  // A new prompt scrolls into view: the card sits at the top and the page may be scrolled down
+  let offersEl = $state<HTMLElement | undefined>();
+  let promptCount = 0;
+  $effect(() => {
+    const count = asking.length;
+    if (count > promptCount && offersEl) {
+      const still = document.documentElement.dataset.motion === "reduce";
+      offersEl.scrollIntoView({ block: "nearest", behavior: still ? "auto" : "smooth" });
+    }
+    promptCount = count;
+  });
+
+  /** Files left in the batch, this one included. */
+  const left = (f: { index: number | null; count: number | null }) => (f.index && f.count ? f.count - f.index + 1 : 1);
+
   function answer(transferId: string, accept: boolean, extra: { rest?: boolean; always?: boolean } = {}) {
     void app.call({ call: "answerFile", args: { transferId, accept, ...extra } });
   }
@@ -72,7 +87,7 @@
     <div class="banner-slot"><ConnectBanner /></div>
 
     {#if asking.length}
-      <section class="offers card card-pad" aria-label="Files waiting for your answer" aria-live="polite">
+      <section class="offers card card-pad" aria-label="Files waiting for your answer" aria-live="polite" bind:this={offersEl}>
         {#each asking as f (f.transferId)}
           <div class="offer">
             <span class="tool-icon role-director"><FileDown size="1.3em" /></span>
@@ -85,8 +100,8 @@
             </div>
             <div class="offer-actions">
               <Button variant="primary" onclick={() => answer(f.transferId, true)}><Check size="1.1em" /> Accept</Button>
-              {#if f.count && f.count > 1}
-                <Button variant="subtle" onclick={() => answer(f.transferId, true, { rest: true })}>Accept all {f.count}</Button>
+              {#if left(f) > 1}
+                <Button variant="subtle" onclick={() => answer(f.transferId, true, { rest: true })}>Accept all {left(f)}</Button>
               {/if}
               <Button variant="ghost" onclick={() => answer(f.transferId, false)}><X size="1.1em" /> Decline</Button>
             </div>

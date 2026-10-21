@@ -195,7 +195,13 @@ def test_batch_cancel_ends_its_transfers(tmp_path, stack):
     d.send("file.batch.cancel", {"batch_id": "b1", "reason": "Cancelled by the director"}, to={"ids": [a1.session_id]})
     assert next_of(a1, "file.batch.cancel")["data"]["batch_id"] == "b1"
     assert sorted(relay.files.by_id) == ["1f" * 16]
+    # Chunks and replies that were already on the way are dropped without an error
     d.ws.send_bytes(pack_chunk(TID, 0, b"x"))
+    a1.send("file.progress", {"transfer_id": TID, "received": 1}, to={"ids": [d.session_id]})
+    assert errors(d) == [] and errors(a1) == []
+    assert not [e for e in d.sync() if e["type"] == "file.progress"]
+    # ...but a transfer id that never existed is still refused
+    d.ws.send_bytes(pack_chunk("9f" * 16, 0, b"x"))
     assert [e["code"] for e in errors(d)] == ["invalid"]
     assert "Scene 4 - Diego.mp3 (293.0 KB): cancelled" in (tmp_path / "server.log").read_text(encoding="utf-8")
 

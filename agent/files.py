@@ -406,6 +406,7 @@ class Receiver:
         for item in list(self.incoming.values()):
             self._discard(item)
             self._remember(item, False, reason)
+            self.log("warning", f"{item.name} from {item.sender_name} not saved: {reason}")
         self.batches.clear()
 
     # ---- records ---------------------------------------------------------------------------------
@@ -622,7 +623,9 @@ class Sender:
             await files.send("file.batch.end", {"batch_id": batch.id, "ok": batch.ok, "failed": batch.failed}, to)
             batch.state = "done"
             level = "success" if not batch.failed else "warning"
-            self.log(level, f"Files to {batch.actor_name}: {batch.ok} sent" + (f", {batch.failed} not" if batch.failed else ""))
+            problems = [f"{f.name}: {f.detail or f.state}" for f in batch.files if f.state != "ok"]
+            self.log(level, f"Files to {batch.actor_name}: {batch.ok} sent" + (f", {batch.failed} not" if batch.failed else "")
+                     + (f" ({'; '.join(problems[:3])}{'; …' if len(problems) > 3 else ''})" if problems else ""))
         except asyncio.CancelledError:
             batch.state = "cancelled"
             for item in batch.files:

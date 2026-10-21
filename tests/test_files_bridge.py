@@ -244,8 +244,8 @@ def test_v2_director_cancels_mid_file(client, stack):
     lex.send("FILEACK|a.wav|1|C:/cues")
     d.ws.send_bytes(pack_chunk(TID, 0, data[:256 * 1024]))
     d.send("file.batch.cancel", {"batch_id": "b1", "reason": "Cancelled by the director"}, to={"ids": [lex_id]})
-    d.ws.send_bytes(pack_chunk(TID, 1, data[256 * 1024:512 * 1024]))  # too late: refused
-    assert [e["data"]["code"] for e in of_type(d.sync(), "error")] == ["invalid"]
+    d.ws.send_bytes(pack_chunk(TID, 1, data[256 * 1024:512 * 1024]))  # already on the way: dropped quietly
+    assert of_type(d.sync(), "error") == []
     got = lex.sync()
     assert [f.split("|")[0] for f in got if f.startswith(("FILE", "BATCH_"))] == \
         ["BATCH_START", "FILEREQ", "FILESTART", "FILECHUNK", "FILECHUNK", "FILECHUNK", "FILECHUNK", "BATCH_CANCEL"]

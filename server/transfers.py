@@ -12,6 +12,7 @@ Files to and from v0.3 clients use the same entries; file_bridge.py translates f
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 # Types this module routes itself (the rest of file.* is routed as usual)
 REPLY_TYPES = ("file.accept", "file.deny", "file.progress", "file.ok", "file.err")
 TYPES = ("file.offer", "file.end", "file.batch.cancel") + REPLY_TYPES
+# Ended transfers remembered, so chunks and replies already on the way are dropped without an error
+RECENT_MAX = 512
 
 
 @dataclass(eq=False)
@@ -68,6 +71,7 @@ class Transfers:
     def __init__(self, relay: "Relay"):
         self.relay = relay
         self.by_id: dict[str, Transfer] = {}
+        self.recent: OrderedDict[str, None] = OrderedDict()
 
     @property
     def log(self):
@@ -99,6 +103,8 @@ class Transfers:
 
         transfer = self.by_id.get(payload.transfer_id)
         if transfer is None:
+            if payload.transfer_id in self.recent:
+                return  # sent before the sender heard that the transfer had ended
             raise Refused("invalid", "Unknown or finished transfer")
         if env.type == "file.end":
             if transfer.sender is not sender:
@@ -156,6 +162,8 @@ class Transfers:
             raise Refused("invalid", f"Unknown binary frame kind {chunk.kind}")
         transfer = self.by_id.get(chunk.transfer_id)
         if transfer is None:
+            if chunk.transfer_id in self.recent:
+                return  # in flight when the transfer was cancelled or the other side left
             raise Refused("invalid", "Unknown or finished transfer")
         if transfer.sender is not sender:
             raise Refused("forbidden", "That transfer isn't yours")
@@ -213,5 +221,8 @@ class Transfers:
     def close(self, transfer: Transfer, result: str) -> None:
         if self.by_id.pop(transfer.id, None) is None:
             return
+        self.recent[transfer.id] = None
+        while len(self.recent) > RECENT_MAX:
+            self.recent.popitem(last=False)
         self.log(f"File {transfer.sender.name} → {transfer.recipient.name}: {transfer.name} "
                  f"({size_text(transfer.size)}): {result}")

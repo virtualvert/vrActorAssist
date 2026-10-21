@@ -173,7 +173,7 @@
         <ul>
           {#each [...batches].reverse() as b (b.id)}
             {@const running = b.state === "waiting" || b.state === "sending"}
-            <li class="batch {b.state}">
+            <li class="batch {b.state}" class:partial={b.state === "done" && b.failed > 0}>
               <div class="batch-head">
                 <strong>{b.actorName}</strong>
                 <span class="faint mono">{b.done} of {b.files} · {fileSize(b.sentBytes)} / {fileSize(b.bytes)}</span>
@@ -405,7 +405,8 @@
   }
 
   .batch.cancelled .line,
-  .batch.failed .line {
+  .batch.failed .line,
+  .batch.partial .line {
     color: var(--warn);
   }
 
