@@ -528,7 +528,8 @@ class Batch:
             },
             "state": self.state,
             "detail": self.detail,
-            "results": [{"name": f.name, "state": f.state, "detail": f.detail} for f in self.files],
+            "results": [{"name": f.name, "state": f.state, "detail": f.detail,
+                         "sha256": f.sha256 if f.state == "ok" else None} for f in self.files],
         }
 
 
