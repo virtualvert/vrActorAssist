@@ -80,7 +80,7 @@ class Relay:
                 await self.bridge.send_welcome(session)
             else:
                 await self.router.send_welcome(session)
-        self.log(f"Actor approved by director: {entry.name}")
+        self.log(f"{entry.role.capitalize()} approved by director: {entry.name}")
         await self.bridge.after_approve(entry)
         await self.router.roster_changed()
 
@@ -88,7 +88,7 @@ class Relay:
         entry = self.pending.pop(machine_id, None)
         if entry is None:
             return
-        self.log(f"Actor denied by director: {entry.name}")
+        self.log(f"{entry.role.capitalize()} denied by director: {entry.name}")
         session = entry.session
         if session is not None:
             if session.legacy:
@@ -105,7 +105,7 @@ class Relay:
             return
         role = info.get("role", "actor")
         self.approvals.remove(machine_id)
-        self.log(f"Actor forgotten by name: {name}")
+        self.log(f"{role.capitalize()} forgotten by name: {name}")
         await self.bridge.notify_forgotten(machine_id)
         for session in self.registry:
             if not session.legacy and session.machine_id == machine_id and session.role in ("actor", "camera") and session.approved:

@@ -181,6 +181,22 @@ def test_deny(tmp_path, stack):
     assert d.until("presence.roster")["data"]["pending"] == []
 
 
+def test_log_names_the_role(tmp_path, stack):
+    # server.log said "Actor approved by director: Cam" for a camera (manual checklist, step 19)
+    client, _ = relay_client(stack, tmp_path)
+    d = connect_v2(client, stack, "director", "Mira", "m-dir")
+    c = connect_v2(client, stack, "camera", "Cam", "m-c", expect="approval.pending")
+    a = connect_v2(client, stack, "actor", "Coda", "m-a", expect="approval.pending")
+    d.until(lambda e: e["type"] == "presence.roster" and len(e["data"]["pending"]) == 2)
+    d.send("approval.approve", {"machine_id": "m-c"})
+    c.until("welcome")
+    d.send("approval.deny", {"machine_id": "m-a"})
+    a.until("denied")
+    log = (tmp_path / "server.log").read_text()
+    assert "Camera approved by director: Cam" in log
+    assert "Actor denied by director: Coda" in log
+
+
 def test_forget(tmp_path, stack):
     client, _ = relay_client(stack, tmp_path, {"m-a": {"name": "Coda"}})
     d = connect_v2(client, stack, "director", "Mira", "m-dir")
