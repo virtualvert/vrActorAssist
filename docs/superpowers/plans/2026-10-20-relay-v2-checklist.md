@@ -147,3 +147,22 @@ session and a v2 handshake were run with that interpreter on a spare port).
   cast, the "v0.3 relay" tag disappears, and latency comes from the relay's own pings. A v0.3.3
   director can't see or approve cameras; a new director has to.
 - Pending join requests are lost on restart, as before; approved machines come straight back.
+- **A v0.3.3 client that keeps flipping "joined" / "Reconnected from another location"** has two
+  connections running. Its Connect button starts a second connection thread if it's pressed while the
+  client is still retrying. The relay keeps the newest connection per machine (the v0.3 rule), so the
+  two take turns replacing each other, on the old relay as well. Fix: close the client completely,
+  reopen it, and press Connect once.
+
+### Result, 2026-10-21: switched
+
+- Backup taken (`approved_actors.json.bak`). Before the restart, a smoke run of the merged checkout with the live `venv` on a
+  spare port, against a copy of the live approvals, passed: start line, both approvals loaded, a known v0.3 actor
+  auto-approved, a v2 hello answered.
+- `./start-server-ts.sh restart` at 11:42 (run by the relay owner: it asks for the secret and for sudo, and it kills
+  every `server_ws.py` process, test relays included).
+- Checks: `/health` healthy; the start line above at 11:42:24; a v0.4 preview director reconnected over `/ws` in
+  compatibility mode (11:42:29); the v0.3.3 actor on the test box auto-approved and stayed connected (11:46:53).
+  `approved_actors.json` unchanged.
+- First try of the actor hit the double-connection loop above (Connect pressed while it was still retrying against
+  the stopped test relay); after a restart of the client it connected once and stayed.
+- Rollback point: `17de51a` (feat/web-ui before the merge); not needed.
