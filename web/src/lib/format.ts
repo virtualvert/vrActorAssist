@@ -77,3 +77,17 @@ export function decibels(value: number, signed = false): string {
   if (rounded < 0) return `−${text}`;
   return signed && rounded > 0 ? `+${text}` : text;
 }
+
+/** "350 KB", "1.2 MB", "2.4 GB" — sizes of files being sent. */
+export function fileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024 * 1024) return `${Math.max(bytes ? 1 : 0, Math.round(bytes / 1024))} KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}
+
+/** Whole percent, never 100 before the end. */
+export function percent(done: number, total: number): number {
+  if (total <= 0) return done > 0 ? 100 : 0;
+  return done >= total ? 100 : Math.min(99, Math.floor((done / total) * 100));
+}

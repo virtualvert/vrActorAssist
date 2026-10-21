@@ -34,21 +34,32 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export class DemoFolders implements FolderAccess {
   readonly written = new Map<string, number>();
   #cache = new Map<string, ArrayBuffer>();
+  #sizes = new Map<string, number>();
+
+  /** Size of a file in the last listing (the demo session uses it for pretend transfers). */
+  sizeOf(path: string): number | undefined {
+    return this.#sizes.get(path);
+  }
 
   async pick(): Promise<string | null> {
     await wait(250);
     return SAMPLE_FOLDER;
   }
 
-  async open(folder: string): Promise<FolderListing> {
+  async open(folder: string, kind: "audio" | "all" = "audio"): Promise<FolderListing> {
     await wait(120);
     const name = folder.trim() || SAMPLE_FOLDER;
-    return {
-      folder: name,
-      output: `${name}/normalized`,
-      files: FILES.map((f) => ({ path: f.path, size: 44 + Math.round(f.seconds * RATE) * (f.stereo ? 4 : 2) })),
-      truncated: false,
-    };
+    const files = FILES.map((f) => ({ path: f.path, size: 44 + Math.round(f.seconds * RATE) * (f.stereo ? 4 : 2) }));
+    if (kind === "all") {
+      // Send files lists everything, the normalized copies and other documents included
+      files.push(
+        { path: "EP3 script.pdf", size: 182_311 },
+        ...[...this.written].map(([path, size]) => ({ path: `normalized/${path}`, size })),
+      );
+      files.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: "base" }));
+    }
+    for (const f of files) this.#sizes.set(f.path, f.size);
+    return { folder: name, output: `${name}/normalized`, files, truncated: false };
   }
 
   async read(_folder: string, path: string): Promise<ArrayBuffer> {

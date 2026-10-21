@@ -42,6 +42,11 @@ export interface Peer {
   latencyMs: number | null;
   activity: Activity;
   self: boolean;
+  /**
+   * What the peer's app announced to the relay (`files`, `soundpad`, `osc`, ...). v0.3 clients
+   * show as `legacy`. Empty for yourself and on a v0.3 relay.
+   */
+  caps: string[];
 }
 
 export interface PendingActor {
@@ -83,6 +88,68 @@ export interface ActorLocal {
   };
   osc: { enabled: boolean; host: string; port: number; ready: boolean };
   lastCue: { command: string; at: number; ok: boolean } | null;
+  files: ActorFiles;
+}
+
+/** A file a director is sending (spec §8.4). `asking` waits for Accept / Decline. */
+export interface IncomingFile {
+  transferId: string;
+  batchId: string | null;
+  name: string;
+  size: number;
+  from: string;
+  /** From the file name (" - Diego.mp3"). */
+  character: string | null;
+  /** A file with this name is already in the receive folder; accepting replaces it. */
+  replaces: boolean;
+  /** Position in the director's batch ("2 of 5"); null outside a batch. */
+  index: number | null;
+  count: number | null;
+  state: "asking" | "receiving";
+  receivedBytes: number;
+}
+
+export interface ReceivedFile {
+  name: string;
+  ok: boolean;
+  at: number;
+  from: string;
+  /** Why it didn't arrive, or a note ("replaced your copy"). */
+  detail: string;
+}
+
+export interface ActorFiles {
+  /** The folder received files are saved in (absolute). */
+  receiveDir: string;
+  /** Accept without asking, and replace files with the same name (the v0.3 rule). */
+  autoAccept: boolean;
+  incoming: IncomingFile[];
+  /** Newest first. */
+  recent: ReceivedFile[];
+}
+
+export type SendFileState = "queued" | "offered" | "sending" | "ok" | "declined" | "failed" | "cancelled";
+
+/** One batch of files to one actor, from this director. */
+export interface SendBatch {
+  id: string;
+  actorId: string;
+  actorName: string;
+  files: number;
+  done: number;
+  ok: number;
+  failed: number;
+  bytes: number;
+  sentBytes: number;
+  /** The file on its way; `waiting` until the actor accepts it. */
+  current: { name: string; size: number; sent: number; waiting: boolean } | null;
+  state: "waiting" | "sending" | "done" | "cancelled" | "failed";
+  detail: string;
+  results: { name: string; state: SendFileState; detail: string }[];
+}
+
+export interface DirectorLocal {
+  files: { batches: SendBatch[] };
 }
 
 export interface CameraLocal {
@@ -112,6 +179,7 @@ export interface AppState {
   countdown: Countdown | null;
   actor: ActorLocal | null;
   camera: CameraLocal | null;
+  director: DirectorLocal | null;
 }
 
 export type LogLevel = "info" | "success" | "warning" | "error" | "chat";
@@ -153,14 +221,23 @@ export type Call =
   | { call: "approve"; args: { id: string } }
   | { call: "deny"; args: { id: string } }
   | { call: "forget"; args: { id: string } }
-  | { call: "setActorLocal"; args: { soundpadEnabled?: boolean; oscEnabled?: boolean; soundpadPath?: string } }
+  | {
+      call: "setActorLocal";
+      args: { soundpadEnabled?: boolean; oscEnabled?: boolean; soundpadPath?: string; receiveDir?: string; autoAcceptFiles?: boolean };
+    }
+  | { call: "pickReceiveDir" }
+  | { call: "answerFile"; args: { transferId: string; accept: boolean; rest?: boolean; always?: boolean } }
+  /** Files from a folder opened with `folders.open(folder, "all")`, each with the actor who gets it. */
+  | { call: "sendFiles"; args: { folder: string; items: { path: string; actorId: string }[] } }
+  /** A batch id, or "all". */
+  | { call: "cancelBatch"; args: { id: string } }
   | { call: "camera"; args: { action: "roll" | "cut" } }
   | { call: "openBrowser" };
 
 /**
- * Folder access for Normalize folder (spec §8.4.2). The agent serves it under /api/folders/
- * (pick, open, read, write; agent/web.py + agent/folders.py) rather than as calls, because it
- * moves file bytes. The demo transport simulates a folder.
+ * Folder access for Normalize folder (spec §8.4.2) and Send files (§8.4). The agent serves it
+ * under /api/folders/ (pick, open, read, write; agent/web.py + agent/folders.py) rather than as
+ * calls, because it moves file bytes. The demo transport simulates a folder.
  */
 export interface FolderFile {
   /** Relative to the folder, with forward slashes. */

@@ -3,7 +3,7 @@ import type { AppState, Peer } from "../protocol";
 import { anchorsFor, bezierPoint, centerSelf, curveControl, graphSpecs, minGraphHeight, SERVER_ID } from "./layout";
 
 function peer(id: string, role: Peer["role"], extra: Partial<Peer> = {}): Peer {
-  return { id, name: id, role, status: "online", latencyMs: 40, activity: "idle", self: false, ...extra };
+  return { id, name: id, role, status: "online", latencyMs: 40, activity: "idle", self: false, caps: [], ...extra };
 }
 
 function baseState(extra: Partial<AppState> = {}): AppState {
@@ -20,6 +20,7 @@ function baseState(extra: Partial<AppState> = {}): AppState {
     countdown: null,
     actor: null,
     camera: null,
+    director: null,
     ...extra,
   };
 }

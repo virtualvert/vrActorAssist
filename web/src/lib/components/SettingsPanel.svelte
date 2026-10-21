@@ -128,6 +128,28 @@
           description="Sends avatar parameters to {data.actor.osc.host}:{data.actor.osc.port}"
           onchange={(oscEnabled) => app.call({ call: "setActorLocal", args: { oscEnabled } })}
         />
+        <div class="field">
+          <span>Received files folder</span>
+          <div class="with-button">
+            <input
+              class="input mono"
+              aria-label="Received files folder"
+              value={data.actor.files.receiveDir}
+              spellcheck="false"
+              onchange={(e) => app.call({ call: "setActorLocal", args: { receiveDir: e.currentTarget.value } })}
+            />
+            {#if app.kind === "agent"}
+              <Button variant="subtle" onclick={() => app.call({ call: "pickReceiveDir" })}>Browse…</Button>
+            {/if}
+          </div>
+          <small>Files from the director are saved here. Empty it to go back to Documents\vrcActorSync.</small>
+        </div>
+        <Toggle
+          checked={data.actor.files.autoAccept}
+          label="Accept files automatically"
+          description="Without asking, and replacing files that have the same name"
+          onchange={(autoAcceptFiles) => app.call({ call: "setActorLocal", args: { autoAcceptFiles } })}
+        />
       </section>
     {/if}
 
@@ -209,5 +231,15 @@
 
   .about dd {
     margin: 0;
+  }
+
+  .with-button {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .with-button input {
+    flex: 1;
+    min-width: 0;
   }
 </style>

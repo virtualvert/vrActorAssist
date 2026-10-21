@@ -46,6 +46,7 @@ export class DemoTransport implements Transport {
       browserStorage,
       (event) => this.#events.emit(event),
       this.#forcedRole,
+      (path) => this.folders.sizeOf(path),
     );
     this.#link.emit("open");
     this.#timer = window.setInterval(() => this.#session?.tick(), TICK_MS);

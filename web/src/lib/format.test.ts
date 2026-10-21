@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ago, decibels, duration, initials, latencyLevel, mediaTime, peerSubtitle } from "./format";
+import { ago, decibels, duration, fileSize, initials, latencyLevel, mediaTime, peerSubtitle, percent } from "./format";
 import { clampScale } from "./protocol";
 
 describe("latencyLevel", () => {
@@ -55,4 +55,21 @@ describe("decibels", () => {
     expect(decibels(-0.04, true)).toBe("0.0");
     expect(decibels(-Infinity)).toBe("—");
   });
+});
+
+test("fileSize", () => {
+  expect(fileSize(0)).toBe("0 KB");
+  expect(fileSize(10)).toBe("1 KB");
+  expect(fileSize(350 * 1024)).toBe("350 KB");
+  expect(fileSize(1.25 * 1024 * 1024)).toBe("1.3 MB");
+  expect(fileSize(2.4 * 1024 ** 3)).toBe("2.4 GB");
+  expect(fileSize(-1)).toBe("—");
+});
+
+test("percent", () => {
+  expect(percent(0, 0)).toBe(0);
+  expect(percent(5, 0)).toBe(100);
+  expect(percent(999, 1000)).toBe(99);
+  expect(percent(1000, 1000)).toBe(100);
+  expect(percent(250, 1000)).toBe(25);
 });

@@ -9,13 +9,16 @@ import {
   type AppState,
   type Call,
   type CameraLocal,
+  type IncomingFile,
   type LogLevel,
   type Peer,
   type Prefs,
   type Role,
+  type SendBatch,
   type SoundpadPlayback,
   type TrafficKind,
 } from "../protocol";
+import { baseName } from "../files/character";
 
 export interface DemoClock {
   now(): number;
@@ -38,13 +41,15 @@ interface CastMember {
   name: string;
   role: Role;
   baseLatency: number;
+  /** Runs the v0.3 client: can't receive files from the new app yet. */
+  legacy?: boolean;
 }
 
 const CAST: CastMember[] = [
   { name: "Mira", role: "director", baseLatency: 24 },
   { name: "Coda", role: "actor", baseLatency: 38 },
   { name: "Infinity", role: "actor", baseLatency: 61 },
-  { name: "Quincey", role: "actor", baseLatency: 240 },
+  { name: "Quincey", role: "actor", baseLatency: 240, legacy: true },
   { name: "Juno", role: "actor", baseLatency: 85 },
   { name: "Cam A", role: "camera", baseLatency: 30 },
   { name: "Cam B", role: "camera", baseLatency: 118 },
@@ -65,6 +70,11 @@ const JITTER_EVERY_MS = 2000;
 const INCOMING_CUE_EVERY_MS = 14_000;
 const COUNTDOWN_MS = 3000;
 const SELF_SOUND_MS = 5000;
+/** Simulated transfer speed for Send files. */
+const DEMO_BYTES_PER_S = 3 * 1024 * 1024;
+const DEMO_ACCEPT_MS = 900;
+const INCOMING_FILES_AFTER_MS = 9000;
+const RECEIVE_DIR = "C:\\Users\\you\\Documents\\vrcActorSync";
 
 function stoppedPlayback(): SoundpadPlayback {
   return { status: "STOPPED", positionMs: 0, durationMs: 0, title: null };
@@ -89,8 +99,19 @@ export class DemoSession {
   #nextIncomingCue = 0;
   #logId = 1;
   #changed = false;
+  #batchId = 1;
+  /** Simulated sends (director role): when each batch's current file started, and its sizes. */
+  #sending = new Map<string, { started: number; sizes: number[]; index: number; accepted: boolean }>();
+  #sizeOf: (path: string) => number | undefined;
 
-  constructor(clock: DemoClock, storage: DemoStorage, emit: (event: AgentEvent) => void, forcedRole?: Role | null) {
+  constructor(
+    clock: DemoClock,
+    storage: DemoStorage,
+    emit: (event: AgentEvent) => void,
+    forcedRole?: Role | null,
+    sizeOf: (path: string) => number | undefined = () => undefined,
+  ) {
+    this.#sizeOf = sizeOf;
     this.#clock = clock;
     this.#storage = storage;
     this.#emit = emit;
@@ -119,6 +140,7 @@ export class DemoSession {
       countdown: null,
       actor: null,
       camera: null,
+      director: null,
     };
     this.#applyRoleLocals();
     this.#setSelfOnly();
@@ -191,10 +213,24 @@ export class DemoSession {
             this.state.actor.osc.enabled = call.args.oscEnabled;
             this.state.actor.osc.ready = call.args.oscEnabled;
           }
+          if (call.args.receiveDir !== undefined) this.state.actor.files.receiveDir = call.args.receiveDir.trim() || RECEIVE_DIR;
+          if (call.args.autoAcceptFiles !== undefined) this.state.actor.files.autoAccept = call.args.autoAcceptFiles;
         }
         break;
       case "camera":
         this.#camera(call.args.action);
+        break;
+      case "sendFiles":
+        this.#sendFiles(call.args.items);
+        break;
+      case "cancelBatch":
+        this.#cancelBatch(call.args.id);
+        break;
+      case "answerFile":
+        this.#answerFile(call.args.transferId, call.args.accept, call.args.rest ?? false, call.args.always ?? false);
+        break;
+      case "pickReceiveDir":
+        if (this.state.actor) this.state.actor.files.receiveDir = "C:\\Users\\you\\Music\\Lines";
         break;
       case "openBrowser":
         this.#log("info", "Demo mode already runs in the browser.");
@@ -224,6 +260,8 @@ export class DemoSession {
       }
       this.#finishPlayback(now);
       this.#advanceSelfPlayback(now);
+      this.#advanceSends(now);
+      this.#advanceIncoming(now);
       if (this.state.role !== "director" && now >= this.#nextIncomingCue) {
         this.#nextIncomingCue = now + INCOMING_CUE_EVERY_MS;
         this.#incomingCue();
@@ -295,11 +333,16 @@ export class DemoSession {
     if (this.state.role === "director") {
       this.#later(8000, () => this.#addPending(LATE_JOINER));
     }
+    if (this.state.role === "actor") {
+      this.#later(INCOMING_FILES_AFTER_MS, () => this.#incomingFiles());
+    }
   }
 
   #disconnect(detail: string): void {
     this.#timers = [];
     this.#playingUntil.clear();
+    for (const id of this.#sending.keys()) this.#endBatch(id, "failed", "Lost the relay connection");
+    if (this.state.actor) this.state.actor.files.incoming = [];
     this.#connectedAt = null;
     this.state.connection = { ...this.state.connection, status: "disconnected", detail, serverVersion: null };
     this.state.pending = [];
@@ -387,6 +430,181 @@ export class DemoSession {
     this.#playingUntil.delete(id);
     this.#log("info", `Forgot ${peer.name} — they need approval again`);
     if (member) this.#later(5000, () => this.#addPending(member));
+  }
+
+  // ---- files (director sends) --------------------------------------------
+
+  #sendFiles(items: { path: string; actorId: string }[]): void {
+    const director = this.state.director;
+    if (!director || this.state.connection.status !== "connected") return;
+    const byActor = new Map<string, string[]>();
+    for (const item of items) byActor.set(item.actorId, [...(byActor.get(item.actorId) ?? []), item.path]);
+    const now = this.#clock.now();
+    for (const [actorId, paths] of byActor) {
+      const peer = this.state.peers.find((p) => p.id === actorId);
+      if (!peer || !peer.caps.includes("files")) {
+        this.#toast("error", `${peer?.name ?? "That actor"} can't receive files from the new app yet`);
+        continue;
+      }
+      // The demo folder's sizes, else pretend ones (0.4–2.4 MB, stable per name)
+      const sizes = paths.map((p) => this.#sizeOf(p) ?? 400_000 + ([...p].reduce((a, c) => a + c.charCodeAt(0), 0) % 20) * 100_000);
+      const id = `demo-b${this.#batchId++}`;
+      const batch: SendBatch = {
+        id,
+        actorId,
+        actorName: peer.name,
+        files: paths.length,
+        done: 0,
+        ok: 0,
+        failed: 0,
+        bytes: sizes.reduce((a, b) => a + b, 0),
+        sentBytes: 0,
+        current: null,
+        state: "sending",
+        detail: "",
+        results: paths.map((p) => ({ name: baseName(p), state: "queued", detail: "" })),
+      };
+      director.files.batches = [...director.files.batches.slice(-9), batch];
+      this.#sending.set(id, { started: now, sizes, index: 0, accepted: false });
+      this.#traffic("self", [actorId], "cue");
+      this.#log("info", `Sending ${paths.length} file${paths.length === 1 ? "" : "s"} to ${peer.name}`);
+    }
+  }
+
+  #advanceSends(now: number): void {
+    const director = this.state.director;
+    if (!director) return;
+    for (const [id, run] of this.#sending) {
+      const batch = director.files.batches.find((b) => b.id === id);
+      if (!batch) {
+        this.#sending.delete(id);
+        continue;
+      }
+      const size = run.sizes[run.index];
+      const result = batch.results[run.index];
+      this.#changed = true;
+      if (!run.accepted) {
+        result.state = "offered";
+        batch.current = { name: result.name, size, sent: 0, waiting: true };
+        if (now - run.started < DEMO_ACCEPT_MS) continue;
+        // Infinity declines files that replace a copy she has (every third file, for the demo)
+        if (batch.actorName === "Infinity" && run.index % 3 === 2) {
+          result.state = "declined";
+          result.detail = "Declined";
+          this.#nextFile(batch, run, now, false);
+          continue;
+        }
+        run.accepted = true;
+        run.started = now;
+        result.state = "sending";
+      }
+      const sent = Math.min(size, Math.round(((now - run.started) / 1000) * DEMO_BYTES_PER_S));
+      batch.current = { name: result.name, size, sent, waiting: false };
+      batch.sentBytes = run.sizes.slice(0, run.index).reduce((a, b) => a + b, 0) + sent;
+      if (sent >= size) {
+        result.state = "ok";
+        this.#nextFile(batch, run, now, true);
+      }
+    }
+  }
+
+  #nextFile(batch: SendBatch, run: { started: number; sizes: number[]; index: number; accepted: boolean }, now: number, ok: boolean): void {
+    batch.done += 1;
+    if (ok) batch.ok += 1;
+    else batch.failed += 1;
+    run.index += 1;
+    run.accepted = false;
+    run.started = now;
+    this.#changed = true;
+    if (run.index >= run.sizes.length) {
+      this.#endBatch(batch.id, "done", "");
+      this.#log(batch.failed ? "warning" : "success", `Files to ${batch.actorName}: ${batch.ok} sent${batch.failed ? `, ${batch.failed} not` : ""}`);
+    }
+  }
+
+  #endBatch(id: string, state: SendBatch["state"], detail: string): void {
+    this.#sending.delete(id);
+    const batch = this.state.director?.files.batches.find((b) => b.id === id);
+    if (!batch) return;
+    batch.state = state;
+    batch.detail = detail;
+    batch.current = null;
+    for (const r of batch.results) if (r.state === "queued" || r.state === "offered" || r.state === "sending") r.state = state === "done" ? "failed" : "cancelled";
+    batch.failed = batch.results.filter((r) => r.state !== "ok").length;
+    batch.done = batch.ok + batch.failed;
+    this.#changed = true;
+  }
+
+  #cancelBatch(id: string): void {
+    const ids = id === "all" ? [...this.#sending.keys()] : [id];
+    for (const each of ids) {
+      if (!this.#sending.has(each)) continue;
+      const name = this.state.director?.files.batches.find((b) => b.id === each)?.actorName ?? "";
+      this.#endBatch(each, "cancelled", "Cancelled by the director");
+      this.#log("warning", `Files to ${name} cancelled`);
+    }
+  }
+
+  // ---- files (actor receives) ---------------------------------------------
+
+  #incomingFiles(): void {
+    const files = this.state.actor?.files;
+    const director = this.state.peers.find((p) => p.role === "director" && !p.self);
+    if (!files || !director || this.state.connection.status !== "connected") return;
+    const self = this.state.profile.name || "Rowan";
+    const names = [`Scene 4 - ${self}.wav`, `Scene 5 - ${self}.wav`];
+    this.#log("info", `${director.name} is sending 2 files (2.1 MB)`);
+    names.forEach((name, i) => {
+      const offer: IncomingFile = {
+        transferId: `demo-t${this.#batchId++}`,
+        batchId: "demo-in",
+        name,
+        size: 900_000 + i * 300_000,
+        from: director.name,
+        character: self,
+        replaces: i === 1,
+        index: i + 1,
+        count: names.length,
+        state: files.autoAccept ? "receiving" : "asking",
+        receivedBytes: 0,
+      };
+      files.incoming = [...files.incoming, offer];
+    });
+    if (!files.autoAccept) this.#toast("info", `${director.name} wants to send ${names[0]}`);
+    this.#traffic(director.id, ["self"], "cue");
+  }
+
+  #answerFile(transferId: string, accept: boolean, rest: boolean, always: boolean): void {
+    const files = this.state.actor?.files;
+    if (!files) return;
+    const item = files.incoming.find((f) => f.transferId === transferId);
+    if (!item || item.state !== "asking") return;
+    if (always) files.autoAccept = true;
+    if (!accept) {
+      files.incoming = files.incoming.filter((f) => f !== item);
+      files.recent = [{ name: item.name, ok: false, at: this.#clock.now(), from: item.from, detail: "declined" }, ...files.recent].slice(0, 20);
+      this.#log("info", `Declined ${item.name}`);
+      return;
+    }
+    for (const f of files.incoming) {
+      if (f === item || (f.state === "asking" && (always || (rest && f.batchId === item.batchId)))) f.state = "receiving";
+    }
+  }
+
+  #advanceIncoming(now: number): void {
+    const files = this.state.actor?.files;
+    if (!files || !files.incoming.length) return;
+    // One file at a time, like the real thing
+    const current = files.incoming.find((f) => f.state === "receiving");
+    if (!current) return;
+    current.receivedBytes = Math.min(current.size, current.receivedBytes + Math.round(DEMO_BYTES_PER_S / 4));
+    if (current.receivedBytes >= current.size) {
+      files.incoming = files.incoming.filter((f) => f !== current);
+      const detail = current.replaces ? "replaced your copy" : "";
+      files.recent = [{ name: current.name, ok: true, at: now, from: current.from, detail }, ...files.recent].slice(0, 20);
+      this.#log("success", `Received ${current.name} from ${current.from} → ${files.receiveDir}`);
+    }
+    this.#changed = true;
   }
 
   // ---- other roles ------------------------------------------------------
@@ -521,6 +739,7 @@ export class DemoSession {
       latencyMs: null,
       activity: "idle",
       self: true,
+      caps: [],
     };
   }
 
@@ -533,6 +752,7 @@ export class DemoSession {
       latencyMs: member.baseLatency,
       activity: "idle",
       self: false,
+      caps: member.legacy ? ["legacy"] : member.role === "actor" ? ["soundpad", "osc", "files"] : [],
     };
   }
 
@@ -548,8 +768,10 @@ export class DemoSession {
             soundpad: { enabled: true, state: "simulated", detail: "Demo — no Soundpad needed", info: null, playback: stoppedPlayback() },
             osc: { enabled: true, host: "127.0.0.1", port: 9000, ready: true },
             lastCue: null,
+            files: { receiveDir: RECEIVE_DIR, autoAccept: false, incoming: [], recent: [] },
           } satisfies ActorLocal)
         : null;
+    this.state.director = role === "director" ? { files: { batches: [] } } : null;
     this.state.camera =
       role === "camera"
         ? ({ obs: { connected: true, detail: "OBS 31 · demo" }, recording: false, recordingSince: null } satisfies CameraLocal)
