@@ -85,11 +85,14 @@ def fake_agent(tmp_path, role="actor", auto_accept=False):
     cfg.files.auto_accept = auto_accept
     store = SimpleNamespace(folder=tmp_path / "data", save=lambda: None, config=cfg)
     logs = []
+    added = []
     agent = SimpleNamespace(
         config=cfg, store=store, changed=lambda: None, files=Recorder(),
         hub=SimpleNamespace(log=lambda level, text, sender=None: logs.append((level, text)), toast=lambda *a: None),
+        actor=SimpleNamespace(on_file_received=added.append),
     )
     agent.logs = logs
+    agent.added = added  # paths handed to the soundpad addon (auto-add, M2)
     return agent
 
 
@@ -131,6 +134,7 @@ def test_receive_with_prompt(tmp_path):
         assert agent.files.types() == ["file.accept"]
         await deliver(rx, content)
         assert (tmp_path / "inbox" / "Scene 4 - Diego.mp3").read_bytes() == content
+        assert agent.added == [str(tmp_path / "inbox" / "Scene 4 - Diego.mp3")]
         assert agent.files.types() == ["file.accept"] + ["file.progress"] * 3 + ["file.ok"]
         assert agent.files.last("file.progress")["received"] == 3
         assert agent.files.last("file.ok")["saved_as"] == "inbox/Scene 4 - Diego.mp3"

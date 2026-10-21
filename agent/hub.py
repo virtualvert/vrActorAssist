@@ -47,6 +47,10 @@ class Hub:
     def toast(self, level: str, text: str) -> None:
         self._broadcast({"type": "toast", "level": level, "text": text})
 
+    def event(self, event: dict) -> None:
+        """Any other event for every open UI (e.g. an actor's sound list)."""
+        self._broadcast(event)
+
     def traffic(self, sender: str, to: list[str], kind: str) -> None:
         if to:
             self._broadcast({"type": "traffic", "traffic": {"from": sender, "to": to, "kind": kind}})

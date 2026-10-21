@@ -13,6 +13,7 @@ from agent.actor_runtime import ActorRuntime
 from agent.soundpad_pipe import SoundpadPipe, Sound
 from agent.sounds import LIST_PAGE, normal_path, pages, sound_key
 
+from .test_relay_v2 import relay  # noqa: F401  (fixture)
 from .test_soundpad_pipe import FakeSoundpad, actor_config, windows_cli  # noqa: F401  (fixture)
 
 
@@ -332,3 +333,80 @@ def test_auto_launch_starts_soundpad_once(windows_cli, monkeypatch):
 
     asyncio.run(scenario())
     assert started == [[r"C:\Program Files\Soundpad\Soundpad.exe"]]
+
+
+# ---- director ↔ actor through the relay -------------------------------------------------------------
+
+
+def test_director_controls_an_actors_soundpad(relay, tmp_path, monkeypatch, windows_cli):  # noqa: F811
+    from .test_relay_legacy import SECRET, make_agent, wait_for
+
+    monkeypatch.setattr(actor_runtime, "LEVELS_EVERY_S", 0.2)
+    monkeypatch.setattr(actor_runtime, "POLL_IDLE_S", 0.1)
+    running, _ = relay
+    url = f"127.0.0.1:{running.port}"
+    fake = FullSoundpad(sounds=["intro", "scene 4 - diego", "outro"])
+
+    async def scenario():
+        director = make_agent(tmp_path, monkeypatch, "Mira", "director", "m-mira", url, SECRET)
+        coda = make_agent(tmp_path, monkeypatch, "Coda", "actor", "m-coda", url)
+        coda.actor._pipe_factory = lambda: SoundpadPipe(fake.connect)
+        events = []
+        director.hub.event = events.append
+        try:
+            await director.start()
+            await coda.start()
+            await wait_for(lambda: director.snapshot()["pending"])
+            await director.handle_call("approve", {"id": director.snapshot()["pending"][0]["id"]})
+
+            def coda_peer():
+                return next((p for p in director.snapshot()["peers"] if p["name"] == "Coda"), None)
+
+            await wait_for(lambda: coda_peer() and coda_peer()["soundpad"] and coda_peer()["soundpad"]["available"])
+            peer = coda_peer()
+            assert {"soundpad.list", "soundpad.lines", "files"} <= set(peer["caps"])
+            ids = [peer["id"]]
+
+            # The list: titles and keys, never paths
+            await director.handle_call("requestSounds", {"id": peer["id"]})
+            await wait_for(lambda: events)
+            listed = events[-1]
+            assert listed["peerId"] == peer["id"] and listed["total"] == 3
+            assert [s["title"] for s in listed["sounds"]] == ["intro", "scene 4 - diego", "outro"]
+            assert "C:\\\\Sounds" not in str(listed) and "url" not in str(listed) and all(set(s) == {"index", "key", "title", "durationMs"} for s in listed["sounds"])
+
+            key = listed["sounds"][1]["key"]
+            await director.handle_call("play", {"ids": ids, "sound": {"key": key}, "lines": "speakers", "label": "scene 4 - diego"})
+            await wait_for(lambda: coda_peer()["soundpad"]["status"] == "PLAYING" and coda_peer()["soundpad"]["key"] == key)
+            state = coda_peer()["soundpad"]
+            assert (state["title"], state["lines"], state["index"]) == ("scene 4 - diego", "speakers", 2)
+            assert fake.plays[-1] == "DoPlaySound(2, true, false)"
+
+            await director.handle_call("transport", {"ids": ids, "action": "volume", "value": 30})
+            await wait_for(lambda: coda_peer()["soundpad"]["volume"] == 30)
+            await director.handle_call("transport", {"ids": ids, "action": "pause"})
+            await wait_for(lambda: coda_peer()["soundpad"]["status"] == "PAUSED")
+            await director.handle_call("transport", {"ids": ids, "action": "seek", "value": 1500})
+            await wait_for(lambda: "DoSeekMs(1500)" in fake.seeks)
+
+            await director.handle_call("playIndex", {"ids": ids, "index": 3})
+            await wait_for(lambda: fake.plays[-1] == "DoPlaySound(3)")
+
+            # A refusal comes back as a warning on the director
+            await director.handle_call("play", {"ids": ids, "sound": {"key": "0" * 16}})
+            await wait_for(lambda: any("isn't in this actor's Soundpad" in e["text"] for e in director.hub._logs))
+
+            await director.handle_call("transport", {"ids": ids, "action": "stop"})
+            await wait_for(lambda: coda_peer()["soundpad"]["status"] == "STOPPED")
+
+            # A sound added on the actor's side reaches the director's open list
+            fake.sounds.append("new line")
+            await wait_for(lambda: events[-1]["total"] == 4, timeout=5)
+
+            with pytest.raises(Exception, match="Pick an actor"):
+                await director.handle_call("play", {"ids": [], "sound": {"index": 1}})
+        finally:
+            await coda.shutdown()
+            await director.shutdown()
+
+    asyncio.run(scenario())

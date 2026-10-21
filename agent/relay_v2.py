@@ -25,9 +25,13 @@ from vrcas_protocol import make, now_ms
 if TYPE_CHECKING:
     from .core import Agent
 
-# What an actor's agent can do (the director UI shows controls per capability)
-ACTOR_CAPABILITIES = ["soundpad", "osc", "files"]
-CUE_TYPES = {"cue.go", "cue.stop", "cue.play", "soundpad.play", "soundpad.stop"}
+# What an actor's agent can do (the director UI shows controls per capability). Fixed per build;
+# whether Soundpad is up right now comes in soundpad.state (Phase 2 decision D7).
+ACTOR_CAPABILITIES = ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add", "osc", "files"]
+CUE_TYPES = {"cue.go", "cue.stop", "cue.play"}
+SOUNDPAD_ACTIONS = {"soundpad.play", "soundpad.stop", "soundpad.pause", "soundpad.seek", "soundpad.jump",
+                    "soundpad.volume", "soundpad.mute", "soundpad.list.request", "soundpad.calibrate"}
+SOUNDPAD_REPORTS = {"soundpad.state", "soundpad.list", "soundpad.ack"}
 
 
 class V2Unavailable(Exception):
@@ -90,6 +94,7 @@ class V2Relay:
     def _reset(self, detail: str, status: str = "disconnected") -> None:
         if self.status == "connected":
             self.agent.files.reset(detail)
+        self.agent.soundpad.stop()
         self.status = status
         self.detail = detail
         self.server_version = None
@@ -179,6 +184,7 @@ class V2Relay:
             self.server_version = data.get("server_version")
             first = self.status != "connected"
             self._set("connected", f"Connected as {role}")
+            self.agent.soundpad.start()
             if first:
                 hub.log("success", f"Connected to {self.host} as {role} (v2 relay {self.server_version})")
                 if role != "director":
@@ -227,6 +233,12 @@ class V2Relay:
         elif msg_type in CUE_TYPES:
             if role == "actor":
                 await self._run_cue(env, msg_type, data, sender_name)
+        elif msg_type in SOUNDPAD_ACTIONS:
+            if role == "actor":
+                await self.agent.soundpad.on_actor_message(env, sender_name)
+        elif msg_type in SOUNDPAD_REPORTS:
+            if role == "director":
+                self.agent.soundpad.on_director_message(env, sender.name if sender else "An actor")
         elif msg_type == "osc.param":
             if role == "actor":
                 ok, text = self.agent.actor.send_osc(str(data.get("parameter", "")), data.get("value", ""))
@@ -264,6 +276,7 @@ class V2Relay:
                 capabilities=[c for c in entry.get("capabilities", []) if isinstance(c, str)],
             )
         self.sessions = sessions
+        self.agent.soundpad.forget_missing(set(sessions))
         for s in sessions.values():
             if s.role == "actor" and s.id not in self._seen_actors:
                 # Same default as the v0.3 director: new actors receive cues until unticked.
@@ -358,5 +371,6 @@ class V2Relay:
             # The UI has no assistant role yet; assistants direct too
             role = "director" if s.role == "assistant" else s.role
             out.append(_peer(s.id, s.name, role, status="timeout" if s.timed_out else "online", latency=s.latency_ms,
-                             caps=s.capabilities))
+                             caps=s.capabilities,
+                             soundpad=self.agent.soundpad.peer_view(s.id) if s.role == "actor" else None))
         return out

@@ -340,6 +340,14 @@ class LegacyRelay:
         self.agent.hub.log("success" if command == "*go" else "info", f"{symbol} {command[1:].upper()} → {', '.join(names)}")
         self.agent.hub.traffic("self", [f"actor:{n}" for n in names], "cue" if command == "*go" else "stop")
 
+    async def send_play_index(self, ids: list[str], index: int) -> list[str]:
+        """`*play:N` to the given actors (peer ids `actor:<name>`), like the v0.3 director's PRIV."""
+        names = [i.removeprefix("actor:") for i in ids if i.removeprefix("actor:") in self.actors]
+        sender = clean(self.agent.config.name) or "Director"
+        for name in names:
+            await self.send(format_message("PRIV", sender=sender, target=name, text=f"*play:{index}"))
+        return names
+
     def set_targets(self, ids: list[str]) -> None:
         self.targets = {i.split(":", 1)[1] for i in ids if i.startswith("actor:") and i.split(":", 1)[1] in self.actors}
         self.agent.changed()
@@ -397,6 +405,6 @@ class LegacyRelay:
 
 
 def _peer(pid: str, name: str, role: str, status: str = "online", latency: int | None = None,
-          caps: list[str] | None = None) -> dict:
+          caps: list[str] | None = None, soundpad: dict | None = None) -> dict:
     return {"id": pid, "name": name, "role": role, "status": status, "latencyMs": latency, "activity": "idle",
-            "self": False, "caps": list(caps or [])}
+            "self": False, "caps": list(caps or []), "soundpad": soundpad}
