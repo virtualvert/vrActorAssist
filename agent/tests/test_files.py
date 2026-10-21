@@ -311,13 +311,23 @@ async def settle():
     await asyncio.sleep(0.01)
 
 
+async def offered(agent, count=1, timeout=5.0):
+    """Wait until the sender has made `count` offers (it hashes each file in a thread first)."""
+    loop = asyncio.get_running_loop()
+    end = loop.time() + timeout
+    while agent.files.types().count("file.offer") < count:
+        assert loop.time() < end, "no offer in time"
+        await asyncio.sleep(0.01)
+    await settle()
+
+
 def test_sender_window_and_result(tmp_path):
     async def scenario():
         agent = fake_agent(tmp_path, role="director")
         tx = Sender(agent)
         path = make_file(tmp_path, "Scene 4 - Diego.mp3", 12 * 256 * 1024 + 5)
         batch = tx.start("s_coda", "Coda", [path])
-        await settle()
+        await offered(agent)
         sent = agent.files
         assert sent.types() == ["file.batch.start", "file.offer"]
         offer = sent.last("file.offer")
@@ -355,15 +365,15 @@ def test_sender_decline_err_and_cancel(tmp_path):
         tx = Sender(agent)
         paths = [make_file(tmp_path, f"{i}.wav", 300_000) for i in range(3)]
         batch = tx.start("s_coda", "Coda", paths)
-        await settle()
+        await offered(agent)
         tx.on_message({"type": "file.deny", "data": {"transfer_id": agent.files.last("file.offer")["transfer_id"], "reason": "Declined"}})
-        await settle()
+        await offered(agent, 2)
         second = agent.files.last("file.offer")
         assert second["name"] == "1.wav"
         tx.on_message({"type": "file.accept", "data": {"transfer_id": second["transfer_id"]}})
         await settle()
         tx.on_message({"type": "file.err", "data": {"transfer_id": second["transfer_id"], "error": "Writing failed"}})
-        await settle()
+        await offered(agent, 3)
         assert agent.files.last("file.offer")["name"] == "2.wav"
         await tx.cancel(batch.id)
         assert agent.files.types()[-1] == "file.batch.cancel"
@@ -381,7 +391,7 @@ def test_sender_stall(tmp_path, monkeypatch):
         agent = fake_agent(tmp_path, role="director")
         tx = Sender(agent)
         batch = tx.start("s_coda", "Coda", [make_file(tmp_path, "big.wav", 20 * 256 * 1024)])
-        await settle()
+        await offered(agent)
         tx.on_message({"type": "file.accept", "data": {"transfer_id": agent.files.last("file.offer")["transfer_id"]}})
         await asyncio.sleep(0.4)
         assert batch.state == "failed" and "stopped answering" in batch.detail
