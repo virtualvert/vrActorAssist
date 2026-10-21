@@ -10,6 +10,7 @@
 - Phase 0 built on branch `feat/relay-v2` (§20): `vrcas_protocol`, the v2 relay on `/v2/ws`, the permission table, the v0.3 bridge with scheduling emulation, golden transcripts, and the agent's v2 client with automatic fallback to compatibility mode.
 - Where the build differs from §5, §6 and §11, the sections carry a short note; the full list is §20.1.
 - §18 question 5 is settled as proposed: assistants may cue, play sounds and roll cameras.
+- Manual checklist run with real v0.3.3 clients and a Windows build: part A passes (`docs/superpowers/plans/2026-10-20-relay-v2-checklist.md`). From it, §8.4: Cancel stays usable for the whole batch.
 
 ### Changes in v0.6
 
@@ -748,6 +749,7 @@ VRChat voice delay to each listener varies per listener and isn't measurable loc
   6. Reply `file.ok` or `file.err`.
 - **Auto-add to Soundpad:** when `auto_add_received` is on (full version only), the received file is added through the soundpad addon, and its SHA-256 → path mapping is recorded for `{sha256}` sound references.
 - **Send:** in the desktop app the agent reads from disk; in hosted mode the browser reads the file. Both use the same `file.*` messages.
+- **Cancel** stays usable for the whole batch, mid-file too. (The v0.3.3 director sends on its window thread, so its Cancel Batch only responds between files.)
 - **Character routing** (`" - Character.ext"`) is director UI logic. Port `parse_character_name` (`director_client_ws.py:875`) to TypeScript with its examples as tests.
 
 #### 8.4.1 Project Folder Sync (`vrcactorsync.yml`)

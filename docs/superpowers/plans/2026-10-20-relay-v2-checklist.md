@@ -18,24 +18,33 @@ and Soundpad, and the live relay behind Tailscale Funnel. That's this checklist 
    ```
 
    Add `--host <tailscale IP>` (or `0.0.0.0`) if the clients run on other machines, and point them
-   at `ws://<that address>:5600`. Optional: copy `update_manifest.json` into the data folder to
-   test update offers.
+   at `ws://<that address>:5600/ws`. Keep the `/ws`: the v0.3.3 director uses a `ws://` address
+   as typed, and without the path it gets a 403 (the v0.3.3 relay too). Optional: copy
+   `update_manifest.json` into the data folder to test update offers.
 2. Have ready: the v0.3.3 director client, the v0.3.3 actor client on the Windows test box (with
    Soundpad), and a build of this branch (`build_agent.py`) for the mixed checks.
+3. Every client on one PC shares a machine id (derived from the host name), and the relay matches
+   connections by machine id. Start each new-app instance with its own `VRCAS_MACHINE_ID`,
+   `--data-dir` and `--port`, or it replaces the v0.3.3 client in the same role and is
+   auto-approved:
+
+   ```powershell
+   $env:VRCAS_MACHINE_ID="laptop-v04-actor"; .\dist\vrcActorSync.exe --role actor --name Nova --server ws://<address>:5600 --data-dir $env:TEMP\vrcas-v04-actor --port 47812
+   ```
 
 **v0.3.3 clients only** (they must behave exactly as on the old relay)
 
 | # | Do | Expect |
 |---|---|---|
 | 1 | Connect the v0.3.3 director with the secret | Approved; "Server version: v0.3.3"; no update dialog |
-| 2 | Connect the director with a wrong secret | "Invalid secret", no reconnect loop |
+| 2 | Connect the director with a wrong secret | "✗ Denied: Invalid secret", then a retry every 5 s until you fix the secret or press Disconnect (the v0.3.3 director doesn't stop on a denial, on any relay) |
 | 3 | Connect the v0.3.3 actor (a machine not approved on this relay) | The director lists it as pending |
 | 4 | Approve it | The actor shows "Approved by director!", and the director's actor list shows it |
 | 5 | GO, Stop, Play in 3s | Soundpad plays, stops, and plays after the countdown; Stop during the countdown cancels it |
 | 6 | Untick the actor, press GO | Nothing plays |
 | 7 | OSC toggle on GO / Stop (if you use it) | The avatar parameter changes in VRChat |
 | 8 | Send a batch of 2 files, one already on the actor | Overwrite prompt, both arrive, batch summary on the director |
-| 9 | Start a batch and cancel it midway | The batch stops on both sides, as it did on the old relay |
+| 9 | Start a batch and cancel it midway (press Cancel Batch while the actor's accept or overwrite prompt is open: the v0.3.3 director sends file data on its window thread, so the button doesn't respond mid-file) | The batch stops on both sides, as it did on the old relay |
 | 10 | Chat both ways | Lines appear on both sides |
 | 11 | Forget the actor, then reconnect it | "You have been forgotten"; after reconnecting it's pending again |
 | 12 | Close and reopen the actor | Auto-approved; "Coda joined" on the director |
@@ -54,6 +63,56 @@ and Soundpad, and the live relay behind Tailscale Funnel. That's this checklist 
 | 20 | Send a file from the v0.3.3 director to the new actor | Declined: "… uses vrcActorSync 0.4, which can't receive files from a v0.3 director yet" |
 
 Anything that differs from these expectations: note the step and send `/tmp/vrcas-relay-test/server.log`.
+
+### Results, 2026-10-21: part A passes (step 7 skipped)
+
+- **Relay:** the `feat/relay-v2` worktree with the live relay's `venv` (FastAPI 0.150, pydantic 2.14) on the relay host's
+  Tailscale IP, port 5600, `--data-dir /tmp/vrcas-relay-test` with a copy of `update_manifest.json` (latest 0.3.3).
+  It ran 95ead55 until 11:21, then 9896410 (the log-wording fix below) for the redo of steps 12 and 17.
+- **Clients:** all on the Windows 11 test box: the v0.3.3 director and actor (Soundpad 4.0.35), and a one-file build of
+  95ead55 (Python 3.12.10, PyInstaller 6.22.3, pydantic 2.13.5; `vrcas_protocol` bundled) as Mira2 (director),
+  Nova (actor) and Cam (camera), each with its own `VRCAS_MACHINE_ID`.
+- **Times** are the relay host's (`server.log`). The test box's clock runs about 9 s behind it.
+- **"log"** means `server.log` confirms the step. Cues, chat and files aren't logged, so those steps rest on what the
+  tester saw on the clients and in the agent logs.
+
+| # | Result | Notes |
+|---|---|---|
+| 1 | Pass | log 10:42:38: v0.3.3 director authenticated; no update offer |
+| 2 | Pass | "Invalid secret". The director then retried every 5 s (log 10:42:59, 10:43:05) until the secret was fixed (10:43:10). That's the v0.3.3 director's own behaviour on any relay; the expectation said "no reconnect loop" and is corrected above |
+| 3 | Pass | log 10:43:56: pending |
+| 4 | Pass | log 10:44:07: approved |
+| 5 | Pass | tester |
+| 6 | Pass | tester |
+| 7 | Skipped | VRChat not running |
+| 8 | Pass | tester |
+| 9 | Pass | Cancelled while the actor's prompt was open; Cancel Batch doesn't respond mid-file (now noted in the step) |
+| 10 | Pass | tester |
+| 11 | Pass | log: forgotten 10:46:08, pending again on reconnect 10:46:11, approved 10:46:13 |
+| 12 | Pass | log 11:28:45: auto-approved (known machine_id). No v0.3.3 director was connected after the relay restart, so the "OldActor joined" line wasn't seen; the golden transcript covers that broadcast |
+| 13 | Pass | log 10:46:23: the second director was warned |
+| 14 | Pass | tester |
+| 15 | Pass | log 10:59:11: Mira2 over v2; no "v0.3 relay" tag; the v0.3.3 director showed "⚠ Warning: Mira2 has connected as another director" |
+| 16 | Pass | log 11:01:02 pending, 11:02:09 approved (from Mira2); Soundpad over the named pipe, no `-rc` fallback |
+| 17 | Pass | GO, Stop, and Stop during the countdown (twice). An uninterrupted Play in 3s (after the restart): Mira2's GO at the end of its countdown reached Nova 48 ms later, audio ≈80 ms after that; the v0.3.3 actor played too |
+| 18 | Pass | Three GO/Stop rounds; no "has no v2 equivalent" in the log, so every cue reached Nova as v2; audio ≈80 ms |
+| 19 | Pass | log 11:09:14 pending, 11:09:42 approved; Cam showed only in Mira2 |
+| 20 | Pass | "File transfer denied: Nova uses vrcActorSync 0.4, which can't receive files from a v0.3 director yet"; nothing reached Nova |
+
+**Found, and what changed:**
+
+- The v0.3.3 director needs `…:5600/ws`; without the path it gets a 403 (the v0.3.3 relay too). Setup step 1 says so now.
+- A new-app instance sharing the PC's machine id replaces the v0.3.3 client in the same role. Setup step 3 now
+  gives each instance its own id.
+- `server.log` said "Actor approved by director: Cam" for a camera. Fixed in 9896410: approve, deny and forget name the role.
+- Importing the v0.3 settings copied the director secret into actor and camera configs. Neither role sent it, but the
+  file held it. Fixed in 137446b: with `--role actor` or `camera` the secret isn't imported. With both v0.3 configs
+  present and no `--role`, it still is, since the user may pick director.
+- The v0.3.3 director's Cancel Batch only responds between files. Spec §8.4 now asks the files addon to keep Cancel
+  usable for the whole batch.
+
+**Not covered:** a v0.4 preview build (`feat/windows-build`) in compatibility mode against the new relay (no preview exe
+was left on the test box), OSC (step 7), and the v0.3.3 clients on Linux.
 
 ## B. Switch the live relay over
 
