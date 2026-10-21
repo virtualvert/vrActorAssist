@@ -370,7 +370,8 @@ class V2Relay:
                 continue
             # The UI has no assistant role yet; assistants direct too
             role = "director" if s.role == "assistant" else s.role
+            sp = self.agent.soundpad.peer_view(s.id) if s.role == "actor" else None
+            playing = bool(sp and sp["available"] and sp["status"] in ("PLAYING", "SEEKING"))
             out.append(_peer(s.id, s.name, role, status="timeout" if s.timed_out else "online", latency=s.latency_ms,
-                             caps=s.capabilities,
-                             soundpad=self.agent.soundpad.peer_view(s.id) if s.role == "actor" else None))
+                             caps=s.capabilities, soundpad=sp, activity="playing" if playing else "idle"))
         return out

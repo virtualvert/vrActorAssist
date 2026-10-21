@@ -175,6 +175,122 @@ describe("DemoSession", () => {
     expect(lastState().actor!.files).toMatchObject({ autoAccept: true, receiveDir: "D:\\Lines" });
   });
 
+  test("director gets an actor's sound list and plays a chosen sound on a chosen line", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(1000, s);
+    const coda = lastState().peers.find((p) => p.name === "Coda")!;
+    expect(coda.caps).toContain("soundpad.list");
+    expect(coda.soundpad).toMatchObject({ available: true, status: "STOPPED", volume: 80, muted: false });
+
+    s.handle({ call: "requestSounds", args: { id: coda.id } });
+    const lists = events.filter((e): e is Extract<AgentEvent, { type: "sounds" }> => e.type === "sounds");
+    expect(lists).toHaveLength(1);
+    const list = lists[0];
+    expect(list).toMatchObject({ peerId: coda.id, total: 8 });
+    expect(new Set(list.sounds.map((x) => x.key)).size).toBe(8);
+    expect(list.sounds.every((x) => /^[0-9a-f]{16}$/.test(x.key) && !("path" in x))).toBe(true);
+
+    const pick = list.sounds[2];
+    s.handle({ call: "play", args: { ids: [coda.id], sound: { key: pick.key }, lines: "speakers", label: pick.title } });
+    let peer = lastState().peers.find((p) => p.id === coda.id)!;
+    expect(peer.activity).toBe("playing");
+    expect(peer.soundpad).toMatchObject({ status: "PLAYING", title: pick.title, key: pick.key, index: pick.index, lines: "speakers", durationMs: pick.durationMs });
+    expect(events.some((e) => e.type === "log" && e.entry.level === "success" && e.entry.text.includes(pick.title))).toBe(true);
+
+    // Positions move in ~140 ms steps, like Soundpad's
+    clock.advance(1000, s);
+    const position = lastState().peers.find((p) => p.id === coda.id)!.soundpad!.positionMs;
+    expect(position).toBeGreaterThan(0);
+    expect(position % 140).toBe(0);
+  });
+
+  test("director's transport: pause, resume, seek, jump, volume, mute, stop", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(1000, s);
+    const coda = lastState().peers.find((p) => p.name === "Coda")!;
+    const sp = () => lastState().peers.find((p) => p.id === coda.id)!.soundpad!;
+    const ids = [coda.id];
+    s.handle({ call: "playIndex", args: { ids, index: 8 } }); // "Phone ring", 5.9 s
+    expect(sp()).toMatchObject({ status: "PLAYING", index: 8, title: "Phone ring", lines: "both" });
+
+    clock.advance(1000, s);
+    s.handle({ call: "transport", args: { ids, action: "pause" } });
+    const paused = sp().positionMs;
+    expect(sp().status).toBe("PAUSED");
+    clock.advance(1000, s);
+    expect(sp().positionMs).toBe(paused);
+    s.handle({ call: "transport", args: { ids, action: "resume" } });
+    expect(sp().status).toBe("PLAYING");
+
+    s.handle({ call: "transport", args: { ids, action: "seek", value: 2000 } });
+    expect(sp().positionMs).toBe(2000);
+    s.handle({ call: "transport", args: { ids, action: "jump", value: -5000 } });
+    expect(sp().positionMs).toBe(0);
+    s.handle({ call: "transport", args: { ids, action: "volume", value: 35 } });
+    s.handle({ call: "transport", args: { ids, action: "mute" } });
+    expect(sp()).toMatchObject({ volume: 35, muted: true });
+    s.handle({ call: "transport", args: { ids, action: "unmute" } });
+    expect(sp().muted).toBe(false);
+
+    s.handle({ call: "transport", args: { ids, action: "stop" } });
+    expect(sp()).toMatchObject({ status: "STOPPED", positionMs: 0, title: null, lines: null });
+    expect(lastState().peers.find((p) => p.id === coda.id)!.activity).toBe("idle");
+
+    // A sound that plays to its end stops by itself
+    s.handle({ call: "playIndex", args: { ids, index: 1 } }); // 3 s
+    clock.advance(3500, s);
+    expect(sp().status).toBe("STOPPED");
+  });
+
+  test("Play #N reaches a v0.3 actor; choosing a sound or an actor without Soundpad doesn't", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(1000, s);
+    const peers = lastState().peers;
+    const quincey = peers.find((p) => p.name === "Quincey")!;
+    const juno = peers.find((p) => p.name === "Juno")!;
+    expect(quincey.soundpad).toBeNull();
+    expect(juno.soundpad).toMatchObject({ available: false });
+
+    s.handle({ call: "playIndex", args: { ids: [quincey.id], index: 3 } });
+    expect(lastState().peers.find((p) => p.id === quincey.id)!.activity).toBe("playing");
+
+    s.handle({ call: "play", args: { ids: [quincey.id], sound: { key: "0123456789abcdef" }, lines: "mic" } });
+    expect(events.some((e) => e.type === "toast" && e.level === "error" && e.text.includes("v0.3"))).toBe(true);
+
+    s.handle({ call: "requestSounds", args: { id: juno.id } });
+    expect(events.some((e) => e.type === "sounds")).toBe(false);
+    s.handle({ call: "playIndex", args: { ids: [juno.id], index: 1 } });
+    expect(lastState().peers.find((p) => p.id === juno.id)!.activity).toBe("idle");
+    expect(events.some((e) => e.type === "log" && e.entry.level === "warning" && e.entry.text.startsWith("Juno"))).toBe(true);
+  });
+
+  test("GO plays every targeted actor's selected sound; STOP stops it", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(1000, s);
+    const coda = lastState().peers.find((p) => p.name === "Coda")!;
+    s.handle({ call: "setTargets", args: { ids: [coda.id] } });
+    s.handle({ call: "cue", args: { command: "go" } });
+    expect(lastState().peers.find((p) => p.id === coda.id)!.soundpad).toMatchObject({ status: "PLAYING", title: null, lines: "both" });
+    s.handle({ call: "cue", args: { command: "stop" } });
+    expect(lastState().peers.find((p) => p.id === coda.id)!.soundpad!.status).toBe("STOPPED");
+  });
+
+  test("actor's Soundpad settings: default line, adding received files, starting Soundpad, Detect", () => {
+    const s = make(new MemoryStorage(), "actor");
+    clock.advance(3000, s);
+    expect(lastState().actor!.soundpad).toMatchObject({ defaultLines: "both", autoAddReceived: true, autoLaunch: false, path: "", volume: 80, muted: false });
+    s.handle({ call: "setActorLocal", args: { defaultLines: "mic", autoAddReceived: false, autoLaunch: true, soundpadPath: "  D:\\Apps\\Soundpad.exe " } });
+    expect(lastState().actor!.soundpad).toMatchObject({ defaultLines: "mic", autoAddReceived: false, autoLaunch: true, path: "D:\\Apps\\Soundpad.exe" });
+    s.handle({ call: "detectSoundpad" });
+    expect(lastState().actor!.soundpad.path).toBe("C:\\Program Files\\Soundpad\\Soundpad.exe");
+    expect(events.some((e) => e.type === "toast" && e.level === "success")).toBe(true);
+
+    // A cue plays the selected sound on both lines
+    clock.advance(9000, s);
+    const cue = events.find((e) => e.type === "state" && e.state.actor?.soundpad.playback?.status === "PLAYING");
+    expect(cue && cue.type === "state" && cue.state.actor!.soundpad.playback!.lines).toBe("both");
+  });
+
   test("camera roll and cut toggle recording", () => {
     const s = make(new MemoryStorage(), "camera");
     clock.advance(3000, s);

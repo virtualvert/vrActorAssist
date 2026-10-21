@@ -82,6 +82,7 @@ const RECEIVE_DIR = "C:\\Users\\you\\Documents\\vrcActorSync";
 /** Juno's Soundpad isn't running in the demo, so the "unavailable" look shows up. */
 const SOUNDPAD_OFF = "Juno";
 const SELECTED_SOUND_MS = 6000;
+const DEMO_SOUNDPAD_EXE = "C:\\Program Files\\Soundpad\\Soundpad.exe";
 
 /** A stable 16-hex-digit key, like the agent's hash of a sound's path. */
 export function demoKey(text: string): string {
@@ -101,7 +102,7 @@ export function demoSounds(name: string): SoundEntry[] {
 }
 
 function stoppedPlayback(): SoundpadPlayback {
-  return { status: "STOPPED", positionMs: 0, durationMs: 0, title: null };
+  return { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, lines: null };
 }
 
 export function peerId(name: string): string {
@@ -243,6 +244,7 @@ export class DemoSession {
           if (call.args.defaultLines !== undefined) this.state.actor.soundpad.defaultLines = call.args.defaultLines;
           if (call.args.autoAddReceived !== undefined) this.state.actor.soundpad.autoAddReceived = call.args.autoAddReceived;
           if (call.args.autoLaunch !== undefined) this.state.actor.soundpad.autoLaunch = call.args.autoLaunch;
+          if (call.args.soundpadPath !== undefined) this.state.actor.soundpad.path = call.args.soundpadPath.trim();
           if (call.args.autoAcceptFiles !== undefined) this.state.actor.files.autoAccept = call.args.autoAcceptFiles;
         }
         break;
@@ -276,7 +278,9 @@ export class DemoSession {
         break;
       }
       case "detectSoundpad":
-        this.#log("info", "Demo: Soundpad found at C:\\Program Files\\Soundpad\\Soundpad.exe");
+        if (this.state.actor) this.state.actor.soundpad.path = DEMO_SOUNDPAD_EXE;
+        this.#log("info", `Soundpad found: ${DEMO_SOUNDPAD_EXE}`);
+        this.#toast("success", "Soundpad found");
         break;
       case "pickReceiveDir":
         if (this.state.actor) this.state.actor.files.receiveDir = "C:\\Users\\you\\Music\\Lines";
@@ -765,7 +769,7 @@ export class DemoSession {
       this.state.actor.lastCue = { command: "*go", at: now, ok: true };
       if (this.state.actor.soundpad.enabled) {
         this.#selfPlayStart = now;
-        this.state.actor.soundpad.playback = { status: "PLAYING", positionMs: 0, durationMs: SELF_SOUND_MS, title: null };
+        this.state.actor.soundpad.playback = { status: "PLAYING", positionMs: 0, durationMs: SELF_SOUND_MS, title: null, lines: "both" };
       }
       const how = this.state.actor.soundpad.enabled ? "played the selected sound (simulated)" : "Soundpad is off, nothing played";
       this.#log("success", `▶ GO from ${director.name} — ${how}`);
@@ -937,6 +941,7 @@ export class DemoSession {
               defaultLines: "both",
               autoAddReceived: true,
               autoLaunch: false,
+              path: "",
             },
             osc: { enabled: true, host: "127.0.0.1", port: 9000, ready: true },
             lastCue: null,

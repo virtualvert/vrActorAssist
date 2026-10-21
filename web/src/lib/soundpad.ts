@@ -1,6 +1,6 @@
 // Pure helpers for the director's Soundpad controls (spec §8.1). Unit-tested in soundpad.test.ts.
 
-import type { Peer, PeerSoundpad, SoundEntry } from "./protocol";
+import type { Lines, Peer, PeerSoundpad, SoundEntry } from "./protocol";
 
 /**
  * Where the sound is now. Soundpad reports its position in ~140 ms steps and actors report at
@@ -38,7 +38,7 @@ export function soundpadReach(peer: Pick<Peer, "role" | "caps">): SoundpadReach 
 }
 
 export const LINE_OPTIONS = [
-  { value: "default", label: "Their default" },
+  { value: "default", label: "Default" },
   { value: "both", label: "Both" },
   { value: "speakers", label: "Speakers" },
   { value: "mic", label: "Mic" },
@@ -49,4 +49,17 @@ export const LINE_HELP: Record<string, string> = {
   both: "The actor and the audience hear it",
   speakers: "Only the actor hears it (rehearsal)",
   mic: "The audience hears it, the actor doesn't",
+};
+
+/** The actor's own choice of line (Settings → Actor), worded for the actor. */
+export const OWN_LINE_OPTIONS: { value: Lines; label: string }[] = [
+  { value: "both", label: "Both" },
+  { value: "speakers", label: "Speakers" },
+  { value: "mic", label: "Mic" },
+];
+
+export const OWN_LINE_HELP: Record<Lines, string> = {
+  both: "You and the audience hear it",
+  speakers: "Only you hear it (rehearsal)",
+  mic: "The audience hears it, you don't",
 };

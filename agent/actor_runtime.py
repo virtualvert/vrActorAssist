@@ -179,6 +179,7 @@ class ActorRuntime:
             "defaultLines": sp.default_lines,
             "autoAddReceived": sp.auto_add_received,
             "autoLaunch": sp.auto_launch,
+            "path": sp.path,
         }
         if not sp.enabled:
             return {**state, "state": "disabled", "detail": "Cues are received, but nothing plays."}
@@ -198,6 +199,7 @@ class ActorRuntime:
                     "positionMs": playback.position_ms,
                     "durationMs": playback.duration_ms,
                     "title": self._current_title() if playback.status != "STOPPED" else None,
+                    "lines": (self.current or {}).get("lines") if playback.status != "STOPPED" else None,
                 },
             }
         if not soundpad.is_windows():

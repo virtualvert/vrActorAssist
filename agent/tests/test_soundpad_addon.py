@@ -381,6 +381,7 @@ def test_director_controls_an_actors_soundpad(relay, tmp_path, monkeypatch, wind
             state = coda_peer()["soundpad"]
             assert (state["title"], state["lines"], state["index"]) == ("scene 4 - diego", "speakers", 2)
             assert fake.plays[-1] == "DoPlaySound(2, true, false)"
+            assert coda_peer()["activity"] == "playing"  # the cast row and graph show it
 
             await director.handle_call("transport", {"ids": ids, "action": "volume", "value": 30})
             await wait_for(lambda: coda_peer()["soundpad"]["volume"] == 30)
@@ -398,6 +399,7 @@ def test_director_controls_an_actors_soundpad(relay, tmp_path, monkeypatch, wind
 
             await director.handle_call("transport", {"ids": ids, "action": "stop"})
             await wait_for(lambda: coda_peer()["soundpad"]["status"] == "STOPPED")
+            assert coda_peer()["activity"] == "idle"
 
             # A sound added on the actor's side reaches the director's open list
             fake.sounds.append("new line")

@@ -116,6 +116,8 @@ export interface SoundpadPlayback {
   durationMs: number;
   /** Known when the cue named the sound (`*play:N`), not for Go (Soundpad's selected sound). */
   title: string | null;
+  /** Where the sound plays (spec §8.1.4); null while stopped. */
+  lines: Lines | null;
 }
 
 export interface ActorLocal {
@@ -135,6 +137,8 @@ export interface ActorLocal {
     autoAddReceived: boolean;
     /** Start Soundpad.exe when it isn't running. */
     autoLaunch: boolean;
+    /** Soundpad.exe as set in Settings or by Detect; empty = found automatically. */
+    path: string;
   };
   osc: { enabled: boolean; host: string; port: number; ready: boolean };
   lastCue: { command: string; at: number; ok: boolean } | null;

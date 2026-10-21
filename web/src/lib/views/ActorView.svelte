@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AudioLines, Check, FileDown, FolderOpen, Radio, X, Zap } from "@lucide/svelte";
+  import { AudioLines, Check, FileDown, FolderOpen, Radio, Volume2, VolumeX, X, Zap } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import Button from "../components/Button.svelte";
   import ConnectBanner from "../components/ConnectBanner.svelte";
@@ -7,6 +7,7 @@
   import { ago, fileSize, mediaTime, percent } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
   import type { AppState } from "../protocol";
+  import { OWN_LINE_HELP, OWN_LINE_OPTIONS } from "../soundpad";
   import { app } from "../state.svelte";
 
   interface Props {
@@ -75,6 +76,7 @@
 
   const SP_LABEL = { ready: "Ready", fallback: "Command line", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
   const STATUS_LABEL = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;
+  const LINE_LABEL = Object.fromEntries(OWN_LINE_OPTIONS.map((o) => [o.value, o.label]));
 
   function edition(trial: boolean | null): string {
     if (trial === null) return "edition unknown";
@@ -159,6 +161,20 @@
             <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}>
               <span style:width="{progress}%"></span>
             </div>
+            {#if playback.lines}
+              <span class="small muted">On {LINE_LABEL[playback.lines].toLowerCase()} · {OWN_LINE_HELP[playback.lines]}</span>
+            {/if}
+          </div>
+        {/if}
+        {#if actor.soundpad.enabled}
+          {@const sp = actor.soundpad}
+          <div class="levels small" aria-label="Soundpad levels">
+            {#if sp.volume !== null}
+              <span class="level" class:warn-text={sp.muted}>
+                {#if sp.muted}<VolumeX size="1.05em" aria-hidden="true" /> Muted · volume {sp.volume}{:else}<Volume2 size="1.05em" aria-hidden="true" /> Volume {sp.volume}{/if}
+              </span>
+            {/if}
+            <span class="level muted" title={OWN_LINE_HELP[sp.defaultLines]}>Default line: {LINE_LABEL[sp.defaultLines]}</span>
           </div>
         {/if}
         <p class="faint small">{actor.soundpad.detail}</p>
@@ -542,6 +558,20 @@
   .status-playing,
   .status-seeking { color: var(--go); }
   .status-paused { color: var(--warn); }
+
+  .levels {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem 1.1rem;
+    flex-wrap: wrap;
+  }
+
+  .level {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 600;
+  }
 
   .bar {
     height: 0.375rem;

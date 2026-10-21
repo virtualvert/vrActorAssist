@@ -268,6 +268,7 @@ class Agent:
         self.store.save()
         await self.actor.refresh()
         self.hub.log("info", f"Soundpad found: {path}")
+        self.hub.toast("success", "Soundpad found")
 
     # ---- Soundpad on actors (spec §8.1) ---------------------------------------
 

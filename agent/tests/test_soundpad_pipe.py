@@ -365,13 +365,14 @@ def test_cues_go_through_the_pipe(windows_cli):
         assert fake.commands.count("DoPlaySound(2)") == 1
         await asyncio.sleep(0.6)
         assert runtime.soundpad_state()["playback"]["title"] == "scene 4 - diego"
+        assert runtime.soundpad_state()["playback"]["lines"] == "both"
 
         ok, error = await runtime.run_cue("*play:9")
         assert not ok and "R-404" in error
 
         assert await runtime.run_cue("*stop") == (True, None)
         assert runtime.live_status == "STOPPED"
-        assert runtime.soundpad_state()["playback"] == {"status": "STOPPED", "positionMs": 0, "durationMs": 0, "title": None}
+        assert runtime.soundpad_state()["playback"] == {"status": "STOPPED", "positionMs": 0, "durationMs": 0, "title": None, "lines": None}
         await runtime.close()
 
     asyncio.run(scenario())

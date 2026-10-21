@@ -405,6 +405,6 @@ class LegacyRelay:
 
 
 def _peer(pid: str, name: str, role: str, status: str = "online", latency: int | None = None,
-          caps: list[str] | None = None, soundpad: dict | None = None) -> dict:
-    return {"id": pid, "name": name, "role": role, "status": status, "latencyMs": latency, "activity": "idle",
+          caps: list[str] | None = None, soundpad: dict | None = None, activity: str = "idle") -> dict:
+    return {"id": pid, "name": name, "role": role, "status": status, "latencyMs": latency, "activity": activity,
             "self": False, "caps": list(caps or []), "soundpad": soundpad}
