@@ -396,5 +396,7 @@ class LegacyRelay:
         return out
 
 
-def _peer(pid: str, name: str, role: str, status: str = "online", latency: int | None = None) -> dict:
-    return {"id": pid, "name": name, "role": role, "status": status, "latencyMs": latency, "activity": "idle", "self": False}
+def _peer(pid: str, name: str, role: str, status: str = "online", latency: int | None = None,
+          caps: list[str] | None = None) -> dict:
+    return {"id": pid, "name": name, "role": role, "status": status, "latencyMs": latency, "activity": "idle",
+            "self": False, "caps": list(caps or [])}

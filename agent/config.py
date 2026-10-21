@@ -56,6 +56,14 @@ class OscConfig:
 
 
 @dataclass
+class FilesConfig:
+    # Where received files go; empty = Documents/vrcActorSync (agent/files.py)
+    receive_dir: str = ""
+    # Accept offers without asking, and replace files with the same name (the v0.3 rule)
+    auto_accept: bool = False
+
+
+@dataclass
 class Config:
     role: str | None = None
     name: str = ""
@@ -64,6 +72,7 @@ class Config:
     prefs: Prefs = field(default_factory=Prefs)
     soundpad: SoundpadConfig = field(default_factory=SoundpadConfig)
     osc: OscConfig = field(default_factory=OscConfig)
+    files: FilesConfig = field(default_factory=FilesConfig)
 
     @classmethod
     def from_dict(cls, data: Any) -> "Config":
@@ -94,6 +103,9 @@ class Config:
             host=_str(osc.get("host")) or "127.0.0.1",
             port=_port(osc.get("port"), 9000),
         )
+
+        files = data.get("files") if isinstance(data.get("files"), dict) else {}
+        cfg.files = FilesConfig(receive_dir=_str(files.get("receive_dir")), auto_accept=bool(files.get("auto_accept", False)))
         return cfg
 
     def to_dict(self) -> dict:
@@ -175,6 +187,10 @@ def migrate_legacy(folder: Path, role: str | None = None) -> Config | None:
             enabled=bool(actor.get("osc_enabled", True)),
             host=_str(actor.get("vrchat_osc_host")) or "127.0.0.1",
             port=_port(actor.get("vrchat_osc_port"), 9000),
+        )
+        cfg.files = FilesConfig(
+            receive_dir=_str(actor.get("receive_dir")),
+            auto_accept=bool(actor.get("auto_accept_files", False)),
         )
     return cfg
 

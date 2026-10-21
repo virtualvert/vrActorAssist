@@ -9,7 +9,7 @@ used yet: Play in 3s is a local countdown, then cue.go (Phase 2 adds the agent-s
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from websockets.asyncio.client import connect
@@ -24,8 +24,8 @@ from vrcas_protocol import make, now_ms
 if TYPE_CHECKING:
     from .core import Agent
 
-# What an actor's agent can do today (the director UI will show controls per capability)
-ACTOR_CAPABILITIES = ["soundpad", "osc"]
+# What an actor's agent can do (the director UI shows controls per capability)
+ACTOR_CAPABILITIES = ["soundpad", "osc", "files"]
 CUE_TYPES = {"cue.go", "cue.stop", "cue.play", "soundpad.play", "soundpad.stop"}
 
 
@@ -63,6 +63,7 @@ class RemoteSession:
     legacy: bool = False
     latency_ms: int | None = None
     timed_out: bool = False
+    capabilities: list[str] = field(default_factory=list)
 
 
 class V2Relay:
@@ -86,6 +87,8 @@ class V2Relay:
     # ---- connection -------------------------------------------------------
 
     def _reset(self, detail: str, status: str = "disconnected") -> None:
+        if self.status == "connected":
+            self.agent.files.reset("Lost the relay connection")
         self.status = status
         self.detail = detail
         self.server_version = None
@@ -129,6 +132,7 @@ class V2Relay:
         try:
             async for raw in ws:
                 if isinstance(raw, bytes):
+                    await self.agent.files.on_chunk(raw)
                     continue
                 try:
                     env = json.loads(raw)
@@ -147,6 +151,15 @@ class V2Relay:
             raise RuntimeError("Not connected to the relay")
         env = make(msg_type, data, to=to, reply_to=reply_to)
         await self._ws.send(json.dumps(env.wire(), ensure_ascii=False))
+
+    async def send(self, msg_type: str, data: dict, to: Any) -> None:
+        await self._send(msg_type, data, to)
+
+    async def send_frame(self, frame: bytes) -> None:
+        """A binary frame (a file chunk, spec §5.7)."""
+        if self._ws is None:
+            raise RuntimeError("Not connected to the relay")
+        await self._ws.send(frame)
 
     # ---- incoming ---------------------------------------------------------
 
@@ -216,6 +229,8 @@ class V2Relay:
                 ok, text = self.agent.actor.send_osc(str(data.get("parameter", "")), data.get("value", ""))
                 hub.log("success" if ok else "warning", f"[OSC] {text}")
                 hub.traffic(env.get("from") or "server", ["self"], "cue")
+        elif isinstance(msg_type, str) and msg_type.startswith("file."):
+            await self.agent.files.on_message(env, sender.name if sender else "the director")
         elif msg_type == "cue.ack":
             if not data.get("ok", True):
                 hub.log("warning", f"{sender_name}: {data.get('command', 'cue')} failed: {data.get('error') or 'unknown error'}")
@@ -236,6 +251,7 @@ class V2Relay:
                 legacy=bool(entry.get("legacy")),
                 latency_ms=latency if isinstance(latency, int) and latency > 0 else None,
                 timed_out=bool(entry.get("timed_out")),
+                capabilities=[c for c in entry.get("capabilities", []) if isinstance(c, str)],
             )
         self.sessions = sessions
         for s in sessions.values():
@@ -331,5 +347,6 @@ class V2Relay:
                 continue
             # The UI has no assistant role yet; assistants direct too
             role = "director" if s.role == "assistant" else s.role
-            out.append(_peer(s.id, s.name, role, status="timeout" if s.timed_out else "online", latency=s.latency_ms))
+            out.append(_peer(s.id, s.name, role, status="timeout" if s.timed_out else "online", latency=s.latency_ms,
+                             caps=s.capabilities))
         return out
