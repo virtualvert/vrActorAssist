@@ -19,7 +19,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 from shared import get_platform_id
 
 from . import APP_VERSION
-from .relay_legacy import _peer, connect_kwargs, machine_id, perform_cue, version_tuple
+from .relay_legacy import ActionQueue, _peer, connect_kwargs, machine_id, perform_cue, version_tuple
 from vrcas_protocol import make, now_ms
 
 if TYPE_CHECKING:
@@ -88,10 +88,12 @@ class V2Relay:
         self._seen_actors: set[str] = set()
         self._ws = None
         self._machine_id = machine_id()
+        self._actions = ActionQueue()
 
     # ---- connection -------------------------------------------------------
 
     def _reset(self, detail: str, status: str = "disconnected") -> None:
+        self._actions.clear()
         if self.status == "connected":
             self.agent.files.reset(detail)
         self.agent.soundpad.stop()
@@ -232,18 +234,16 @@ class V2Relay:
             hub.log("chat", f"(private) {data.get('text', '')}", sender.name if sender else "?")
         elif msg_type in CUE_TYPES:
             if role == "actor":
-                await self._run_cue(env, msg_type, data, sender_name)
+                self._actions.put(lambda: self._run_cue(env, msg_type, data, sender_name))
         elif msg_type in SOUNDPAD_ACTIONS:
             if role == "actor":
-                await self.agent.soundpad.on_actor_message(env, sender_name)
+                self._actions.put(lambda: self.agent.soundpad.on_actor_message(env, sender_name))
         elif msg_type in SOUNDPAD_REPORTS:
             if role == "director":
                 self.agent.soundpad.on_director_message(env, sender.name if sender else "An actor")
         elif msg_type == "osc.param":
             if role == "actor":
-                ok, text = self.agent.actor.send_osc(str(data.get("parameter", "")), data.get("value", ""))
-                hub.log("success" if ok else "warning", f"[OSC] {text}")
-                hub.traffic(env.get("from") or "server", ["self"], "cue")
+                self._actions.put(lambda: self._send_osc(env, data))
         elif isinstance(msg_type, str) and msg_type.startswith("file."):
             await self.agent.files.on_message(env, sender.name if sender else "the director")
         elif msg_type == "cue.ack":
@@ -288,6 +288,11 @@ class V2Relay:
             if isinstance(p, dict)
         ]
         self.agent.changed()
+
+    async def _send_osc(self, env: dict, data: dict) -> None:
+        ok, text = self.agent.actor.send_osc(str(data.get("parameter", "")), data.get("value", ""))
+        self.agent.hub.log("success" if ok else "warning", f"[OSC] {text}")
+        self.agent.hub.traffic(env.get("from") or "server", ["self"], "cue")
 
     async def _run_cue(self, env: dict, msg_type: str, data: dict, sender: str) -> None:
         command = cue_command(msg_type, data)

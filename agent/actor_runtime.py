@@ -80,6 +80,36 @@ def osc_value(value: Any) -> Any:
     return int(number) if lowered.lstrip("-").isdigit() else number
 
 
+RC_WAIT_S = 5.0
+
+
+def command_line(command: str) -> tuple[bool, str | None]:
+    """A cue through `Soundpad.exe -rc`, for when Soundpad runs but its pipe can't be used.
+
+    Unlike soundpad.py (shared with the v0.3 clients) this never kills the process: when Soundpad
+    isn't running, `-rc` starts it and stays running as Soundpad, and a timeout kill closed it again
+    (laptop run, M2). The agent doesn't use the command line while Soundpad is closed anyway.
+    """
+    cue = parse_cue(command)
+    if cue is None:
+        return False, f"Unknown command: {command}"
+    exe = soundpad.get_soundpad_path()
+    if not exe:
+        return False, "Soundpad.exe wasn't found. Set its location in Settings → Actor."
+    action, index = cue
+    rc = {"go": "DoPlaySelectedSound()", "stop": "DoStopSound()"}.get(action) or f"DoPlaySound({index})"
+    try:
+        proc = subprocess.Popen([exe, "-rc", rc], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, close_fds=True)
+    except OSError as exc:
+        return False, f"Couldn't run Soundpad.exe: {exc}"
+    try:
+        code = proc.wait(timeout=RC_WAIT_S)
+    except subprocess.TimeoutExpired:
+        return False, f"Soundpad.exe -rc didn't finish within {RC_WAIT_S:g} s"
+    return (True, None) if code == 0 else (False, f"Soundpad.exe -rc failed (code {code})")
+
+
 def parse_cue(command: str) -> tuple[str, int | None] | None:
     """`*go` → ("go", None), `*stop` → ("stop", None), `*play:5` → ("play", 5); else None."""
     cmd = command.strip().lower().lstrip("*")
@@ -206,6 +236,9 @@ class ActorRuntime:
             return {**state, "state": "simulated", "detail": "Soundpad only runs on Windows, so cues are simulated here."}
         if not self._soundpad_checked:
             return {**state, "state": "missing", "detail": "Looking for Soundpad…"}
+        if self._soundpad_closed():
+            fix = "until it's back" if sp.auto_launch else "until it's started (or turn on “Start Soundpad when it isn't running”)"
+            return {**state, "state": "closed", "detail": f"Soundpad isn't running, so cues can't play {fix}."}
         reason = (self._pipe.last_error if self._pipe else None) or "Soundpad isn't answering on its remote-control pipe"
         if self._soundpad_path:
             return {
@@ -229,16 +262,28 @@ class ActorRuntime:
         if cue is None:
             return False, f"Unknown command: {command}"
         if self._pipe is not None:
+            self._pipe.reconnect_now()
             try:
                 return await self._pipe_cue(self._pipe, *cue)
             except SoundpadUnavailable:
-                pass  # nothing was sent, so the command line can try
+                if self._soundpad_closed():
+                    # `-rc` would start Soundpad (and v0.3's timeout then killed it): don't
+                    self._changed()
+                    if cue[0] == "stop":
+                        return True, None  # nothing plays
+                    launching = self._maybe_launch()
+                    return False, "Soundpad isn't running" + ("; starting it now" if launching else "")
+                # otherwise nothing was sent, so the command line can try
             except (SoundpadTimeout, SoundpadError) as exc:
                 self._changed()
                 return False, str(exc)
         if not soundpad.is_windows():
             return True, None  # soundpad.py would only print "simulating"
-        return await asyncio.to_thread(soundpad.execute_command, command, "")
+        return await asyncio.to_thread(command_line, command)
+
+    def _soundpad_closed(self) -> bool:
+        """Soundpad isn't running: its pipe doesn't exist (Windows only)."""
+        return soundpad.is_windows() and self._pipe is not None and not self._pipe_live() and self._pipe.missing
 
     async def _pipe_cue(self, pipe: SoundpadPipe, action: str, index: int | None) -> tuple[bool, str | None]:
         if action == "stop":
@@ -286,7 +331,9 @@ class ActorRuntime:
         if simple and (ref.get("selected") or isinstance(ref.get("index"), int)) and not self._pipe_live():
             # What the command line (or the simulation) can do as well
             ok, error = await self.run_cue("*go" if ref.get("selected") else f"*play:{ref['index']}")
-            return ("ok", None) if ok else ("error", error)
+            if ok:
+                return "ok", None
+            return ("soundpad_offline" if self._soundpad_closed() else "error"), error
         try:
             pipe = self._live_pipe()
             if volume is not None:
@@ -582,25 +629,29 @@ class ActorRuntime:
                 self._log("warning", f"Soundpad's remote control is {info.rc_version}; 1.1.2 or newer is needed for every command.")
             return
         self._levels_at = 0.0  # read volume, mute and count again once it's back
-        fallback = "Cues fall back to Soundpad.exe -rc" if self._soundpad_path else "Cues can't play"
+        closed = self._soundpad_closed()
+        fallback = "Cues fall back to Soundpad.exe -rc" if self._soundpad_path and not closed else "Cues can't play"
         self._maybe_launch()
         if first:
             self._log("info", f"{pipe.last_error}. {fallback} until Soundpad answers.")
         else:
             self._log("warning", f"Lost Soundpad's pipe: {pipe.last_error}. {fallback} until it's back.")
 
-    def _maybe_launch(self) -> None:
-        """Start Soundpad.exe once per run when its pipe isn't there and auto_launch is on (§8.1.1)."""
+    def _maybe_launch(self) -> bool:
+        """Start Soundpad.exe once per run when its pipe isn't there and auto_launch is on (§8.1.1).
+        The only way this app starts Soundpad. Returns whether it started it now."""
         sp = self._config.soundpad
         if self._launched or not sp.auto_launch or not soundpad.is_windows() or not self._soundpad_path:
-            return
+            return False
         self._launched = True
         try:
             flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             subprocess.Popen([self._soundpad_path], creationflags=flags, close_fds=True)
             self._log("info", f"Starting Soundpad ({self._soundpad_path})…")
+            return True
         except OSError as exc:
             self._log("warning", f"Couldn't start Soundpad: {exc}")
+            return False
 
     # ---- OSC --------------------------------------------------------------------
 

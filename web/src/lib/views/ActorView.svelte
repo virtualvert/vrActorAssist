@@ -4,7 +4,7 @@
   import Button from "../components/Button.svelte";
   import ConnectBanner from "../components/ConnectBanner.svelte";
   import Toggle from "../components/Toggle.svelte";
-  import { ago, fileSize, mediaTime, percent } from "../format";
+  import { ago, fileSize, mediaLength, mediaTime, percent } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
   import type { AppState } from "../protocol";
   import { OWN_LINE_HELP, OWN_LINE_OPTIONS } from "../soundpad";
@@ -37,7 +37,7 @@
     if (c.status !== "connected") return { tone: "idle", title: "Not connected", sub: "Connect to your relay to receive cues." };
     if (playback) {
       if (!active) return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
-      const where = `${playback.title ?? "Your selected sound"} · ${mediaTime(playback.positionMs)} / ${mediaTime(playback.durationMs)}`;
+      const where = `${playback.title ?? "Your selected sound"} · ${mediaTime(playback.positionMs)} / ${mediaLength(playback.durationMs)}`;
       return playback.status === "PAUSED" ? { tone: "warn", title: "Paused", sub: where } : { tone: "go", title: "Playing", sub: where };
     }
     if (self?.activity === "playing" || recentCue) {
@@ -74,7 +74,7 @@
     void app.call({ call: "answerFile", args: { transferId, accept, ...extra } });
   }
 
-  const SP_LABEL = { ready: "Ready", fallback: "Command line", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
+  const SP_LABEL = { ready: "Ready", closed: "Not running", fallback: "Command line", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
   const STATUS_LABEL = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;
   const LINE_LABEL = Object.fromEntries(OWN_LINE_OPTIONS.map((o) => [o.value, o.label]));
 
@@ -156,7 +156,7 @@
             <div class="transport-row">
               <span class="chip status-{playback.status.toLowerCase()}">{STATUS_LABEL[playback.status]}</span>
               <span class="track">{playback.title ?? "Selected sound"}</span>
-              <span class="mono small">{mediaTime(playback.positionMs)} / {mediaTime(playback.durationMs)}</span>
+              <span class="mono small">{mediaTime(playback.positionMs)} / {mediaLength(playback.durationMs)}</span>
             </div>
             <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(progress)}>
               <span style:width="{progress}%"></span>
@@ -530,6 +530,7 @@
 
   .sp-ready { color: var(--ok); }
   .sp-simulated,
+  .sp-closed,
   .sp-fallback { color: var(--warn); }
   .sp-missing { color: var(--bad); }
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from pathlib import Path
 import webbrowser
@@ -24,6 +25,9 @@ from .soundpad_remote import LINES_TEXT, SoundpadRemote
 
 COUNTDOWN_MS = 3000
 MAX_SEND_ITEMS = 500
+# Cues and Soundpad controls repeated with the same arguments this soon are dropped (Agent._repeated)
+REPEATABLE_CALLS = {"cue", "play", "playIndex", "transport"}
+REPEAT_S = 0.15
 
 
 class CallError(Exception):
@@ -42,6 +46,7 @@ class Agent:
         self.actor.received_lookup = lambda sha256: received_path(store.folder, sha256)
         self.relay = Relay(self)
         self.last_cue: dict | None = None
+        self._last_control: tuple[str, float] | None = None
         # Set by the launcher: returns a fresh one-time URL for the local UI.
         self.ui_url: Callable[[], str] | None = None
 
@@ -150,8 +155,21 @@ class Agent:
         handler = getattr(self, f"_call_{name}", None)
         if handler is None:
             raise CallError(f"Unknown request: {name}")
+        if self._repeated(name, args or {}):
+            return
         await handler(args or {})
         self.changed()
+
+    def _repeated(self, name: str, args: dict) -> bool:
+        """The same cue or Soundpad control again within REPEAT_S of the last one: a held key or a
+        double click, so it's dropped. A stream of them stays one (laptop run, M2: a stuck key sent
+        ~350 plays 35–40 ms apart)."""
+        if name not in REPEATABLE_CALLS:
+            return False
+        key = name + json.dumps(args, sort_keys=True, default=str)
+        now = time.monotonic()
+        last, self._last_control = self._last_control, (key, now)
+        return last is not None and last[0] == key and now - last[1] < REPEAT_S
 
     async def _call_setRole(self, args: dict) -> None:
         role = args.get("role")

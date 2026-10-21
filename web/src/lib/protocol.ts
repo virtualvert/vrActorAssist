@@ -96,10 +96,12 @@ export interface PendingActor {
 }
 
 /**
- * ready: Soundpad answers on its remote-control pipe. fallback: it doesn't, so cues go through
+ * ready: Soundpad answers on its remote-control pipe. closed: Soundpad isn't running, so cues
+ * can't play (the app never starts it through a cue). fallback: it runs but its pipe can't be
+ * used, so cues go through
  * `Soundpad.exe -rc` (no playback status). missing: neither works.
  */
-export type SoundpadState = "ready" | "fallback" | "simulated" | "missing" | "disabled";
+export type SoundpadState = "ready" | "closed" | "fallback" | "simulated" | "missing" | "disabled";
 export type PlayStatus = "STOPPED" | "PLAYING" | "PAUSED" | "SEEKING";
 
 export interface SoundpadInfo {

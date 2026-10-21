@@ -49,10 +49,13 @@ class FakeSoundpad:
         self.seeking_polls = 0
         self.pending_add: str | None = None
         self.transports: list["FakeTransport"] = []
+        self.refuse: OSError | None = None  # running, but the pipe can't be opened
 
     def connect(self):
         if not self.running:
             raise FileNotFoundError(2, "The system cannot find the file specified")
+        if self.refuse is not None:
+            raise self.refuse
         self.connects += 1
         transport = FakeTransport(self)
         self.transports.append(transport)
@@ -337,7 +340,7 @@ def windows_cli(monkeypatch):
     calls = []
     monkeypatch.setattr(soundpad, "is_windows", lambda: True)
     monkeypatch.setattr(soundpad, "get_soundpad_path", lambda: r"C:\Program Files\Soundpad\Soundpad.exe")
-    monkeypatch.setattr(soundpad, "execute_command", lambda command, args="": calls.append(command) or (True, None))
+    monkeypatch.setattr(actor_runtime, "command_line", lambda command: calls.append(command) or (True, None))
     return calls
 
 
@@ -399,7 +402,9 @@ def test_start_latency_is_read_off_position_steps(windows_cli, monkeypatch):
     assert any(text.startswith("Soundpad start: PLAYING after") for text in logs)
 
 
-def test_falls_back_to_the_command_line_only_when_nothing_was_sent(windows_cli):
+def test_soundpad_closed_means_no_command_line(windows_cli):
+    """`Soundpad.exe -rc` starts Soundpad when it isn't running, and v0.3's timeout then killed it
+    (laptop run, M2). A closed Soundpad fails the cue at once and is never started by one."""
     fake = FakeSoundpad()
     fake.running = False
     runtime = ActorRuntime(actor_config(), pipe_factory=lambda: SoundpadPipe(fake.connect))
@@ -408,12 +413,50 @@ def test_falls_back_to_the_command_line_only_when_nothing_was_sent(windows_cli):
         await runtime.refresh()
         await asyncio.sleep(0.05)
         state = runtime.soundpad_state()
-        assert state["state"] == "fallback" and "-rc" in state["detail"]
+        assert state["state"] == "closed" and "isn't running" in state["detail"]
+        started = time.monotonic()
+        assert await runtime.run_cue("*go") == (False, "Soundpad isn't running")
+        assert await runtime.run_cue("*play:2") == (False, "Soundpad isn't running")
+        assert await runtime.run_cue("*stop") == (True, None)  # nothing plays, nothing to stop
+        assert time.monotonic() - started < 0.5
+        assert windows_cli == []
+        await runtime.close()
+
+    asyncio.run(scenario())
+
+
+def test_a_cue_tries_the_pipe_at_once_when_soundpad_is_back(windows_cli):
+    fake = FakeSoundpad()
+    fake.running = False
+    runtime = ActorRuntime(actor_config(), pipe_factory=lambda: SoundpadPipe(fake.connect, backoff_start=30, backoff_max=30))
+
+    async def scenario():
+        await runtime.refresh()
+        await asyncio.sleep(0.05)
+        assert runtime.soundpad_state()["state"] == "closed"
+        fake.running = True  # the poll loop would wait 30 s before trying again
+        assert await runtime.run_cue("*go") == (True, None)
+        assert "DoPlaySelectedSound()" in fake.commands and windows_cli == []
+        await runtime.close()
+
+    asyncio.run(scenario())
+
+
+def test_falls_back_to_the_command_line_only_when_nothing_was_sent(windows_cli):
+    fake = FakeSoundpad()
+    fake.refuse = PermissionError(5, "Access is denied")  # e.g. Soundpad runs as administrator
+    runtime = ActorRuntime(actor_config(), pipe_factory=lambda: SoundpadPipe(fake.connect))
+
+    async def scenario():
+        await runtime.refresh()
+        await asyncio.sleep(0.05)
+        state = runtime.soundpad_state()
+        assert state["state"] == "fallback" and "-rc" in state["detail"] and "couldn't be opened" in state["detail"]
         assert await runtime.run_cue("*go") == (True, None)
         assert windows_cli == ["*go"]
 
         # Connected, but Soundpad hangs: the command may have run, so no second try via -rc
-        fake.running = True
+        fake.refuse = None
         await asyncio.sleep(0.6)  # past the backoff
         fake.hang.add("DoStopSound()")
         ok, error = await runtime.run_cue("*stop")
@@ -442,3 +485,34 @@ def test_pipe_is_only_opened_for_actors_with_soundpad_on(windows_cli):
         assert runtime.soundpad_state()["state"] == "disabled"
 
     asyncio.run(scenario())
+
+
+def test_command_line_never_kills_soundpad(monkeypatch):
+    """When `-rc` doesn't finish it may be Soundpad itself: it's left running."""
+    import subprocess
+
+    class Proc:
+        killed = False
+
+        def __init__(self, args, **kwargs):
+            self.args = args
+
+        def wait(self, timeout=None):
+            if "DoPlaySelectedSound()" in self.args:
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            return 0
+
+        def kill(self):
+            Proc.killed = True
+
+        terminate = kill
+
+    monkeypatch.setattr(soundpad, "get_soundpad_path", lambda: r"C:\Program Files\Soundpad\Soundpad.exe")
+    monkeypatch.setattr(actor_runtime.subprocess, "Popen", Proc)
+    monkeypatch.setattr(actor_runtime, "RC_WAIT_S", 0.01)
+    ok, error = actor_runtime.command_line("*go")
+    assert not ok and "didn't finish" in error and not Proc.killed
+    assert actor_runtime.command_line("*play:4") == (True, None)
+    assert actor_runtime.command_line("*nope")[0] is False
+    monkeypatch.setattr(soundpad, "get_soundpad_path", lambda: None)
+    assert "wasn't found" in actor_runtime.command_line("*stop")[1]

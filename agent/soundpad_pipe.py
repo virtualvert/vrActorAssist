@@ -269,6 +269,9 @@ class SoundpadPipe:
         self._thread: threading.Thread | None = None
         self.info: SoundpadInfo | None = None
         self.last_error: str | None = "Not connected yet"
+        # The last connect found no pipe at all: Soundpad isn't running. `Soundpad.exe -rc` would
+        # start it then, so the agent doesn't fall back to the command line (laptop run, M2).
+        self.missing = False
 
     # ---- lifecycle (any thread) ---------------------------------------------
 
@@ -286,6 +289,11 @@ class SoundpadPipe:
     @property
     def connected(self) -> bool:
         return self._transport is not None
+
+    def reconnect_now(self) -> None:
+        """The next request tries the pipe at once instead of waiting out the backoff (a cue
+        shouldn't fail because Soundpad came back a moment ago)."""
+        self._retry_at = 0.0
 
     # ---- requests -----------------------------------------------------------
 
@@ -480,8 +488,14 @@ class SoundpadPipe:
         except OSError as exc:
             self._backoff = min(max(self._backoff * 2, self._backoff_start), self._backoff_max)
             self._retry_at = time.monotonic() + self._backoff
-            self.last_error = "Soundpad isn't running (its remote-control pipe isn't open)"
+            self.missing = isinstance(exc, FileNotFoundError)
+            self.last_error = (
+                "Soundpad isn't running (its remote-control pipe isn't open)"
+                if self.missing
+                else f"Soundpad's remote-control pipe couldn't be opened ({exc})"
+            )
             raise SoundpadUnavailable(self.last_error) from exc
+        self.missing = False
         try:
             self.info = self._handshake(transport)
         except (OSError, TimeoutError) as exc:

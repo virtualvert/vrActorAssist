@@ -217,13 +217,20 @@ def test_category_reference(windows_cli):
 
 def test_without_the_pipe(windows_cli):
     fake = FullSoundpad()
-    fake.running = False
+    fake.refuse = PermissionError(5, "Access is denied")
 
     async def scenario():
         runtime = await ready_or_fallback(fake)
         # what the command line can do still works
         assert await runtime.play_sound({"index": 2}) == ("ok", None)
         assert windows_cli == ["*play:2"]
+        # Soundpad closed: no command line (it would start Soundpad); the director gets offline
+        fake.refuse = None
+        fake.running = False
+        runtime._pipe.reconnect_now()
+        assert await runtime.play_sound({"index": 2}) == ("soundpad_offline", "Soundpad isn't running")
+        assert windows_cli == ["*play:2"]
+        assert runtime.state_for_directors()["detail"].startswith("Soundpad isn't running")
         status, error = await runtime.play_sound({"key": "0" * 16})
         assert status == "soundpad_offline"
         assert (await runtime.control("volume", 50))[0] == "soundpad_offline"
@@ -335,6 +342,29 @@ def test_auto_launch_starts_soundpad_once(windows_cli, monkeypatch):
     assert started == [[r"C:\Program Files\Soundpad\Soundpad.exe"]]
 
 
+def test_a_cue_never_starts_soundpad(windows_cli, monkeypatch):
+    """Only "Start Soundpad when it isn't running" starts it (laptop run, M2: a GO did, via -rc)."""
+    started = []
+    monkeypatch.setattr(actor_runtime.subprocess, "Popen", lambda args, **kw: started.append(args))
+    fake = FullSoundpad()
+    fake.running = False
+    cfg = actor_config()
+
+    async def scenario():
+        runtime = ActorRuntime(cfg, pipe_factory=lambda: SoundpadPipe(fake.connect))
+        await runtime.refresh()
+        await asyncio.sleep(0.1)
+        assert await runtime.run_cue("*go") == (False, "Soundpad isn't running")
+        assert started == [] and windows_cli == []
+        cfg.soundpad.auto_launch = True
+        assert await runtime.run_cue("*go") == (False, "Soundpad isn't running; starting it now")
+        assert await runtime.run_cue("*go") == (False, "Soundpad isn't running")  # once per run
+        await runtime.close()
+
+    asyncio.run(scenario())
+    assert started == [[r"C:\Program Files\Soundpad\Soundpad.exe"]] and windows_cli == []
+
+
 # ---- director ↔ actor through the relay -------------------------------------------------------------
 
 
@@ -410,5 +440,40 @@ def test_director_controls_an_actors_soundpad(relay, tmp_path, monkeypatch, wind
         finally:
             await coda.shutdown()
             await director.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_repeated_controls_are_dropped(tmp_path, monkeypatch):
+    """A held key or stuck input repeats the same control every ~35 ms (laptop run, M2): only the
+    first one goes out until it stops for REPEAT_S."""
+    from agent import core
+
+    from .test_relay_legacy import make_agent
+
+    agent = make_agent(tmp_path, monkeypatch, "Mira", "director", "m-mira", "127.0.0.1:9", "s")
+    handled = []
+
+    async def fake(args):
+        handled.append(args)
+
+    for name in ("play", "transport", "cue", "sendChat"):
+        monkeypatch.setattr(agent, f"_call_{name}", fake)
+
+    async def scenario():
+        play = {"ids": ["s_1"], "sound": {"key": "ab" * 8}}
+        for _ in range(10):
+            await agent.handle_call("play", play)
+            await asyncio.sleep(0.03)
+        assert len(handled) == 1
+        await agent.handle_call("play", {**play, "lines": "mic"})  # different: goes out
+        await agent.handle_call("cue", {"command": "stop"})
+        await agent.handle_call("cue", {"command": "stop"})
+        assert len(handled) == 3
+        await asyncio.sleep(core.REPEAT_S + 0.05)
+        await agent.handle_call("cue", {"command": "stop"})
+        await agent.handle_call("sendChat", {"text": "hi"})
+        await agent.handle_call("sendChat", {"text": "hi"})  # not a control: never dropped
+        assert len(handled) == 6
 
     asyncio.run(scenario())

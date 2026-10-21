@@ -228,3 +228,43 @@ def test_reconnects_after_relay_restart(tmp_path, monkeypatch):
             await director.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_a_slow_cue_doesnt_hold_up_the_connection(relay, tmp_path, monkeypatch):
+    """Cues run in order but off the receive loop: while Soundpad takes its time, chat (and the
+    relay's pings) still get through (laptop run, M2 finding B)."""
+    running, _ = relay
+    url = f"127.0.0.1:{running.port}"
+
+    async def scenario():
+        director = make_agent(tmp_path, monkeypatch, "Mira", "director", "m-mira", url, SECRET)
+        actor = make_agent(tmp_path, monkeypatch, "Coda", "actor", "m-coda", url)
+        ran: list[tuple[str, float]] = []
+
+        async def slow_cue(command):
+            if command == "*go":
+                await asyncio.sleep(1.5)
+            ran.append((command, time.monotonic()))
+            return True, None
+
+        try:
+            await director.start()
+            await actor.start()
+            await wait_for(lambda: director.snapshot()["pending"])
+            await director.handle_call("approve", {"id": director.snapshot()["pending"][0]["id"]})
+            await wait_for(lambda: actor.relay.status == "connected" and director.snapshot()["targets"])
+            monkeypatch.setattr(actor.actor, "run_cue", slow_cue)
+
+            sent = time.monotonic()
+            await director.handle_call("cue", {"command": "go"})
+            await director.handle_call("cue", {"command": "stop"})
+            await director.handle_call("sendChat", {"text": "Still with us?"})
+            await wait_for(lambda: logged(actor, "Still with us?"))
+            assert time.monotonic() - sent < 1.0 and ran == []  # the chat came while Go was still running
+            await wait_for(lambda: len(ran) == 2, timeout=5)
+            assert [c for c, _ in ran] == ["*go", "*stop"]
+        finally:
+            for agent in (actor, director):
+                await agent.shutdown()
+
+    asyncio.run(scenario())
