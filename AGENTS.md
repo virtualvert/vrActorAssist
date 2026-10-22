@@ -33,6 +33,9 @@ server/                 The relay (FastAPI): /v2/ws (protocol v2), /ws (v0.3 cli
   timesync.py, updates.py  Server clock (fake-able); version checks and the update manifest
 protocol/vrcas_protocol/  Protocol v2: envelope + one pydantic model per message type (MODELS); chunks.py = binary file chunks
 scripts/gen_ts_types.py Generates web/src/protocol/types.ts from vrcas_protocol (--check exits 1 if stale)
+scripts/gen_icons.py    App icon: assets/icon.svg (64 px+) and icon-small.svg (≤48 px) → assets/vrcActorSync.ico / .png and
+                        web/public/favicon.svg (needs rsvg-convert + Pillow; outputs are checked in). Logo.svelte mirrors icon-small.svg
+assets/                 Icon sources and generated icons; build_agent.py embeds the .ico (exe) and bundles it (window/taskbar)
 shared.py               v0.3 pipe protocol, APP_VERSION, machine id, config helpers
 soundpad.py             Soundpad via `Soundpad.exe -rc <command>` (Windows; simulates elsewhere)
 actor_client_ws.py      v0.3 tkinter actor client (Soundpad, OSC, file receive, self-updater)

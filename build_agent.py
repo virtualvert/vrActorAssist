@@ -11,7 +11,8 @@ Run it with the Python that has the agent requirements and PyInstaller:
 
     pip install -r agent/requirements.txt pyinstaller
 
-Windows: pywebview window (needs the WebView2 Runtime on the target), no console.
+Windows: pywebview window (needs the WebView2 Runtime on the target), no console. The exe, its
+window and its taskbar button use assets/vrcActorSync.ico (made by scripts/gen_icons.py).
 Linux: browser UI, console program. glibc isn't bundled; the build prints the oldest glibc the
 binary accepts (set by libpython and libraries copied from the build machine, e.g. libgcc_s).
 
@@ -35,6 +36,7 @@ WEB = ROOT / "web"
 WEB_DIST = WEB / "dist"
 DIST = ROOT / "dist"
 WORK = ROOT / "build" / "agent"
+ICON = ROOT / "assets" / "vrcActorSync.ico"
 NAME = "vrcActorSync"
 IS_WINDOWS = sys.platform == "win32"
 ELF_MAGIC = b"\x7fELF"
@@ -123,6 +125,9 @@ def pyinstaller_command(onedir: bool) -> list[str]:
         cmd += ["--hidden-import", module]
     if IS_WINDOWS:
         cmd.append("--windowed")
+        # --icon goes into the exe (Explorer, shortcuts); the bundled copy is the window and taskbar
+        # icon (agent/shell.py icon_path), which pywebview would otherwise take from the exe at 32 px.
+        cmd += ["--icon", str(ICON), "--add-data", f"{ICON}{os.pathsep}assets"]
     else:
         for module in EXCLUDE_LINUX:
             cmd += ["--exclude-module", module]
@@ -178,6 +183,8 @@ def main() -> int:
     args = parser.parse_args()
 
     check_python_deps()
+    if IS_WINDOWS and not ICON.is_file():
+        fail(f"{ICON.relative_to(ROOT)} is missing. Run: python scripts/gen_icons.py (on Linux, needs rsvg-convert)")
     build_web(args.skip_web)
     clean_output()
     run(pyinstaller_command(args.onedir), "PyInstaller")
