@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 APP_NAME = "vrcActorSync"
-APP_VERSION = "0.4.0-dev"
+APP_VERSION = "0.4.0-preview.1"
 
 # vrcas_protocol (spec §5.8) lives in protocol/; a frozen build has it bundled instead.
 _PROTOCOL = Path(__file__).resolve().parents[1] / "protocol"
