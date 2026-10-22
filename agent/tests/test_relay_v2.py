@@ -254,6 +254,7 @@ def test_a_slow_cue_doesnt_hold_up_the_connection(relay, tmp_path, monkeypatch):
             await director.handle_call("approve", {"id": director.snapshot()["pending"][0]["id"]})
             await wait_for(lambda: actor.relay.status == "connected" and director.snapshot()["targets"])
             monkeypatch.setattr(actor.actor, "run_cue", slow_cue)
+            director.config.director.lead_ms = 0  # GO at once: this is about the queue, not scheduling
 
             sent = time.monotonic()
             await director.handle_call("cue", {"command": "go"})

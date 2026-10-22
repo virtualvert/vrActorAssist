@@ -367,17 +367,39 @@ class LegacyRelay:
         """Go or Stop to the targeted actors: one `PRIV *go` / `*stop` each, like the v0.3 director."""
         await self._send_cue("*go" if kind == "go" else "*stop")
 
+    async def send_go(self, lead_ms: int = 0, countdown: bool = False) -> None:
+        """A v0.3 relay can't schedule: GO goes out at once (agent/relay.py counts Play in 3s down)."""
+        await self._send_cue("*go")
+
     async def _send_cue(self, command: str) -> None:
         names = [n for n in sorted(self.targets) if n in self.actors and not self.actors[n].timed_out]
         if not names:
             self.agent.hub.log("warning", f"{command} not sent — no actors targeted")
             return
         sender = clean(self.agent.config.name) or "Director"
+        parts = []
         for name in names:
-            await self.send(format_message("PRIV", sender=sender, target=name, text=command))
+            text = command
+            armed = self.agent.armed.get(f"actor:{name}") if command == "*go" else None
+            if armed and set(armed.get("sound") or {}) == {"index"}:
+                # Armed by number: the only kind a v0.3 relay can carry
+                text = f"*play:{armed['sound']['index']}"
+            await self.send(format_message("PRIV", sender=sender, target=name, text=text))
+            parts.append(f"{name} (#{text.split(':', 1)[1]})" if text.startswith("*play:") else name)
         symbol = "▶" if command == "*go" else "■"
-        self.agent.hub.log("success" if command == "*go" else "info", f"{symbol} {command[1:].upper()} → {', '.join(names)}")
+        self.agent.hub.log("success" if command == "*go" else "info", f"{symbol} {command[1:].upper()} → {', '.join(parts)}")
         self.agent.hub.traffic("self", [f"actor:{n}" for n in names], "cue" if command == "*go" else "stop")
+
+    def can_arm(self, actor_id: str, sound: dict, lines: str | None) -> str | None:
+        """On a v0.3 relay only a sound number can be armed (it goes out as `*play:N`)."""
+        if actor_id.removeprefix("actor:") not in self.actors:
+            return "That actor isn't connected"
+        if set(sound) != {"index"} or lines not in (None, "both"):
+            return "This relay is v0.3: arm a sound by its number"
+        return None
+
+    async def set_delay(self, actor_id: str, delay_ms: int) -> None:
+        raise RuntimeError("Per-actor delay needs the v0.4 relay; this one is v0.3")
 
     async def send_play_index(self, ids: list[str], index: int) -> list[str]:
         """`*play:N` to the given actors (peer ids `actor:<name>`), like the v0.3 director's PRIV."""
@@ -444,6 +466,7 @@ class LegacyRelay:
 
 
 def _peer(pid: str, name: str, role: str, status: str = "online", latency: int | None = None,
-          caps: list[str] | None = None, soundpad: dict | None = None, activity: str = "idle") -> dict:
+          caps: list[str] | None = None, soundpad: dict | None = None, activity: str = "idle",
+          delay: int | None = None, late: int | None = None) -> dict:
     return {"id": pid, "name": name, "role": role, "status": status, "latencyMs": latency, "activity": activity,
-            "self": False, "caps": list(caps or []), "soundpad": soundpad}
+            "self": False, "caps": list(caps or []), "soundpad": soundpad, "delayMs": delay, "lastLateMs": late}

@@ -6,6 +6,10 @@ on v2: at most twice a second while playing, on any other change, and every 10 s
 
 Directors: keep each actor's last state and sound list for the UI. Lists reach the page as a
 separate "sounds" event, not in the state snapshot, since they can hold thousands of entries.
+
+soundpad.calibrate (§8.2.3): the actor starts a speakers-only test play from its action queue (a
+quick job), then measures the start, stops the play after 1.5 s and answers with the start
+latency outside the queue, so a cue that arrives meanwhile isn't held up.
 """
 
 from __future__ import annotations
@@ -16,7 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from vrcas_protocol import validate
 
-from .actor_runtime import PlayError
+from .actor_runtime import CALIBRATE_PLAY_S, PlayError
+from .scheduler import Timing
 from .sounds import pages
 
 if TYPE_CHECKING:
@@ -40,10 +45,12 @@ class SoundpadRemote:
         self._sent_at = 0.0
         self._directors: set[str] = set()
         self.subscribers: set[str] = set()
-        # director side: session id → state (+ when it arrived), sound lists
+        # director side: session id → state (+ when it arrived), sound lists, calibrated start latency
         self.states: dict[str, tuple[dict, int]] = {}
         self.lists: dict[str, dict] = {}
+        self.latencies: dict[str, int] = {}
         self._pages: dict[str, list[dict]] = {}
+        self._calibrating: asyncio.Task | None = None
 
     @property
     def runtime(self):
@@ -72,6 +79,7 @@ class SoundpadRemote:
         self._directors.clear()
         self.states.clear()
         self.lists.clear()
+        self.latencies.clear()
         self._pages.clear()
 
     def _director_ids(self) -> list[str]:
@@ -128,8 +136,9 @@ class SoundpadRemote:
         for page in pages(sounds, categories):
             await relay.send("soundpad.list", page, {"ids": targets})
 
-    async def on_actor_message(self, env: dict, sender_name: str) -> None:
-        """A soundpad.* action from a director or assistant (the relay checked who may send it)."""
+    async def on_actor_message(self, env: dict, sender_name: str, timing: Timing | None = None) -> None:
+        """A soundpad.* action from a director or assistant (the relay checked who may send it).
+        `timing`: it was scheduled (`at`) and is running now."""
         relay = self._relay()
         msg_type = env.get("type")
         sender = env.get("from") or ""
@@ -145,7 +154,14 @@ class SoundpadRemote:
             await self._send_list([sender], reply_to=env.get("id"))
             return
         if msg_type == "soundpad.calibrate":
-            await self._ack(env, "unsupported", "Calibration arrives with timing (Phase 2 M3)")
+            sound = payload.sound.model_dump(exclude_none=True) if payload.sound else None
+            status, error = await runtime.calibrate(sound)
+            if status != "ok":
+                hub.log("warning", f"Calibration from {sender_name} didn't start: {error}")
+                await self._ack(env, status, error)
+                return
+            hub.log("info", f"Calibrating the start latency for {sender_name} (speakers only)…")
+            self._calibrating = asyncio.get_running_loop().create_task(self._finish_calibration(env, sender_name))
             return
         hub.traffic(sender or "server", ["self"], "stop" if msg_type == "soundpad.stop" else "cue")
         if msg_type == "soundpad.play":
@@ -160,6 +176,8 @@ class SoundpadRemote:
                 hub.log("success", f"▶ {what} from {sender_name} ({lines})")
             else:
                 hub.log("warning", f"{what} from {sender_name} didn't play: {error}")
+            if timing is not None:
+                hub.log("info", f"⏱ {what} {timing.text(start=True)}")
         elif msg_type == "soundpad.stop":
             ok, error = await runtime.run_cue("*stop")
             status = "ok" if ok else "error"
@@ -174,9 +192,44 @@ class SoundpadRemote:
                 hub.log("info", f"{sender_name}: {self._control_text(action, value)}")
             else:
                 hub.log("warning", f"{sender_name}: {self._control_text(action, value)} failed: {error}")
-        await self._ack(env, status, error)
+        await self._ack(env, status, error, late_ms=timing.late_ms if timing else None)
         self.agent.changed()
         await self.publish(force=True)
+
+    async def _finish_calibration(self, env: dict | None, sender_name: str) -> int | None:
+        """Wait for the test play's start to be measured, stop it after CALIBRATE_PLAY_S, and
+        answer with the start latency (median of the last plays, now saved in the config)."""
+        runtime = self.runtime
+        started = time.monotonic()
+        measured = await runtime.calibration_result()
+        await asyncio.sleep(max(0.0, CALIBRATE_PLAY_S - (time.monotonic() - started)))
+        relay = self._relay()
+        if relay is not None:
+            relay._actions.put(runtime.stop_calibration)
+        else:
+            await runtime.stop_calibration()
+        median = runtime.start_latency_ms
+        hub = self.agent.hub
+        if measured is None or median is None:
+            error = "Soundpad's position didn't move, so the start couldn't be measured (try a longer sound)"
+            hub.log("warning", f"Calibration: {error}")
+            if env is not None:
+                await self._ack(env, "error", error)
+            return None
+        hub.log("success", f"Start latency {measured:.0f} ms this time; {median:.0f} ms over the last "
+                           f"{len(runtime.start_latencies)} plays (scheduled starts are sent that much earlier)")
+        if env is not None:
+            await self._ack(env, "ok", None, start_latency_ms=round(median))
+        self.agent.changed()
+        return round(median)
+
+    async def calibrate_here(self) -> int | None:
+        """The actor's own Calibrate button: the same test play, without a director."""
+        status, error = await self.runtime.calibrate(None)
+        if status != "ok":
+            raise PlayError(status, error or "Calibration didn't start")
+        self.agent.hub.log("info", "Calibrating the start latency (speakers only)…")
+        return await self._finish_calibration(None, "you")
 
     @staticmethod
     def _control(msg_type: str, payload: Any) -> tuple[str, Any]:
@@ -208,13 +261,18 @@ class SoundpadRemote:
             return f"{sound['category']} #{sound.get('position', 1)}"
         return "A received file" if sound.get("sha256") else str(sound.get("path", "A sound")).replace("\\", "/").rsplit("/", 1)[-1]
 
-    async def _ack(self, env: dict, status: str, error: str | None) -> None:
+    async def _ack(self, env: dict, status: str, error: str | None, *, late_ms: int | None = None,
+                   start_latency_ms: int | None = None) -> None:
         relay = self._relay()
         if relay is None or not env.get("from"):
             return
         ack: dict[str, Any] = {"status": status, "command": env.get("type")}
         if error:
             ack["error"] = error[:500]
+        if late_ms is not None:
+            ack["late_ms"] = late_ms
+        if start_latency_ms is not None:
+            ack["start_latency_ms"] = min(5000, max(0, start_latency_ms))
         try:
             await relay._send("soundpad.ack", ack, {"ids": [env["from"]]}, reply_to=env.get("id"))
         except RuntimeError:
@@ -255,11 +313,17 @@ class SoundpadRemote:
             if status not in ("ok", ""):
                 command = str(data.get("command") or "soundpad").replace("soundpad.", "")
                 self.agent.hub.log("warning", f"{sender_name}: {command} — {data.get('error') or status}")
+            latency = data.get("start_latency_ms")
+            if data.get("command") == "soundpad.calibrate" and isinstance(latency, int) and not isinstance(latency, bool):
+                self.latencies[sender] = latency
+                self.agent.hub.log("success", f"{sender_name}: start latency {latency} ms")
+                self.agent.changed()
 
     def forget_missing(self, present: set[str]) -> None:
         for sid in [s for s in self.states if s not in present]:
             self.states.pop(sid, None)
             self.lists.pop(sid, None)
+            self.latencies.pop(sid, None)
 
     def peer_view(self, session_id: str) -> dict | None:
         """A remote actor's Soundpad for the UI (camelCase; `at` is when the state arrived)."""
@@ -280,4 +344,5 @@ class SoundpadRemote:
             "muted": s.get("muted"),
             "detail": s.get("detail", ""),
             "at": at,
+            "startLatencyMs": self.latencies.get(session_id),
         }

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import soundpad
 
+from .scheduler import DEFAULT_START_LATENCY_MS
 from .sounds import SoundCache, normal_path, sound_key
 from .soundpad_pipe import (
     Playback,
@@ -48,6 +49,8 @@ LATENCY_SAMPLES = 5
 LEVELS_EVERY_S = 5.0
 # How long to wait for PLAYING before seeking to a start position
 SEEK_WAIT_S = 0.5
+# soundpad.calibrate: how long the speakers-only test play runs before it's stopped (§8.2.3)
+CALIBRATE_PLAY_S = 1.5
 # Output lines → DoPlaySound(index, render, capture) (spec §8.1.4)
 LINES = {"both": (True, True), "speakers": (True, False), "mic": (False, True)}
 
@@ -144,8 +147,8 @@ class ActorRuntime:
         self._playback: Playback | None = None
         self._title: str | None = None
         self._wake_poll = asyncio.Event()  # a cue just ran: poll now instead of after the idle wait
-        # Measured start latencies in ms (command → audio), newest last (spec §8.2.3)
-        self.start_latencies: deque[float] = deque(maxlen=LATENCY_SAMPLES)
+        # Measured start latencies in ms (command → audio), newest last (spec §8.2.3); kept in the config
+        self.start_latencies: deque[float] = deque(config.soundpad.start_latencies, maxlen=LATENCY_SAMPLES)
         # The sound list as last read, what we last started, and the slow-changing levels
         self.cache = SoundCache()
         self.current: dict | None = None
@@ -153,9 +156,11 @@ class ActorRuntime:
         self.is_muted: bool | None = None
         self._levels_at = 0.0
         self._launched = False
-        # Set by the agent: the list changed (count), and sha256 → path of received files
+        self._calibration: dict | None = None
+        # Set by the agent: the list changed (count), sha256 → path of received files, a start was measured
         self.on_list_changed: Callable[[], None] = lambda: None
         self.received_lookup: Callable[[str], str | None] = lambda sha256: None
+        self.on_latency: Callable[[list[float]], None] = lambda latencies: None
 
     # ---- lifecycle ------------------------------------------------------------
 
@@ -194,6 +199,24 @@ class ActorRuntime:
     @property
     def start_latency_ms(self) -> float | None:
         return statistics.median(self.start_latencies) if self.start_latencies else None
+
+    def compensation_ms(self) -> int:
+        """How much earlier scheduled Soundpad starts are sent (§8.2.3): the measured start latency,
+        60 ms until there is one, 0 with auto_compensate_latency off."""
+        if not self._config.soundpad.auto_compensate_latency:
+            return 0
+        measured = self.start_latency_ms
+        return DEFAULT_START_LATENCY_MS if measured is None else round(measured)
+
+    def timing_state(self) -> dict:
+        """For the UI (ActorLocal.timing, without the relay's part)."""
+        measured = self.start_latency_ms
+        return {
+            "startLatencyMs": DEFAULT_START_LATENCY_MS if measured is None else round(measured),
+            "measured": measured is not None,
+            "samples": len(self.start_latencies),
+            "autoCompensate": self._config.soundpad.auto_compensate_latency,
+        }
 
     def _pipe_live(self) -> bool:
         return self._pipe is not None and self._pipe.connected and self._pipe.info is not None
@@ -374,6 +397,52 @@ class ActorRuntime:
         finally:
             self._changed()
 
+    async def calibrate(self, ref: dict | None) -> tuple[str, str | None]:
+        """soundpad.calibrate: a speakers-only test play whose start is measured like any other
+        (§8.2.3). Without a sound: the one last played by number, else sound 1 (the selected sound
+        can't be played on the speakers line alone). Returns (status, error); the measurement
+        comes from calibration_result(), and stop_calibration() ends the play."""
+        if not self._config.soundpad.enabled:
+            return "skipped", "Soundpad is off on this computer"
+        ref = ref or {}
+        try:
+            pipe = self._live_pipe()
+            if ref.get("selected") or ref.get("category"):
+                raise PlayError("unsupported", "Calibrate with a sound from the list or a sound number")
+            index = await self._resolve(pipe, ref) if ref else ((self.current or {}).get("index") or 1)
+            reply = await pipe.play(index, True, False)
+            self._started(pipe, reply.sent_at, index, self.cache.by_index(index), "speakers")
+            self._calibration = self.current
+            return "ok", None
+        except PlayError as exc:
+            return exc.code, str(exc)
+        except SoundpadUnavailable as exc:
+            return "soundpad_offline", str(exc)
+        except SoundpadTimeout as exc:
+            return "timeout", str(exc)
+        except SoundpadError as exc:
+            if "R-404" in str(exc):
+                return "not_in_soundpad", "That sound number isn't in this actor's Soundpad"
+            return "error", str(exc)
+        finally:
+            self._changed()
+
+    async def calibration_result(self) -> float | None:
+        """The start latency measured for the test play just started (None if it couldn't be)."""
+        task = self._measure_task
+        if task is None:
+            return None
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), MEASURE_FOR_S + 1)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            return None
+
+    async def stop_calibration(self) -> None:
+        """End the test play, unless something else started playing since."""
+        if self._calibration is not None and self.current is self._calibration:
+            self._calibration = None
+            await self.run_cue("*stop")
+
     async def _resolve(self, pipe: SoundpadPipe, ref: dict) -> int | None:
         """A sound reference → All-sounds index (None: the selected sound). Spec §8.1.3."""
         if ref.get("selected"):
@@ -525,7 +594,7 @@ class ActorRuntime:
             self._measure_task.cancel()
             self._measure_task = None
 
-    async def _measure_start(self, pipe: SoundpadPipe, sent_at: float, index: int | None) -> None:
+    async def _measure_start(self, pipe: SoundpadPipe, sent_at: float, index: int | None) -> float | None:
         """Time from the play command to audio, for spec §8.2.3.
 
         GetPlayStatus says PLAYING within a few ms, before any audio. The position stays 0 for a
@@ -558,21 +627,26 @@ class ActorRuntime:
                 last_position = position
         except (SoundpadUnavailable, SoundpadTimeout, SoundpadError) as exc:
             self._log("warning", f"Soundpad start timing stopped: {exc}")
-            return
+            return None
         if playing_ms is None:
             self._log("warning", f"Soundpad didn't report PLAYING within {MEASURE_FOR_S:g} s of the command")
-            return
+            return None
         if not steps:
             self._log("info", f"Soundpad: PLAYING after {playing_ms:.0f} ms; the sound ended before its position moved")
-            return
+            return None
         start_ms = statistics.median(t - position for t, position in steps)
+        if not 0 <= start_ms <= 5000:
+            self._log("info", f"Soundpad start: ignored an implausible measurement ({start_ms:.0f} ms)")
+            return None
         self.start_latencies.append(start_ms)
+        self.on_latency([round(v, 1) for v in self.start_latencies])
         self._log(
             "info",
             f"Soundpad start: PLAYING after {playing_ms:.0f} ms, first position after {steps[0][0]:.0f} ms, "
             f"audio ≈{start_ms:.0f} ms after the command (median of the last {len(self.start_latencies)}: "
             f"{self.start_latency_ms:.0f} ms)",
         )
+        return start_ms
 
     # ---- status polling ---------------------------------------------------------
 
