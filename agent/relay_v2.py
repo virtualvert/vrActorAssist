@@ -589,5 +589,5 @@ class V2Relay:
             playing = bool(sp and sp["available"] and sp["status"] in ("PLAYING", "SEEKING"))
             out.append(_peer(s.id, s.name, role, status="timeout" if s.timed_out else "online", latency=s.latency_ms,
                              caps=s.capabilities, soundpad=sp, activity="playing" if playing else "idle",
-                             delay=s.delay_ms if s.role in ("actor", "camera") else None, late=self.late.get(s.id)))
+                             delay=s.delay_ms if s.role == "actor" else None, late=self.late.get(s.id)))
         return out

@@ -9,6 +9,7 @@ import {
   type AppState,
   type Call,
   type CameraLocal,
+  type ClockState,
   type IncomingFile,
   type Lines,
   type LogLevel,
@@ -23,6 +24,7 @@ import {
   type TrafficKind,
 } from "../protocol";
 import { baseName } from "../files/character";
+import { armedText, armReason, DEFAULT_START_LATENCY_MS, delayText } from "../timing";
 
 export interface DemoClock {
   now(): number;
@@ -83,6 +85,17 @@ const RECEIVE_DIR = "C:\\Users\\you\\Documents\\vrcActorSync";
 const SOUNDPAD_OFF = "Juno";
 const SELECTED_SOUND_MS = 6000;
 const DEMO_SOUNDPAD_EXE = "C:\\Program Files\\Soundpad\\Soundpad.exe";
+const NO_CLOCK: ClockState = { synced: false, offsetMs: null, rttMs: null };
+const DEMO_CLOCK: ClockState = { synced: true, offsetMs: 12, rttMs: 46 };
+const DEFAULT_LEAD_MS = 300;
+const ACTOR_CAPS = ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add", "soundpad.calibrate", "osc", "files", "schedule"];
+
+/** HH:MM:SS.mmm, as the agent logs server times. */
+function serverTime(ms: number): string {
+  const d = new Date(ms);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+}
 
 /** A stable 16-hex-digit key, like the agent's hash of a sound's path. */
 export function demoKey(text: string): string {
@@ -130,6 +143,7 @@ export class DemoSession {
   #sizeOf: (path: string) => number | undefined;
   /** Demo actors' Soundpad clocks: when the current sound started (adjusted for pauses and seeks). */
   #spStart = new Map<string, number>();
+  #incomingCount = 0;
 
   constructor(
     clock: DemoClock,
@@ -165,6 +179,7 @@ export class DemoSession {
       pending: [],
       targets: [],
       countdown: null,
+      clock: { ...NO_CLOCK },
       actor: null,
       camera: null,
       director: null,
@@ -246,8 +261,39 @@ export class DemoSession {
           if (call.args.autoLaunch !== undefined) this.state.actor.soundpad.autoLaunch = call.args.autoLaunch;
           if (call.args.soundpadPath !== undefined) this.state.actor.soundpad.path = call.args.soundpadPath.trim();
           if (call.args.autoAcceptFiles !== undefined) this.state.actor.files.autoAccept = call.args.autoAcceptFiles;
+          if (call.args.autoCompensateLatency !== undefined) this.state.actor.timing.autoCompensate = call.args.autoCompensateLatency;
         }
         break;
+      case "setDirectorLocal":
+        if (this.state.director && call.args.leadMs !== undefined) {
+          this.state.director.leadMs = Math.max(0, Math.min(2000, Math.round(call.args.leadMs)));
+          const lead = this.state.director.leadMs;
+          this.#log("info", lead ? `GO lead time: ${lead} ms` : "GO lead time: 0 (GO goes out at once)");
+        }
+        break;
+      case "setDelay": {
+        const p = this.state.peers.find((q) => q.id === call.args.id && q.role === "actor");
+        if (p) {
+          p.delayMs = call.args.ms;
+          this.#log("info", `${p.name}'s delay: ${delayText(call.args.ms)}`);
+        }
+        break;
+      }
+      case "calibrate":
+        this.#calibrate(call.args.id);
+        break;
+      case "arm":
+        this.#arm(call.args.id, call.args.sound, call.args.label, call.args.lines ?? null);
+        break;
+      case "disarm": {
+        const armed = this.state.director?.armed;
+        if (armed && armed[call.args.id]) {
+          delete armed[call.args.id];
+          const name = this.state.peers.find((q) => q.id === call.args.id)?.name ?? "That actor";
+          this.#log("info", `Cleared the armed sound on ${name}: GO plays their selected sound`);
+        }
+        break;
+      }
       case "camera":
         this.#camera(call.args.action);
         break;
@@ -318,7 +364,9 @@ export class DemoSession {
       this.#advanceSoundpads(now);
       if (this.state.role !== "director" && now >= this.#nextIncomingCue) {
         this.#nextIncomingCue = now + INCOMING_CUE_EVERY_MS;
-        this.#incomingCue();
+        // Every other cue is a Play in 3s, so the actor's countdown shows up too
+        if (this.state.role === "actor" && (this.#incomingCount++ % 2 === 1)) this.#incomingCountdown();
+        else this.#incomingCue();
       }
     }
     this.#flush();
@@ -376,6 +424,7 @@ export class DemoSession {
       serverVersion: "0.4.0-demo",
       legacy: false,
     };
+    this.state.clock = { ...DEMO_CLOCK };
     const selfName = this.state.profile.name.toLowerCase();
     this.#cast.clear();
     const others = CAST.filter((m) => m.name.toLowerCase() !== selfName);
@@ -402,6 +451,7 @@ export class DemoSession {
     this.state.pending = [];
     this.state.targets = [];
     this.state.countdown = null;
+    this.state.clock = { ...NO_CLOCK };
     if (this.state.camera) this.state.camera = { ...this.state.camera, recording: false, recordingSince: null };
     this.#setSelfOnly();
     this.#log("info", detail);
@@ -417,16 +467,71 @@ export class DemoSession {
       this.#log("warning", "GO skipped — no actors targeted");
       return;
     }
+    const armed = this.state.director?.armed ?? {};
+    const parts: string[] = [];
     for (const p of targets) {
-      this.#playingUntil.set(p.id, now + 4000 + Math.round(this.#clock.random() * 4000));
+      const sound = armed[p.id];
+      const entry = sound ? demoSounds(p.name).find((s) => ("key" in sound.sound && s.key === sound.sound.key) || ("index" in sound.sound && s.index === sound.sound.index)) : undefined;
+      const length = entry?.durationMs ?? SELECTED_SOUND_MS;
+      this.#playingUntil.set(p.id, now + (sound ? length : 4000 + Math.round(this.#clock.random() * 4000)));
       p.activity = "playing";
-      this.#spPlay(p, { title: null, index: null, key: null, lines: "both", durationMs: SELECTED_SOUND_MS });
+      this.#spPlay(p, { title: sound ? (entry?.title ?? sound.label) : null, index: entry?.index ?? null, key: entry?.key ?? null, lines: sound?.lines ?? "both", durationMs: length });
+      // Scheduled starts report how late they ran; the demo's are on time
+      p.lastLateMs = Math.round(this.#clock.random() * 6);
+      parts.push(sound ? `${p.name} (${armedText(sound)})` : p.name);
     }
     for (const cam of this.state.peers.filter((p) => p.role === "camera" && p.status === "online")) {
       cam.activity = "rolling";
     }
     this.#traffic("self", targets.map((p) => p.id), "cue");
-    this.#log("success", `▶ GO → ${targets.map((p) => p.name).join(", ")}`);
+    const lead = this.state.director?.leadMs ?? 0;
+    this.#log("success", `▶ GO → ${parts.join(", ")}${lead ? ` for ${serverTime(now + lead)} server time (+${lead} ms)` : ""}`);
+  }
+
+  #arm(id: string, sound: SoundRef, label: string, lines: Lines | null): void {
+    const director = this.state.director;
+    const p = this.state.peers.find((q) => q.id === id && q.role === "actor");
+    if (!director || !p) return;
+    const reason = armReason(p, sound, lines, false);
+    if (reason) {
+      this.#toast("error", reason);
+      return;
+    }
+    director.armed[id] = { sound, label: label || ("index" in sound ? `Sound ${sound.index}` : "A sound"), lines };
+    this.#log("info", `Armed for GO: ${armedText(director.armed[id])} on ${p.name}`);
+  }
+
+  #calibrate(id: string | undefined): void {
+    const actor = this.state.actor;
+    if (this.state.role === "actor" && !id && actor) {
+      this.#log("info", "Calibrating the start latency (speakers only)…");
+      this.#later(1500, () => {
+        const ms = 46 + Math.round(this.#clock.random() * 12);
+        const t = actor.timing;
+        t.startLatencyMs = t.measured ? Math.round((t.startLatencyMs * t.samples + ms) / (t.samples + 1)) : ms;
+        t.samples = Math.min(5, t.samples + 1);
+        t.measured = true;
+        this.#log("success", `Start latency ${ms} ms this time; ${t.startLatencyMs} ms over the last ${t.samples} plays`);
+      });
+      return;
+    }
+    const p = this.state.peers.find((q) => q.id === id && q.role === "actor");
+    if (!p) return;
+    if (!p.caps.includes("soundpad.calibrate")) {
+      this.#toast("error", `${p.name}'s app is too old to calibrate`);
+      return;
+    }
+    if (!p.soundpad?.available) {
+      this.#log("warning", `${p.name}: calibrate — ${p.soundpad?.detail || "Soundpad isn't answering"}`);
+      return;
+    }
+    this.#log("info", `Calibrating ${p.name}'s start latency (a short speakers-only play)…`);
+    this.#traffic("self", [p.id], "cue");
+    this.#later(1500, () => {
+      const ms = 46 + Math.round(this.#clock.random() * 30);
+      this.#spSet(p, { startLatencyMs: ms });
+      this.#log("success", `${p.name}: start latency ${ms} ms`);
+    });
   }
 
   #stop(): void {
@@ -752,6 +857,22 @@ export class DemoSession {
 
   // ---- other roles ------------------------------------------------------
 
+  /** The director's Play in 3s, as an actor sees it: a countdown on server time, then GO. */
+  #incomingCountdown(): void {
+    const director = this.state.peers.find((p) => p.role === "director" && !p.self);
+    if (!director || this.state.connection.status !== "connected") return;
+    const latency = this.state.actor?.timing.autoCompensate ? (this.state.actor.timing.startLatencyMs ?? DEFAULT_START_LATENCY_MS) : 0;
+    const fireIn = COUNTDOWN_MS + (this.state.actor?.timing.delayMs ?? 0) - latency;
+    this.state.countdown = { endsAt: this.#clock.now() + fireIn, durationMs: COUNTDOWN_MS };
+    this.#log("info", `⏱ ${director.name}: Play in 3s`);
+    this.#traffic(director.id, ["self"], "cue");
+    this.#later(fireIn, () => {
+      if (!this.state.countdown) return;
+      this.state.countdown = null;
+      this.#incomingCue();
+    });
+  }
+
   #incomingCue(): void {
     const director = this.state.peers.find((p) => p.role === "director" && !p.self);
     if (!director) return;
@@ -884,6 +1005,8 @@ export class DemoSession {
       self: true,
       caps: [],
       soundpad: null,
+      delayMs: null,
+      lastLateMs: null,
     };
   }
 
@@ -896,11 +1019,9 @@ export class DemoSession {
       latencyMs: member.baseLatency,
       activity: "idle",
       self: false,
-      caps: member.legacy
-        ? ["legacy"]
-        : member.role === "actor"
-          ? ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add", "osc", "files"]
-          : [],
+      caps: member.legacy ? ["legacy"] : member.role === "actor" ? [...ACTOR_CAPS] : [],
+      delayMs: member.role === "actor" ? 0 : null,
+      lastLateMs: null,
       soundpad:
         member.role === "actor" && !member.legacy
           ? {
@@ -916,6 +1037,7 @@ export class DemoSession {
               muted: member.name !== SOUNDPAD_OFF ? false : null,
               detail: member.name === SOUNDPAD_OFF ? "Soundpad isn't running (its remote-control pipe isn't open)" : "",
               at: this.#clock.now(),
+              startLatencyMs: null,
             }
           : null,
     };
@@ -946,9 +1068,10 @@ export class DemoSession {
             osc: { enabled: true, host: "127.0.0.1", port: 9000, ready: true },
             lastCue: null,
             files: { receiveDir: RECEIVE_DIR, autoAccept: false, incoming: [], recent: [] },
+            timing: { startLatencyMs: DEFAULT_START_LATENCY_MS, measured: false, samples: 0, autoCompensate: true, delayMs: 0 },
           } satisfies ActorLocal)
         : null;
-    this.state.director = role === "director" ? { files: { batches: [] } } : null;
+    this.state.director = role === "director" ? { files: { batches: [] }, leadMs: DEFAULT_LEAD_MS, armed: {} } : null;
     this.state.camera =
       role === "camera"
         ? ({ obs: { connected: true, detail: "OBS 31 · demo" }, recording: false, recordingSince: null } satisfies CameraLocal)

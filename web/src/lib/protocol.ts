@@ -49,6 +49,13 @@ export interface Peer {
   caps: string[];
   /** An actor's Soundpad as its app reports it (v2 relay); null for others and before the first report. */
   soundpad: PeerSoundpad | null;
+  /**
+   * An actor's delay in ms, set by a director and stored by the relay (spec §8.2.3): their
+   * scheduled cues start this much later (negative: earlier). null for others and on a v0.3 relay.
+   */
+  delayMs: number | null;
+  /** How late this actor's last scheduled start ran, in ms (from its ack); null until known. */
+  lastLateMs: number | null;
 }
 
 export type Lines = "both" | "speakers" | "mic";
@@ -69,6 +76,8 @@ export interface PeerSoundpad {
   detail: string;
   /** When the agent received this report (ms since epoch). */
   at: number;
+  /** From the last calibration this director asked for (ms); null until then. */
+  startLatencyMs: number | null;
 }
 
 /** A sound in an actor's list: the key stands for the file on their PC (its path isn't sent). */
@@ -145,6 +154,31 @@ export interface ActorLocal {
   osc: { enabled: boolean; host: string; port: number; ready: boolean };
   lastCue: { command: string; at: number; ok: boolean } | null;
   files: ActorFiles;
+  timing: ActorTiming;
+}
+
+/**
+ * When this actor's scheduled cues start (spec §8.2.3):
+ * fire_at = at + delayMs − startLatencyMs (the last term only with autoCompensate).
+ */
+export interface ActorTiming {
+  /** Soundpad's start latency: the median of the last measured plays, else 60 ms assumed. */
+  startLatencyMs: number;
+  /** False while the 60 ms default is used (no play measured yet). */
+  measured: boolean;
+  samples: number;
+  autoCompensate: boolean;
+  /** Set by a director (0 on a v0.3 relay). */
+  delayMs: number;
+}
+
+/** This app's clock against the relay's (spec §8.2.1); synced false off a v2 relay. */
+export interface ClockState {
+  synced: boolean;
+  /** Relay time minus this PC's clock, ms (positive: this PC is behind). */
+  offsetMs: number | null;
+  /** Round trip of the best sample, ms. */
+  rttMs: number | null;
 }
 
 /** A file a director is sending (spec §8.4). `asking` waits for Accept / Decline. */
@@ -205,8 +239,21 @@ export interface SendBatch {
   results: { name: string; state: SendFileState; detail: string; sha256: string | null }[];
 }
 
+/** A sound armed for GO on one actor: GO plays it instead of their selected sound (Phase 2 M3). */
+export interface ArmedSound {
+  /** v0.3 apps and older builds can only be armed by number ({ index }). */
+  sound: SoundRef;
+  label: string;
+  /** null: the actor's default line. */
+  lines: Lines | null;
+}
+
 export interface DirectorLocal {
   files: { batches: SendBatch[] };
+  /** GO goes out for server time now + leadMs, so actors start together (spec §8.2.2); 0 = at once. */
+  leadMs: number;
+  /** By actor peer id; kept after GO until cleared. */
+  armed: Record<string, ArmedSound>;
 }
 
 export interface CameraLocal {
@@ -215,6 +262,10 @@ export interface CameraLocal {
   recordingSince: number | null;
 }
 
+/**
+ * Play in 3s (director) or a scheduled cue more than 1 s ahead (actor). `endsAt` is on this PC's
+ * clock (ms since epoch); the agent converts it from the relay's time.
+ */
 export interface Countdown {
   endsAt: number;
   durationMs: number;
@@ -234,6 +285,7 @@ export interface AppState {
   /** Director only: peer ids that receive Go / Stop. */
   targets: string[];
   countdown: Countdown | null;
+  clock: ClockState;
   actor: ActorLocal | null;
   camera: CameraLocal | null;
   director: DirectorLocal | null;
@@ -290,8 +342,10 @@ export type Call =
         defaultLines?: Lines;
         autoAddReceived?: boolean;
         autoLaunch?: boolean;
+        autoCompensateLatency?: boolean;
       };
     }
+  | { call: "setDirectorLocal"; args: { leadMs?: number } }
   | { call: "detectSoundpad" }
   /** Director → actors' Soundpad (v2 relay). `lines` left out = each actor's default. `label` is only for the log. */
   | { call: "play"; args: { ids: string[]; sound: SoundRef; lines?: Lines; volume?: number; startMs?: number; label?: string } }
@@ -303,6 +357,13 @@ export type Call =
     }
   /** The actor's sound list arrives as a "sounds" event (the last one first, if known). */
   | { call: "requestSounds"; args: { id: string } }
+  /** Director: an actor's delay in ms (−10000 – 10000), stored by the relay. */
+  | { call: "setDelay"; args: { id: string; ms: number } }
+  /** Measure the start latency with a speakers-only test play. Directors name the actor; an actor calibrates itself. */
+  | { call: "calibrate"; args: { id?: string; sound?: SoundRef } }
+  /** GO plays this sound on that actor until it's disarmed. `lines` left out = the actor's default. */
+  | { call: "arm"; args: { id: string; sound: SoundRef; label: string; lines?: Lines | null } }
+  | { call: "disarm"; args: { id: string } }
   | { call: "pickReceiveDir" }
   | { call: "answerFile"; args: { transferId: string; accept: boolean; rest?: boolean; always?: boolean } }
   /** Files from a folder opened with `folders.open(folder, "all")`, each with the actor who gets it. */
