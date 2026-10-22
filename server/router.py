@@ -20,6 +20,7 @@ from vrcas_protocol import Envelope, IdsTarget, RoleTarget, make, parse, validat
 from vrcas_protocol.messages import (
     ApprovalForget,
     Hello,
+    OfflineMachine,
     PendingRequest,
     PresenceLatency,
     LatencyEntry,
@@ -342,7 +343,8 @@ class Router:
         if not machine_id or machine_id not in relay.approvals:
             await self._error(session, "unknown_target", "That machine isn't approved", env)
             return
-        await relay.forget(machine_id, relay.approvals.get(machine_id).get("name", ""))
+        # Someone who has left is just removed; a connected one goes back to pending (the v0.3 rule)
+        await relay.forget(machine_id, relay.approvals.get(machine_id).get("name", ""), requeue_offline=False)
 
     async def _actor_settings(self, session: Session, env: Envelope, payload) -> None:
         relay = self.relay
@@ -384,13 +386,34 @@ class Router:
         relay = self.relay
         sessions = [self._entry(s) for s in relay.registry.approved() if s.id]
         pending: list[PendingRequest] = []
+        offline: list[OfflineMachine] = []
         if recipient.perm_role in DIRECTION:
             pending = [
                 PendingRequest(machine_id=mid, name=info.name, role=info.role,
                                legacy=info.session is not None and info.session.legacy)
                 for mid, info in relay.pending.items()
             ]
-        return PresenceRoster(sessions=sessions, pending=pending)
+            offline = self._offline()
+        return PresenceRoster(sessions=sessions, pending=pending, offline=offline)
+
+    def _offline(self) -> list[OfflineMachine]:
+        """Approved actors and cameras with no approved actor or camera connection, so a director
+        can forget someone who has left. A machine connected as director still counts as offline."""
+        relay = self.relay
+        online = {s.machine_id for s in relay.registry.approved() if s.perm_role in ("actor", "camera")}
+        machines = []
+        for mid, entry in relay.approvals.entries.items():
+            if mid in online or not isinstance(entry, dict):
+                continue
+            role = entry.get("role", "actor")
+            approved_at = entry.get("approved_at")
+            machines.append(OfflineMachine(
+                machine_id=mid,
+                name=str(entry.get("name") or "?"),
+                role=role if role in ("actor", "camera") else "actor",
+                approved_at=approved_at if isinstance(approved_at, str) else None,
+            ))
+        return machines
 
     async def roster_changed(self) -> None:
         for s in self.relay.registry.approved():

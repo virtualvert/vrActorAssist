@@ -13,6 +13,7 @@ import {
   type IncomingFile,
   type Lines,
   type LogLevel,
+  type OfflineMachine,
   type Peer,
   type PeerSoundpad,
   type Prefs,
@@ -62,6 +63,12 @@ const CAST: CastMember[] = [
 ];
 
 const LATE_JOINER: CastMember = { name: "Nova", role: "actor", baseLatency: 52 };
+
+/** Approved earlier but not connected now: the director can forget them. */
+const OFFLINE_CAST: Omit<OfflineMachine, "id">[] = [
+  { name: "Sable", role: "actor", approvedAt: "2026-10-20T19:12:00" },
+  { name: "Cam D", role: "camera", approvedAt: "2026-10-18T21:40:00" },
+];
 
 export const DEFAULT_NAMES: Record<Role, string> = {
   director: "Director",
@@ -159,8 +166,9 @@ export class DemoSession {
     const saved = storage.load() ?? {};
     const role = forcedRole !== undefined && forcedRole !== null ? forcedRole : (saved.role ?? null);
     this.state = {
-      appVersion: "0.4.0-dev",
+      appVersion: "0.4.0-preview.1",
       demo: true,
+      logDir: null,
       role,
       prefs: { ...DEFAULT_PREFS, ...saved.prefs, scale: clampScale(saved.prefs?.scale ?? 1) },
       profile: {
@@ -177,6 +185,7 @@ export class DemoSession {
       connection: { status: "disconnected", detail: "Not connected", host: HOST, serverVersion: null, legacy: false },
       peers: [],
       pending: [],
+      offline: [],
       targets: [],
       countdown: null,
       clock: { ...NO_CLOCK },
@@ -334,6 +343,9 @@ export class DemoSession {
       case "openBrowser":
         this.#log("info", "Demo mode already runs in the browser.");
         break;
+      case "openLogFolder":
+        this.#log("info", "Demo mode has no log folder. The app keeps agent.log in its data folder, under logs.");
+        break;
     }
     this.#changed = true;
     this.#flush();
@@ -431,6 +443,7 @@ export class DemoSession {
     for (const m of others) this.#cast.set(peerId(m.name), m);
     this.state.peers = [this.#selfPeer(), ...others.map((m) => this.#peerFor(m))];
     this.state.targets = this.state.role === "director" ? this.#onlineActors().map((p) => p.id) : [];
+    this.state.offline = this.state.role === "director" ? OFFLINE_CAST.map((m) => ({ ...m, id: `offline:demo-${m.name.toLowerCase().replace(/\s+/g, "-")}` })) : [];
     this.#jitter(now);
     this.#log("success", `Connected to ${HOST} as ${this.state.role}`);
     if (this.state.role === "director") {
@@ -449,6 +462,7 @@ export class DemoSession {
     this.#connectedAt = null;
     this.state.connection = { ...this.state.connection, status: "disconnected", detail, serverVersion: null };
     this.state.pending = [];
+    this.state.offline = [];
     this.state.targets = [];
     this.state.countdown = null;
     this.state.clock = { ...NO_CLOCK };
@@ -583,6 +597,12 @@ export class DemoSession {
   }
 
   #forget(id: string): void {
+    const gone = this.state.offline.find((m) => m.id === id);
+    if (gone) {
+      this.state.offline = this.state.offline.filter((m) => m.id !== id);
+      this.#log("info", `Forgot ${gone.name} — they need approval again`);
+      return;
+    }
     const peer = this.state.peers.find((p) => p.id === id && !p.self);
     const member = this.#cast.get(id);
     if (!peer) return;

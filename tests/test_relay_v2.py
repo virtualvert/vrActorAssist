@@ -222,6 +222,51 @@ def test_forget_unknown(tmp_path, stack):
     assert d.until("error")["data"]["code"] == "unknown_target"
 
 
+def offline(roster):
+    return sorted((m["machine_id"], m["name"], m["role"]) for m in roster["offline"])
+
+
+def test_roster_lists_offline_approved(tmp_path, stack):
+    approved = {"m-a": {"name": "Coda", "approved_at": "2026-10-21T11:00:00"}, "m-c": {"name": "Cam", "role": "camera"}}
+    client, _ = relay_client(stack, tmp_path, approved)
+    d = connect_v2(client, stack, "director", "Mira", "m-dir")
+    roster = d.roster()
+    assert offline(roster) == [("m-a", "Coda", "actor"), ("m-c", "Cam", "camera")]
+    assert {m["machine_id"]: m.get("approved_at") for m in roster["offline"]} == {"m-a": "2026-10-21T11:00:00", "m-c": None}
+    a = connect_v2(client, stack, "actor", "Coda", "m-a", expect="welcome")
+    roster = d.until(lambda e: e["type"] == "presence.roster" and len(e["data"]["sessions"]) == 2)["data"]
+    assert offline(roster) == [("m-c", "Cam", "camera")]
+    # Only directors and assistants get the list
+    assert a.roster()["offline"] == []
+    a.ws.close()
+    roster = d.until(lambda e: e["type"] == "presence.roster" and len(e["data"]["sessions"]) == 1)["data"]
+    assert offline(roster) == [("m-a", "Coda", "actor"), ("m-c", "Cam", "camera")]
+
+
+def test_forget_offline_machine(tmp_path, stack):
+    client, _ = relay_client(stack, tmp_path, {"m-a": {"name": "Coda"}, "m-c": {"name": "Cam", "role": "camera"}})
+    d = connect_v2(client, stack, "director", "Mira", "m-dir")
+    d.roster()
+    d.send("approval.forget", {"machine_id": "m-c"})
+    roster = d.until(lambda e: e["type"] == "presence.roster" and len(e["data"]["offline"]) == 1)["data"]
+    assert offline(roster) == [("m-a", "Coda", "actor")]
+    # Nobody is connected from m-c, so it doesn't wait in pending either
+    assert roster["pending"] == []
+    assert "m-c" not in json.loads((tmp_path / "approved_actors.json").read_text())
+    assert "Camera forgotten by name: Cam" in (tmp_path / "server.log").read_text()
+    # Coming back means asking again
+    again = connect_v2(client, stack, "camera", "Cam", "m-c")
+    assert again.recv()["type"] == "approval.pending"
+    assert [p["machine_id"] for p in d.until(lambda e: e["type"] == "presence.roster" and e["data"]["pending"])["data"]["pending"]] == ["m-c"]
+
+
+def test_forget_offline_machine_unknown(tmp_path, stack):
+    client, _ = relay_client(stack, tmp_path)
+    d = connect_v2(client, stack, "director", "Mira", "m-dir")
+    d.send("approval.forget", {"machine_id": "m-nobody"})
+    assert d.until("error")["data"]["code"] == "unknown_target"
+
+
 # ---- routing --------------------------------------------------------------------------------------------
 
 

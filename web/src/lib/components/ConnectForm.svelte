@@ -37,7 +37,7 @@
   <label class="field">
     <span>Relay server</span>
     <input class="input mono" bind:value={serverUrl} placeholder="wss://relay.example.com/ws" spellcheck="false" required />
-    <small>Ask the server owner. ws://, wss://, http(s):// or host:port all work.</small>
+    <small>Ask the server owner. A host name alone means wss://, host:port means ws://; full ws(s):// and http(s):// addresses work too.</small>
   </label>
   {#if isDirector}
     <label class="field">

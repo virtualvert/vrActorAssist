@@ -158,6 +158,14 @@ export interface LatencyEntry {
   timed_out?: boolean;
 }
 
+/** An approved actor or camera with no connection right now; forget it by machine id. */
+export interface OfflineMachine {
+  machine_id: string;
+  name: string;
+  role?: "actor" | "camera";
+  approved_at?: string | null;
+}
+
 /** `parameter` is a VRChat avatar parameter name, or a full address starting with '/'. */
 export interface OscParam {
   at?: number | null;
@@ -177,12 +185,13 @@ export interface PresenceLatency {
 }
 
 /**
- * Everyone approved and connected, including the recipient. `pending` is filled for
- * directors and assistants only.
+ * Everyone approved and connected, including the recipient. `pending` and `offline` are
+ * filled for directors and assistants only.
  */
 export interface PresenceRoster {
   sessions: RosterSession[];
   pending?: PendingRequest[];
+  offline?: OfflineMachine[];
 }
 
 /** The envelope's `reply_to` names the message this is about. */

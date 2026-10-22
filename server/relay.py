@@ -101,8 +101,10 @@ class Relay:
         await self.bridge.send_pending_list()
         await self.router.roster_changed()
 
-    async def forget(self, machine_id: str, name: str) -> None:
-        """Remove an approval; the machine has to be approved again (it goes back to pending)."""
+    async def forget(self, machine_id: str, name: str, requeue_offline: bool = True) -> None:
+        """Remove an approval; the machine has to be approved again (it goes back to pending, as on
+        the v0.3 relay). A v2 director's forget passes requeue_offline=False: a machine with no
+        connection then just goes, instead of waiting in pending for nobody."""
         info = self.approvals.get(machine_id)
         if not info:
             return
@@ -110,12 +112,16 @@ class Relay:
         self.approvals.remove(machine_id)
         self.log(f"{role.capitalize()} forgotten by name: {name}")
         await self.bridge.notify_forgotten(machine_id)
+        connected = False
         for session in self.registry:
+            if session.machine_id == machine_id and session.role in ("actor", "camera"):
+                connected = True
             if not session.legacy and session.machine_id == machine_id and session.role in ("actor", "camera") and session.approved:
                 session.approved = False
                 session.retired = True
                 await self.router.send_forgotten(session)
-        self.pending[machine_id] = PendingEntry(name=name, role=role)
+        if connected or requeue_offline:
+            self.pending[machine_id] = PendingEntry(name=name, role=role)
         await self.bridge.send_user_list()
         await self.bridge.send_pending_list()
         await self.router.roster_changed()

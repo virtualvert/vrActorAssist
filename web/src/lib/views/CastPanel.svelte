@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AudioLines, Check, Crosshair, Timer, UserPlus, Trash, X } from "@lucide/svelte";
+  import { AudioLines, Check, ChevronRight, Crosshair, Timer, UserPlus, Trash, UserX, X } from "@lucide/svelte";
   import Button from "../components/Button.svelte";
   import DelayEditor from "../components/DelayEditor.svelte";
   import StatusDot from "../components/StatusDot.svelte";
@@ -32,14 +32,20 @@
     setTargets(targets.has(p.id) ? data.targets.filter((id) => id !== p.id) : [...data.targets, p.id]);
   }
 
-  function forget(p: Peer) {
-    if (confirmForget !== p.id) {
-      confirmForget = p.id;
-      setTimeout(() => confirmForget === p.id && (confirmForget = null), 4000);
+  /** A connected peer, or an approved machine that has left (`offline:` id). Asks once more first. */
+  function forget(id: string) {
+    if (confirmForget !== id) {
+      confirmForget = id;
+      setTimeout(() => confirmForget === id && (confirmForget = null), 4000);
       return;
     }
     confirmForget = null;
-    void app.call({ call: "forget", args: { id: p.id } });
+    void app.call({ call: "forget", args: { id } });
+  }
+
+  function approvedOn(iso: string | null): string {
+    const d = iso ? new Date(iso) : null;
+    return d && !Number.isNaN(d.getTime()) ? `approved ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "approved";
   }
 
   const selectable = $derived(actors.filter((p) => p.status !== "pending"));
@@ -129,7 +135,7 @@
             variant={confirmForget === p.id ? "danger" : "ghost"}
             aria-label="Forget {p.name}"
             title="Forget — they must be approved again"
-            onclick={() => forget(p)}
+            onclick={() => forget(p.id)}
           >
             {#if confirmForget === p.id}Forget?{:else}<Trash size="1em" />{/if}
           </Button>
@@ -180,6 +186,33 @@
           </div>
         {/each}
       </section>
+    {/if}
+
+    {#if data.offline.length}
+      <details class="offline">
+        <summary class="eyebrow"><ChevronRight size="1em" class="chev" /><UserX size="1em" /> Approved, not connected ({data.offline.length})</summary>
+        <p class="faint">Forget someone to make them ask again next time they connect.</p>
+        {#each data.offline as m (m.id)}
+          <div class="crew-row">
+            <span class="avatar role-{m.role}">{initials(m.name)}</span>
+            <span class="text">
+              <strong>{m.name}</strong>
+              <span class="sub">{m.role === "camera" ? "Camera" : "Actor"} · {approvedOn(m.approvedAt)}</span>
+            </span>
+            <div class="spacer"></div>
+            <Button
+              size="s"
+              icon={confirmForget !== m.id}
+              variant={confirmForget === m.id ? "danger" : "ghost"}
+              aria-label="Forget {m.name}"
+              title="Forget — they must be approved again"
+              onclick={() => forget(m.id)}
+            >
+              {#if confirmForget === m.id}Forget?{:else}<Trash size="1em" />{/if}
+            </Button>
+          </div>
+        {/each}
+      </details>
     {/if}
   </div>
 </aside>
@@ -241,6 +274,44 @@
 
   .pending .eyebrow {
     color: var(--warn);
+  }
+
+  .offline summary {
+    cursor: pointer;
+    list-style: none;
+    min-height: var(--target);
+    margin-bottom: 0;
+    border-radius: var(--radius-s);
+  }
+
+  .offline summary:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  .offline summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .offline :global(.chev) {
+    transition: transform var(--t-fast) var(--ease-out);
+  }
+
+  .offline[open] :global(.chev) {
+    transform: rotate(90deg);
+  }
+
+  .offline[open] summary {
+    margin-bottom: 0.25rem;
+  }
+
+  .offline p {
+    margin: 0 0 0.25rem 0.25rem;
+    font-size: 0.8125rem;
+  }
+
+  .offline .avatar {
+    opacity: 0.55;
   }
 
   .pending-row,

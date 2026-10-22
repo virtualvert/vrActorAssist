@@ -117,6 +117,24 @@ describe("DemoSession", () => {
     expect(after.targets).toContain(pending[0].id);
   });
 
+  test("approved machines that have left are listed for the director and can be forgotten", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(3000, s);
+    const offline = lastState().offline;
+    expect(offline.map((m) => [m.name, m.role])).toEqual([
+      ["Sable", "actor"],
+      ["Cam D", "camera"],
+    ]);
+    s.handle({ call: "forget", args: { id: offline[0].id } });
+    expect(lastState().offline.map((m) => m.name)).toEqual(["Cam D"]);
+    expect(lastState().pending).toHaveLength(0);
+    // Actors don't get the list; the demo has no log folder
+    const actor = make(new MemoryStorage(), "actor");
+    clock.advance(3000, actor);
+    expect(lastState().offline).toEqual([]);
+    expect(lastState().logDir).toBeNull();
+  });
+
   test("prefs are clamped and persisted", () => {
     const storage = new MemoryStorage();
     const s = make(storage, "camera");

@@ -24,6 +24,12 @@ def test_ws_url_normalisation():
     assert ws_url("wss://relay.example/ws") == "wss://relay.example/ws"
     assert ws_url("wss://relay.example/ws?secret=x") == "wss://relay.example/ws"
     assert ws_url("ws://host/prefix") == "ws://host/prefix/ws"
+    # No scheme and no port: a relay behind HTTPS (Caddy, Tailscale Funnel)
+    assert ws_url("relay.example") == "wss://relay.example/ws"
+    assert ws_url("relay.example/ws") == "wss://relay.example/ws"
+    assert ws_url(" relay.example/ ") == "wss://relay.example/ws"
+    assert ws_url("10.0.0.2:5555/ws") == "ws://10.0.0.2:5555/ws"
+    assert ws_url("[::1]:5599") == "ws://[::1]:5599/ws"
     with pytest.raises(ValueError):
         ws_url("  ")
 
@@ -161,5 +167,25 @@ def test_wrong_secret_stops_retrying(relay, tmp_path, monkeypatch):
             await director.shutdown()
             server.should_exit = True
             await task
+
+    asyncio.run(scenario())
+
+
+def test_log_folder(tmp_path, monkeypatch):
+    """Settings → About shows where agent.log is and opens it (tester prep S1)."""
+    from agent import core
+
+    opened = []
+    monkeypatch.setattr(core, "open_folder", opened.append)
+    actor = make_agent(tmp_path, monkeypatch, "Coda", "actor", "m-coda", "")
+    logs = tmp_path / "Coda" / "logs"
+    assert actor.snapshot()["logDir"] == str(logs)
+
+    async def scenario():
+        with pytest.raises(CallError, match="no log folder yet"):
+            await actor.handle_call("openLogFolder", {})
+        logs.mkdir(parents=True)
+        await actor.handle_call("openLogFolder", {})
+        assert opened == [logs]
 
     asyncio.run(scenario())

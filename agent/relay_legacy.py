@@ -36,7 +36,11 @@ WARN_NEW = re.compile(r"Warning: (.+) has connected as another director")
 
 
 def ws_url(server_url: str) -> str:
-    """Normalise what people type (host:port, http(s)://, ws(s)://) into the relay's /ws URL."""
+    """Normalise what people type (host:port, a host name, http(s)://, ws(s)://) into the relay's /ws URL.
+
+    Without a scheme, host:port means ws:// (a relay on its own port) and a bare host name means
+    wss://: a relay without a port sits behind HTTPS (Caddy, Tailscale Funnel), which has no ws://.
+    """
     url = server_url.strip()
     if not url:
         raise ValueError("No relay server set")
@@ -45,7 +49,8 @@ def ws_url(server_url: str) -> str:
     elif url.startswith("http://"):
         url = "ws://" + url[len("http://"):]
     elif not url.startswith(("ws://", "wss://")):
-        url = "ws://" + url
+        has_port = re.search(r":\d+$", url.split("/", 1)[0].split("?", 1)[0])
+        url = ("ws://" if has_port else "wss://") + url
     url = url.split("?", 1)[0].rstrip("/")
     scheme, rest = url.split("://", 1)
     host, _, path = rest.partition("/")
@@ -170,6 +175,7 @@ class LegacyRelay:
         self.actors: dict[str, RemoteActor] = {}
         self.directors: set[str] = set()
         self.pending: list[dict] = []
+        self.offline: list[dict] = []  # the v0.3 relay doesn't list approved machines that have left
         self.targets: set[str] = set()
         self.self_playing_until = 0.0
         self._ws = None
