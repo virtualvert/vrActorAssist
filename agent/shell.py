@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 import sys
 import webbrowser
 from pathlib import Path
@@ -107,3 +109,13 @@ def run_window(url: str, storage_path: str, on_closed: Callable[[], None]) -> No
 def open_browser(url: str) -> None:
     if not webbrowser.open(url):
         log.warning("Couldn't open a browser. Open this address yourself: %s", url)
+
+
+def open_folder(path: Path) -> None:
+    """Show a folder in Explorer / the file manager. Raises OSError if that can't start."""
+    if sys.platform == "win32":
+        os.startfile(path)  # noqa: S606 - our own data folder
+    else:
+        opener = "open" if sys.platform == "darwin" else "xdg-open"
+        subprocess.Popen([opener, str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)

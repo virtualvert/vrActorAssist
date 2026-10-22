@@ -22,6 +22,7 @@ from .files import Files, received_path
 from .folders import FolderError, Folders, pick_folder
 from .hub import Hub
 from .relay import Relay
+from .shell import open_folder
 from .soundpad_remote import LINES_TEXT, SoundpadRemote
 
 MAX_SEND_ITEMS = 500
@@ -59,6 +60,11 @@ class Agent:
     @property
     def config(self):
         return self.store.config
+
+    @property
+    def log_dir(self) -> Path:
+        """Where __main__.setup_logging writes agent.log."""
+        return self.store.folder / "logs"
 
     def changed(self) -> None:
         self.hub.state_changed()
@@ -120,6 +126,7 @@ class Agent:
         return {
             "appVersion": APP_VERSION,
             "demo": False,
+            "logDir": str(self.log_dir),
             "role": cfg.role,
             "prefs": {
                 "theme": cfg.prefs.theme,
@@ -137,6 +144,7 @@ class Agent:
             },
             "peers": peers,
             "pending": list(relay.pending) if cfg.role == "director" and relay.status == "connected" else [],
+            "offline": list(relay.offline) if cfg.role == "director" and relay.status == "connected" else [],
             "targets": relay.target_ids() if cfg.role == "director" else [],
             "countdown": relay.countdown,
             "clock": relay.impl.clock.view() if v2 else dict(NO_CLOCK),
@@ -539,6 +547,15 @@ class Agent:
             raise CallError("Browser access isn't available")
         url = self.ui_url()
         await asyncio.to_thread(webbrowser.open, url)
+
+    async def _call_openLogFolder(self, args: dict) -> None:
+        folder = self.log_dir
+        if not folder.is_dir():
+            raise CallError(f"There's no log folder yet: {folder}")
+        try:
+            await asyncio.to_thread(open_folder, folder)
+        except OSError as exc:
+            raise CallError(f"Couldn't open {folder}: {exc}") from exc
 
     def _require_director(self) -> None:
         if self.config.role != "director":

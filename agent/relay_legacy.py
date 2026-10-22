@@ -175,6 +175,7 @@ class LegacyRelay:
         self.actors: dict[str, RemoteActor] = {}
         self.directors: set[str] = set()
         self.pending: list[dict] = []
+        self.offline: list[dict] = []  # the v0.3 relay doesn't list approved machines that have left
         self.targets: set[str] = set()
         self.self_playing_until = 0.0
         self._ws = None

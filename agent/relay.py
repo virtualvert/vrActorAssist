@@ -63,6 +63,10 @@ class Relay:
         return self.impl.pending
 
     @property
+    def offline(self) -> list[dict]:
+        return self.impl.offline
+
+    @property
     def self_playing_until(self) -> float:
         return self.impl.self_playing_until
 

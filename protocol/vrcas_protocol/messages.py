@@ -99,12 +99,22 @@ class PendingRequest(Payload):
     legacy: bool = False
 
 
+class OfflineMachine(Payload):
+    """An approved actor or camera with no connection right now; forget it by machine id."""
+
+    machine_id: str
+    name: str
+    role: Literal["actor", "camera"] = "actor"
+    approved_at: str | None = None
+
+
 class PresenceRoster(Payload):
-    """Everyone approved and connected, including the recipient. `pending` is filled for
-    directors and assistants only."""
+    """Everyone approved and connected, including the recipient. `pending` and `offline` are
+    filled for directors and assistants only."""
 
     sessions: list[RosterSession]
     pending: list[PendingRequest] = Field(default_factory=list)
+    offline: list[OfflineMachine] = Field(default_factory=list)
 
 
 class LatencyEntry(Payload):

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ExternalLink, Glasses, Monitor, Moon, Sun } from "@lucide/svelte";
+  import { ExternalLink, FolderOpen, Glasses, Monitor, Moon, Sun } from "@lucide/svelte";
   import { clampScale, SCALE_MAX, SCALE_MIN, VR_SCALE, type Theme } from "../protocol";
   import { ROLE_INFO, ROLE_ORDER } from "../roles";
   import { OWN_LINE_HELP, OWN_LINE_OPTIONS } from "../soundpad";
@@ -227,11 +227,21 @@
         <dd>{app.kind === "demo" ? "Demo (simulated session)" : "vrcActorSync app"}</dd>
         <dt>Relay</dt>
         <dd>{data.connection.serverVersion ? `v${data.connection.serverVersion}` : "—"}{data.connection.legacy ? " (v0.3 protocol)" : ""}</dd>
+        {#if data.logDir}
+          <dt>Logs</dt>
+          <dd class="mono path">{data.logDir}</dd>
+        {/if}
       </dl>
       {#if app.kind === "agent"}
-        <Button variant="subtle" onclick={() => app.call({ call: "openBrowser" })}>
-          <ExternalLink size="1.1em" /> Open in browser
-        </Button>
+        <small>Reporting a problem? Send the version above and <span class="mono">agent.log</span> from the log folder.</small>
+        <div class="about-actions">
+          <Button variant="subtle" onclick={() => app.call({ call: "openLogFolder" })}>
+            <FolderOpen size="1.1em" /> Open log folder
+          </Button>
+          <Button variant="subtle" onclick={() => app.call({ call: "openBrowser" })}>
+            <ExternalLink size="1.1em" /> Open in browser
+          </Button>
+        </div>
       {/if}
       {#if prefs.vrMode}
         <p class="faint small"><Glasses size="1em" /> VR mode is on.</p>
@@ -296,6 +306,18 @@
 
   .about dd {
     margin: 0;
+    min-width: 0;
+  }
+
+  .about .path {
+    overflow-wrap: anywhere;
+    user-select: all;
+  }
+
+  .about-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
   .with-button {

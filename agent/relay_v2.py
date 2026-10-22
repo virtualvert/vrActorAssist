@@ -108,6 +108,8 @@ class V2Relay:
         self.session_id: str | None = None
         self.sessions: dict[str, RemoteSession] = {}
         self.pending: list[dict] = []
+        # Director: approved actors and cameras that aren't connected ({id: "offline:<machine id>", name, role, approvedAt})
+        self.offline: list[dict] = []
         self.targets: set[str] = set()
         self.self_playing_until = 0.0
         # This connection's clock and the actions waiting for their time (§8.2)
@@ -147,6 +149,7 @@ class V2Relay:
         self.session_id = None
         self.sessions.clear()
         self.pending.clear()
+        self.offline.clear()
         self._ws = None
         self.agent.changed()
 
@@ -360,6 +363,16 @@ class V2Relay:
             for p in data.get("pending", [])
             if isinstance(p, dict)
         ]
+        self.offline = [
+            {
+                "id": f"offline:{m['machine_id']}",
+                "name": str(m.get("name", "?")),
+                "role": "camera" if m.get("role") == "camera" else "actor",
+                "approvedAt": m["approved_at"] if isinstance(m.get("approved_at"), str) else None,
+            }
+            for m in data.get("offline", [])
+            if isinstance(m, dict) and m.get("machine_id")
+        ]
         self.agent.changed()
 
     # ---- actor: actions, now or at their time ---------------------------------------------------
@@ -566,8 +579,13 @@ class V2Relay:
         self.agent.hub.log("info", "Denied a join request")
 
     async def forget(self, peer_id: str) -> None:
-        name = self.sessions[peer_id].name if peer_id in self.sessions else peer_id
-        await self._send("approval.forget", {"id": peer_id})
+        """A connected peer by session id, or an approved machine that has left ("offline:<machine id>")."""
+        if peer_id.startswith("offline:"):
+            name = next((m["name"] for m in self.offline if m["id"] == peer_id), "a machine")
+            await self._send("approval.forget", {"machine_id": peer_id.removeprefix("offline:")})
+        else:
+            name = self.sessions[peer_id].name if peer_id in self.sessions else peer_id
+            await self._send("approval.forget", {"id": peer_id})
         self.agent.hub.log("info", f"Forgot {name} — they need approval again")
 
     async def chat(self, text: str) -> None:

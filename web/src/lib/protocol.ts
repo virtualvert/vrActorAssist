@@ -104,6 +104,16 @@ export interface PendingActor {
   name: string;
 }
 
+/** Director only (v2 relay): an approved actor or camera that isn't connected. `forget` takes its id. */
+export interface OfflineMachine {
+  /** "offline:<machine id>" */
+  id: string;
+  name: string;
+  role: "actor" | "camera";
+  /** When the relay approved it (ISO time), if it knows. */
+  approvedAt: string | null;
+}
+
 /**
  * ready: Soundpad answers on its remote-control pipe. closed: Soundpad isn't running, so cues
  * can't play (the app never starts it through a cue). fallback: it runs but its pipe can't be
@@ -274,6 +284,8 @@ export interface Countdown {
 export interface AppState {
   appVersion: string;
   demo: boolean;
+  /** The folder with agent.log, for bug reports (null in the demo). */
+  logDir: string | null;
   /** null until the user picks a seat; afterwards the app always opens in that role. */
   role: Role | null;
   prefs: Prefs;
@@ -282,6 +294,8 @@ export interface AppState {
   /** Everyone we know about, including ourselves (`self: true`). The relay itself is implicit. */
   peers: Peer[];
   pending: PendingActor[];
+  /** Director only: approved actors and cameras that have left, so they can be forgotten. */
+  offline: OfflineMachine[];
   /** Director only: peer ids that receive Go / Stop. */
   targets: string[];
   countdown: Countdown | null;
@@ -330,6 +344,7 @@ export type Call =
   | { call: "setTargets"; args: { ids: string[] } }
   | { call: "approve"; args: { id: string } }
   | { call: "deny"; args: { id: string } }
+  /** A connected peer's id, or an offline machine's ("offline:…"). */
   | { call: "forget"; args: { id: string } }
   | {
       call: "setActorLocal";
@@ -371,7 +386,9 @@ export type Call =
   /** A batch id, or "all". */
   | { call: "cancelBatch"; args: { id: string } }
   | { call: "camera"; args: { action: "roll" | "cut" } }
-  | { call: "openBrowser" };
+  | { call: "openBrowser" }
+  /** Show the log folder (`logDir`) in Explorer / the file manager. */
+  | { call: "openLogFolder" };
 
 /**
  * Folder access for Normalize folder (spec §8.4.2) and Send files (§8.4). The agent serves it

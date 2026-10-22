@@ -269,3 +269,28 @@ def test_a_slow_cue_doesnt_hold_up_the_connection(relay, tmp_path, monkeypatch):
                 await agent.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_director_forgets_an_offline_actor(relay, tmp_path, monkeypatch):
+    """Approved machines that have left are listed for directors and can be forgotten (tester prep S4)."""
+    running, state = relay
+    state.approvals.add("m-coda", "Coda")
+    state.approvals.add("m-cam", "Cam", "camera")
+
+    async def scenario():
+        director = make_agent(tmp_path, monkeypatch, "Mira", "director", "m-mira", f"127.0.0.1:{running.port}", SECRET)
+        try:
+            await director.start()
+            await wait_for(lambda: len(director.snapshot()["offline"]) == 2)
+            offline = {m["id"]: m for m in director.snapshot()["offline"]}
+            assert offline["offline:m-coda"]["name"] == "Coda" and offline["offline:m-coda"]["role"] == "actor"
+            assert offline["offline:m-cam"]["role"] == "camera" and offline["offline:m-cam"]["approvedAt"]
+            await director.handle_call("forget", {"id": "offline:m-coda"})
+            await wait_for(lambda: [m["id"] for m in director.snapshot()["offline"]] == ["offline:m-cam"])
+            assert director.snapshot()["pending"] == []
+            assert logged(director, "Forgot Coda")
+            assert "m-coda" not in json.loads((tmp_path / "relay" / "approved_actors.json").read_text())
+        finally:
+            await director.shutdown()
+
+    asyncio.run(scenario())
