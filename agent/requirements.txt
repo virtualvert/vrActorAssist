@@ -1,6 +1,6 @@
 # vrcActorSync desktop agent (python -m agent). Python 3.10+.
 fastapi>=0.115
-uvicorn>=0.30
+uvicorn>=0.50  # agent/__main__.py subclasses its websockets-sansio protocol (the "auto" choice since 0.50)
 websockets>=13
 certifi
 python-osc

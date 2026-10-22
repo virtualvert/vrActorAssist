@@ -19,6 +19,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import uvicorn
+from uvicorn.protocols.websockets.websockets_sansio_impl import WebSocketsSansIOProtocol
+from websockets.protocol import State
 
 from . import APP_NAME, APP_VERSION
 from .config import ROLES, ConfigStore, data_dir, exe_dir, is_portable
@@ -45,6 +47,28 @@ class UIServer(uvicorn.Server):
                 return
             self._last_sigint = now
         super().handle_exit(sig, frame)
+
+
+class UISocketProtocol(WebSocketsSansIOProtocol):
+    """uvicorn's WebSocket protocol, minus a shutdown race with a UI that is closing.
+
+    When the window or a tab goes away just as the app quits, the UI's close frame is in but its
+    connection isn't gone yet (on Windows it waits for our close reply to be sent). uvicorn's
+    shutdown then sends a close frame of its own, websockets refuses a second one ("InvalidState:
+    connection is closing"), and the exception ends the server before the agent's shutdown runs.
+    """
+
+    def shutdown(self) -> None:
+        if self.handshake_complete and not self.close_sent and self.conn.state is not State.OPEN:
+            # The closing handshake is under way and the app already has its disconnect: let it finish.
+            self.stop_keepalive()
+            self.transport.close()
+            return
+        super().shutdown()
+
+
+def ui_server(app, port: int) -> UIServer:
+    return UIServer(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", ws=UISocketProtocol))
 
 
 def find_port(preferred: int) -> int:
@@ -118,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
 
     agent.ui_url = ui_url
     app = create_app(agent, security, static_dir())
-    server = UIServer(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    server = ui_server(app, port)
 
     reason = window_reason(forced=args.window)
     use_window = not args.headless and not args.no_open and reason is None
