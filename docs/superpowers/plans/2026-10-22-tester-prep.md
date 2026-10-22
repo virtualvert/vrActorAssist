@@ -176,6 +176,18 @@ uvicorn 0.54.0) on 127.0.0.1:5610, own data dir, a copy of the live `approved_ac
 
 ### 2.4 Decisions for the user
 
+**Answered 2026-10-22:** push (done: `feat/web-ui` @ df69d38, `feat/new-logo` @ e56ac74); B1: the user publishes the
+pre-release; B2: restart now (done, below); B3 and S1 / S2 / S4: yes (built on `feat/tester-prep`, section 4).
+
+**B2 done, 2026-10-22 06:57:** `./start-server-ts.sh restart` from the main checkout at df69d38 (the user typed the sudo
+password and the secret in the terminal panel). Backup: `approved_actors.2026-10-22.json.bak` (2 entries). Nobody was
+connected but the user's old v0.4 preview director, which reconnected over `/ws` at 06:58:04. Checks: `/health` healthy
+on 127.0.0.1:5555 and through `https://doggoos.tail73c00a.ts.net/health`; start line `Starting vrcActorSync relay
+v0.4.0-dev … (v2 on /v2/ws; v0.3 clients on /ws, as v0.3.3)` at 06:57:34. S4 changes the relay, so it needs one more
+restart after `feat/tester-prep` merges.
+
+Original questions:
+
 1. Publish the v0.4 download as a GitHub pre-release (B1)? Which tag?
 2. Restart the live relay (B2), and when?
 3. Set the tester version (B3) and add S1 / S2 before the build?
@@ -190,3 +202,78 @@ Share menu once B1 and B2 are done). Contents: what to install (Soundpad, WebVie
 SmartScreen, relay address `wss://doggoos.tail73c00a.ts.net`, approval, what to try per role, common problems, what to
 send in a report (version, `%APPDATA%\vrcActorSync\logs\agent.log`), limits of the preview. No director or relay secret.
 Its download step points at the GitHub releases page and expects a "vrcActorSync 0.4 preview" release there (B1).
+
+---
+
+## 4. Tester build: B3, S1, S2, S4 (`feat/tester-prep`, from `feat/web-ui` @ df69d38)
+
+| Commit | What |
+|---|---|
+| 42f73d4 | B3: `APP_VERSION = "0.4.0-preview.1"` |
+| 4a911b1 | S2: no scheme and no port → `wss://` (`ws_url`); the connect form's hint says so |
+| 43e763c | S1: `AppState.logDir`, call `openLogFolder`, Settings → About shows the path and "Open log folder". S4: `presence.roster.offline` (relay), "Approved, not connected" in the cast with Forget; a v2 forget of a machine with no connection leaves no pending entry |
+
+Checks on the branch: pytest 767 passed, bun 93 pass, svelte-check 0 / 0, build, `gen_ts_types.py --check`. Seen in
+the app here (scratch relay on 127.0.0.1:5601 with two offline approvals, director in browser mode): the collapsed
+section with both rows, Forget removes one (the relay log says "Actor forgotten by name: Sable", the file loses it,
+no "Waiting to join"), Settings → About shows `0.4.0-preview.1` and the log path. Not clicked here: "Open log folder"
+(it would open a file manager on the desktop); the laptop run covers it on Windows.
+
+**What changes for connected clients** when this merges and the live relay restarts: directors on this build see
+"Approved, not connected" (older builds ignore the new roster field); a v2 forget of someone who has left no longer
+leaves them in "Waiting to join". v0.3 clients: nothing (the golden session passes). The restart itself: everyone
+drops for a few seconds, as in B2.
+
+### 4.1 Laptop prompt: the tester build
+
+```text
+You're checking the vrcActorSync tester build on this Windows 11 box before it's published as a pre-release.
+The branch is feat/tester-prep: version 0.4.0-preview.1, an "Open log folder" button in Settings, a bare relay host
+name now means wss://, and directors can forget testers who have left. The user looks and clicks; you set up, build,
+watch and record.
+
+Rules
+- Don't change code. Report what you see.
+- Only steps 3-4 connect, to the live relay doggoos.tail73c00a.ts.net, as the actor "PrepCheck" with machine id
+  laptop-prep-exe. Never start anything else against the live relay; leave the v0.3.3 clients alone.
+- Capture stderr with cmd /c "... 2>> file", never PowerShell's 2>>.
+
+Setup
+1. In your vrActorAssist checkout: git fetch origin; git worktree add ..\vrcas-prep origin/feat/tester-prep; cd ..\vrcas-prep
+   git log --oneline -1   # expect "docs: tester build …" or newer on that branch
+   py -3.12 -m venv .venv; .\.venv\Scripts\python -m pip install -r agent\requirements-dev.txt pyinstaller
+   bun --cwd=web install
+2. .\.venv\Scripts\python build_agent.py
+   Expect: dist\vrcActorSync.exe, no error. Write down its size and Get-FileHash dist\vrcActorSync.exe (SHA-256).
+
+Steps (after each: pass or fail, and what the user saw)
+1. Version. mkdir $env:TEMP\vrcas-prep-exe; then
+     $env:VRCAS_MACHINE_ID="laptop-prep-exe"
+     .\dist\vrcActorSync.exe --role actor --name PrepCheck --data-dir $env:TEMP\vrcas-prep-exe --port 47860
+   (no --server: it connects nowhere yet). The window opens with the new icon.
+   Expect: the top bar shows v0.4.0-preview.1. Settings (gear) → About: Version 0.4.0-preview.1, and Logs with the
+   data dir's logs folder (%TEMP%\vrcas-prep-exe\logs, possibly with the short 8.3 user name).
+2. Open log folder. Settings → About → Open log folder.
+   Expect: an Explorer window on that logs folder, with agent.log in it. No error in the Activity drawer. Press it
+   once more: Explorer comes up again (same or new window), still no error.
+3. Bare host name. Settings → Relay server: type only  doggoos.tail73c00a.ts.net  (no wss://, no /ws) →
+   Save & reconnect. Soundpad running (full version) with a sound selected.
+   Expect: "Awaiting approval" in the top bar; agent.log says "Connected to doggoos.tail73c00a.ts.net, registering
+   as actor…". The user approves PrepCheck in their director (a v0.4 director).
+4. GO / STOP. The user ticks only PrepCheck, presses GO, then STOP.
+   Expect: GO! and Soundpad plays; STOP stops it. Then, while PrepCheck is still connected, the user forgets it in
+   the director (cast row → trash button, twice: "Forget?"). Close PrepCheck.
+5. SmartScreen, as a tester sees it. Make a copy marked as downloaded from the internet:
+     mkdir $env:TEMP\vrcas-prep-dl; copy dist\vrcActorSync.exe $env:TEMP\vrcas-prep-dl\
+     Set-Content -Path $env:TEMP\vrcas-prep-dl\vrcActorSync.exe -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
+   The user double-clicks it in Explorer.
+   Expect: "Windows protected your PC"; More info shows "Run anyway"; Run anyway starts the app (first-run screen;
+   close it without connecting). Write down the dialog's exact wording and whether Defender or anything else
+   complained. Delete $env:TEMP\vrcas-prep-dl afterwards.
+
+Report per step: pass or fail and what the user saw, the exe size and SHA-256, the SmartScreen wording, and the last
+20 lines of $env:TEMP\vrcas-prep-exe\logs\agent.log. Keep dist\vrcActorSync.exe: if everything passes, it's the file
+for the pre-release. With the user's OK, delete $env:TEMP\vrcas-logo-pin from the icon check (its config holds the
+live director secret) once it's no longer used as the director, and $env:TEMP\vrcas-prep-exe.
+```
+
