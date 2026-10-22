@@ -316,12 +316,23 @@ class SoundpadState(Payload):
     detail: str = Field(default="", max_length=500)
 
 
+class SoundpadCalibrate(Payload):
+    """A speakers-only test play that measures the actor's start latency (§8.2.3). Without `sound`
+    the actor picks the sound it last played by number, else sound 1 (the selected sound can't be
+    played on the speakers line alone)."""
+
+    sound: SoundRef | None = None
+
+
 class SoundpadAck(Payload):
     status: str
+    # How late a scheduled action started (ms after its fire time, §8.2.3)
     late_ms: int | None = None
     error: str | None = None
     # Which message this answers (soundpad.play, soundpad.volume, ...)
     command: str | None = None
+    # soundpad.calibrate: the actor's start latency now (median of its last plays), in ms
+    start_latency_ms: int | None = Field(default=None, ge=0, le=5000)
 
 
 class OscParam(Scheduled):
@@ -472,7 +483,7 @@ MODELS: dict[str, type[Payload] | None] = {
     "soundpad.list.request": SoundpadListRequest,
     "soundpad.list": SoundpadList,
     "soundpad.state": SoundpadState,
-    "soundpad.calibrate": None,
+    "soundpad.calibrate": SoundpadCalibrate,
     # files addon (chunks are binary frames, chunks.py)
     "file.batch.start": FileBatchStart,
     "file.offer": FileOffer,

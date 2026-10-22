@@ -46,6 +46,7 @@ SAMPLES = {
     "soundpad.play": {"sound": {"path": "C:\\Sounds\\a.mp3"}, "lines": "speakers", "volume": 80, "at": 5},
     "soundpad.stop": {"at": 9},
     "soundpad.ack": {"status": "played", "late_ms": 0, "command": "soundpad.play"},
+    "soundpad.calibrate": {"sound": {"key": "0123456789abcdef"}},
     "soundpad.pause": {"paused": True, "at": 5},
     "soundpad.seek": {"ms": 5000},
     "soundpad.jump": {"ms": -2000},
@@ -84,6 +85,7 @@ INVALID = {
     "soundpad.play": {"sound": {"key": "NOT-A-KEY"}},
     "soundpad.state": {"available": True, "status": "LOOPING"},
     "soundpad.seek": {"ms": -1},
+    "soundpad.calibrate": {"sound": {"index": 0}},
     "file.offer": {"transfer_id": "0f" * 16, "name": "a.wav", "size": 10},  # no hash
     "file.end": {"transfer_id": "0F" * 16, "md5": "cd" * 16},  # upper-case id
     "file.accept": {"transfer_id": "short"},
