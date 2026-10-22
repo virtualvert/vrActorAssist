@@ -5,9 +5,16 @@ from __future__ import annotations
 import logging
 import sys
 import webbrowser
+from pathlib import Path
 from typing import Callable
 
+from .config import exe_dir
+
 log = logging.getLogger("vrcas")
+
+# Windows groups taskbar buttons by this id. Without one of our own, a run from source is grouped
+# under python.exe and the taskbar shows Python's icon instead of the window's.
+APP_USER_MODEL_ID = "vrcActorSync.App"
 
 # Microsoft's documented client id for the Evergreen WebView2 Runtime.
 WEBVIEW2_CLIENT = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
@@ -57,10 +64,32 @@ def linux_gui() -> str | None:
     return "gtk"
 
 
+def icon_path() -> str | None:
+    """The window and taskbar icon: .ico for WinForms (System.Drawing.Icon), .png for GTK.
+
+    build_agent.py bundles assets/ (the .ico on Windows), so a build finds it under sys._MEIPASS.
+    """
+    base = Path(getattr(sys, "_MEIPASS", exe_dir())) if getattr(sys, "frozen", False) else exe_dir()
+    path = base / "assets" / ("vrcActorSync.ico" if sys.platform == "win32" else "vrcActorSync.png")
+    return str(path) if path.is_file() else None
+
+
+def set_app_id() -> None:
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except (AttributeError, OSError) as exc:
+        log.debug("Couldn't set the taskbar app id: %s", exc)
+
+
 def run_window(url: str, storage_path: str, on_closed: Callable[[], None]) -> None:
     """Blocks on the GUI loop; pywebview requires the main thread."""
     import webview
 
+    set_app_id()  # before the window exists, or the taskbar keeps Python's identity
     window = webview.create_window(
         "vrcActorSync",
         url,
@@ -72,7 +101,7 @@ def run_window(url: str, storage_path: str, on_closed: Callable[[], None]) -> No
     )
     window.events.closed += on_closed
     gui = linux_gui() if sys.platform.startswith("linux") else None
-    webview.start(gui=gui, private_mode=True, storage_path=storage_path)
+    webview.start(gui=gui, private_mode=True, storage_path=storage_path, icon=icon_path())
 
 
 def open_browser(url: str) -> None:
