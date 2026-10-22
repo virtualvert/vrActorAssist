@@ -287,9 +287,10 @@ class V2Relay:
                 self.clock.received(env.get("reply_to"), data["t1"], data["t2"])
                 if self.clock.synced and not was:
                     offset = self.clock.wall_offset_ms() or 0
-                    logging.getLogger("vrcas").info(
-                        "Clock synced with the relay: round trip %.0f ms; this PC's clock is %.3f s %s the relay's",
-                        self.clock.rtt_ms or 0, abs(offset) / 1000, "behind" if offset >= 0 else "ahead of")
+                    where = ("in step with the relay's" if abs(offset) < 50 else
+                             f"{abs(offset) / 1000:.3f} s {'behind' if offset > 0 else 'ahead of'} the relay's")
+                    logging.getLogger("vrcas").info("Clock synced with the relay: round trip %.0f ms; this PC's clock is %s",
+                                                    self.clock.rtt_ms or 0, where)
                     self.agent.changed()
         elif msg_type == "chat.msg":
             hub.log("chat", str(data.get("text", "")), sender.name if sender else "?")
@@ -345,7 +346,7 @@ class V2Relay:
             )
         own = sessions.get(self.session_id or "")
         if own is not None and own.delay_ms != self.delay_ms:
-            self.agent.hub.log("info", f"The director set your delay to {own.delay_ms:+d} ms")
+            self.agent.hub.log("info", f"The director set your delay to {own.delay_ms:+d} ms" if own.delay_ms else "The director set your delay back to 0")
             self.delay_ms = own.delay_ms
         self.sessions = sessions
         self.agent.soundpad.forget_missing(set(sessions))
@@ -540,7 +541,7 @@ class V2Relay:
         if s is None or s.role != "actor":
             raise RuntimeError("That actor isn't connected")
         await self._send("actor.settings", {"id": actor_id, "delay_ms": delay_ms})
-        self.agent.hub.log("info", f"{s.name}'s delay: {delay_ms:+d} ms")
+        self.agent.hub.log("info", f"{s.name}'s delay: {delay_ms:+d} ms" if delay_ms else f"{s.name}'s delay: 0 (starts with everyone)")
 
     def set_targets(self, ids: list[str]) -> None:
         actors = {s.id for s in self._actors()}

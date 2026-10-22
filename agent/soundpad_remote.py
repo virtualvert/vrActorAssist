@@ -259,7 +259,10 @@ class SoundpadRemote:
             return listed.title if listed else "A sound"
         if sound.get("category"):
             return f"{sound['category']} #{sound.get('position', 1)}"
-        return "A received file" if sound.get("sha256") else str(sound.get("path", "A sound")).replace("\\", "/").rsplit("/", 1)[-1]
+        if sound.get("sha256"):
+            path = self.runtime.received_lookup(str(sound["sha256"]))
+            return path.replace("\\", "/").rsplit("/", 1)[-1] if path else "A received file"
+        return str(sound.get("path", "A sound")).replace("\\", "/").rsplit("/", 1)[-1]
 
     async def _ack(self, env: dict, status: str, error: str | None, *, late_ms: int | None = None,
                    start_latency_ms: int | None = None) -> None:
