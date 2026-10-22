@@ -263,13 +263,15 @@ Steps (after each: pass or fail, and what the user saw)
 4. GO / STOP. The user ticks only PrepCheck, presses GO, then STOP.
    Expect: GO! and Soundpad plays; STOP stops it. Then, while PrepCheck is still connected, the user forgets it in
    the director (cast row → trash button, twice: "Forget?"). Close PrepCheck.
-5. SmartScreen, as a tester sees it. Make a copy marked as downloaded from the internet:
+5. SmartScreen, as a tester sees it. Make a copy marked as downloaded from the internet, with its own data folder
+   (portable.flag) so it can't pick up saved settings and connect anywhere:
      mkdir $env:TEMP\vrcas-prep-dl; copy dist\vrcActorSync.exe $env:TEMP\vrcas-prep-dl\
+     New-Item $env:TEMP\vrcas-prep-dl\portable.flag
      Set-Content -Path $env:TEMP\vrcas-prep-dl\vrcActorSync.exe -Stream Zone.Identifier -Value "[ZoneTransfer]`r`nZoneId=3"
-   The user double-clicks it in Explorer.
-   Expect: "Windows protected your PC"; More info shows "Run anyway"; Run anyway starts the app (first-run screen;
-   close it without connecting). Write down the dialog's exact wording and whether Defender or anything else
-   complained. Delete $env:TEMP\vrcas-prep-dl afterwards.
+   The user double-clicks the exe in Explorer.
+   Expect: "Windows protected your PC"; More info shows "Run anyway"; Run anyway starts the app on the first-run
+   screen (if it shows anything else, close it at once and say so). Close it without connecting. Write down the
+   dialog's exact wording and whether Defender or anything else complained. Delete $env:TEMP\vrcas-prep-dl afterwards.
 
 Report per step: pass or fail and what the user saw, the exe size and SHA-256, the SmartScreen wording, and the last
 20 lines of $env:TEMP\vrcas-prep-exe\logs\agent.log. Keep dist\vrcActorSync.exe: if everything passes, it's the file
