@@ -4,6 +4,7 @@
   import Button from "../components/Button.svelte";
   import ConnectBanner from "../components/ConnectBanner.svelte";
   import Toggle from "../components/Toggle.svelte";
+  import { actorHero } from "../actorHero";
   import { ago, fileSize, mediaLength, mediaTime, percent } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
   import type { AppState } from "../protocol";
@@ -22,9 +23,7 @@
   const clock = window.setInterval(() => (now = Date.now()), 200);
   onDestroy(() => window.clearInterval(clock));
 
-  const self = $derived(data.peers.find((p) => p.self));
   const actor = $derived(data.actor);
-  const recentCue = $derived(actor?.lastCue && now - actor.lastCue.at < 3500 ? actor.lastCue : null);
   // Soundpad's real status when it answers on its pipe; null means only the cue flash is known
   const playback = $derived(actor?.soundpad.playback ?? null);
   const active = $derived(playback !== null && playback.status !== "STOPPED");
@@ -34,7 +33,6 @@
   $effect(() => {
     if (data.countdown) now = Date.now();
   });
-  const remaining = $derived(data.countdown ? Math.max(0, data.countdown.endsAt - now) : 0);
   const timing = $derived(actor?.timing ?? null);
   let calibrating = $state(false);
 
@@ -44,34 +42,7 @@
     calibrating = false;
   }
 
-  const hero = $derived.by(() => {
-    const c = data.connection;
-    if (c.status === "error") return { tone: "bad", title: "Can't connect", sub: c.detail };
-    if (c.status === "connecting") return { tone: "warn spin", title: "Connecting…", sub: c.detail };
-    if (c.status === "pending")
-      return { tone: "warn", title: "Waiting for the director", sub: "The director approves you once. After that you join automatically." };
-    if (c.status !== "connected") return { tone: "idle", title: "Not connected", sub: "Connect to your relay to receive cues." };
-    if (data.countdown && remaining > 0) {
-      return { tone: "warn", title: `Playing in ${Math.ceil(remaining / 1000)}`, sub: "Play in 3s from the director: everyone starts together." };
-    }
-    if (recentCue && !recentCue.ok) {
-      return { tone: "bad", title: "Cue failed", sub: actor?.soundpad.detail || "The last cue didn't run on this computer." };
-    }
-    if (playback) {
-      if (!active) return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
-      const where = `${playback.title ?? "Your selected sound"} · ${mediaTime(playback.positionMs)} / ${mediaLength(playback.durationMs)}`;
-      return playback.status === "PAUSED" ? { tone: "warn", title: "Paused", sub: where } : { tone: "go", title: "Playing", sub: where };
-    }
-    if (self?.activity === "playing" || recentCue) {
-      const sp = actor?.soundpad;
-      return {
-        tone: "go",
-        title: "GO!",
-        sub: sp?.enabled ? (sp.state === "simulated" ? "Cue received — Soundpad simulated on this system" : "Playing your selected sound") : "Cue received — Soundpad is off",
-      };
-    }
-    return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
-  });
+  const hero = $derived(actorHero(data, now));
 
   const files = $derived(actor?.files ?? null);
   const asking = $derived(files?.incoming.filter((f) => f.state === "asking") ?? []);
