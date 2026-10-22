@@ -55,6 +55,20 @@ class SoundpadConfig:
     auto_add_received: bool = True
     # Start Soundpad.exe when its pipe isn't there (§8.1.1)
     auto_launch: bool = False
+    # Send scheduled starts early by the measured start latency (§8.2.3)
+    auto_compensate_latency: bool = True
+    # The last measured start latencies in ms, newest last (their median is used)
+    start_latencies: list[float] = field(default_factory=list)
+
+
+LATENCY_SAMPLES = 5
+LEAD_MAX_MS = 2000
+
+
+@dataclass
+class DirectorConfig:
+    # GO is sent for server time now + lead_ms so every actor starts together (§8.2.2); 0 = at once
+    lead_ms: int = 300
 
 
 @dataclass
@@ -82,6 +96,7 @@ class Config:
     soundpad: SoundpadConfig = field(default_factory=SoundpadConfig)
     osc: OscConfig = field(default_factory=OscConfig)
     files: FilesConfig = field(default_factory=FilesConfig)
+    director: DirectorConfig = field(default_factory=DirectorConfig)
 
     @classmethod
     def from_dict(cls, data: Any) -> "Config":
@@ -111,6 +126,8 @@ class Config:
             default_lines=lines if lines in LINES else "both",
             auto_add_received=bool(sp.get("auto_add_received", True)),
             auto_launch=bool(sp.get("auto_launch", False)),
+            auto_compensate_latency=bool(sp.get("auto_compensate_latency", True)),
+            start_latencies=_latencies(sp.get("start_latencies")),
         )
 
         osc = data.get("osc") if isinstance(data.get("osc"), dict) else {}
@@ -122,6 +139,9 @@ class Config:
 
         files = data.get("files") if isinstance(data.get("files"), dict) else {}
         cfg.files = FilesConfig(receive_dir=_str(files.get("receive_dir")), auto_accept=bool(files.get("auto_accept", False)))
+
+        director = data.get("director") if isinstance(data.get("director"), dict) else {}
+        cfg.director = DirectorConfig(lead_ms=clamp_lead(director.get("lead_ms", 300)))
         return cfg
 
     def to_dict(self) -> dict:
@@ -130,6 +150,24 @@ class Config:
 
 def _str(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def clamp_lead(value: Any) -> int:
+    """GO lead time in ms: 0 (at once) to LEAD_MAX_MS."""
+    if isinstance(value, bool):
+        return 300
+    try:
+        lead = int(value)
+    except (TypeError, ValueError):
+        return 300
+    return min(LEAD_MAX_MS, max(0, lead))
+
+
+def _latencies(value: Any) -> list[float]:
+    if not isinstance(value, list):
+        return []
+    good = [float(v) for v in value if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 5000]
+    return good[-LATENCY_SAMPLES:]
 
 
 def _port(value: Any, default: int) -> int:

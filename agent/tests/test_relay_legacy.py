@@ -100,6 +100,22 @@ def test_director_and_actor_flow(relay, tmp_path, monkeypatch):
             assert actor.last_cue["command"] == "*go" and actor.last_cue["ok"]
             assert any(p["self"] and p["activity"] == "playing" for p in actor.snapshot()["peers"])
 
+            # Armed by number (the only kind a v0.3 relay carries): GO sends *play:N
+            snap = director.snapshot()
+            assert snap["clock"] == {"synced": False, "offsetMs": None, "rttMs": None} and actor.snapshot()["actor"]["timing"]["delayMs"] == 0
+            with pytest.raises(CallError, match="by its number"):
+                await director.handle_call("arm", {"id": "actor:Coda", "sound": {"key": "0123456789abcdef"}})
+            with pytest.raises(CallError, match="v0.4 relay"):
+                await director.handle_call("setDelay", {"id": "actor:Coda", "ms": 100})
+            await director.handle_call("arm", {"id": "actor:Coda", "sound": {"index": 4}, "label": "Sound 4"})
+            await asyncio.sleep(0.2)
+            await director.handle_call("cue", {"command": "go"})
+            await wait_for(lambda: actor.last_cue["command"] == "*play:4")
+            await director.handle_call("disarm", {"id": "actor:Coda"})
+            await asyncio.sleep(0.2)
+            await director.handle_call("cue", {"command": "go"})
+            await wait_for(lambda: actor.last_cue["command"] == "*go")
+
             # Untargeted actors don't get cues.
             await director.handle_call("setTargets", {"ids": []})
             actor.last_cue = None

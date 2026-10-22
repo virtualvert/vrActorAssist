@@ -30,6 +30,17 @@ def test_bad_values_fall_back_to_defaults():
     assert cfg.osc.host == "127.0.0.1"
 
 
+def test_timing_settings():
+    cfg = Config()
+    assert cfg.director.lead_ms == 300 and cfg.soundpad.auto_compensate_latency is True and cfg.soundpad.start_latencies == []
+    cfg = Config.from_dict({"director": {"lead_ms": 99999}, "soundpad": {"auto_compensate_latency": False,
+                            "start_latencies": [50, "x", True, -3, 9999, 61.5, 48, 55, 70, 52]}})
+    assert cfg.director.lead_ms == 2000 and cfg.soundpad.auto_compensate_latency is False
+    assert cfg.soundpad.start_latencies == [61.5, 48, 55, 70, 52]  # the last 5 good ones
+    assert Config.from_dict({"director": {"lead_ms": -5}}).director.lead_ms == 0
+    assert Config.from_dict({"director": {"lead_ms": "soon"}}).director.lead_ms == 300
+
+
 def test_round_trip(tmp_path):
     store = ConfigStore(tmp_path)
     store.config.role = "camera"

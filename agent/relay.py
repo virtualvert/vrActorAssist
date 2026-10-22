@@ -2,8 +2,9 @@
 
 Every connection attempt tries /v2/ws first. A v0.3 relay answers it with 403, and the same
 attempt continues on /ws in compatibility mode (relay_legacy.py), so a relay that gets upgraded
-is picked up at the next reconnect. This class owns the reconnect loop and the Play-in-3s
-countdown; the protocol objects own everything they learn from the relay.
+is picked up at the next reconnect. This class owns the reconnect loop and the countdown shown
+in the UI; the protocol objects own everything they learn from the relay. On a v2 relay Play in 3s
+is one cue for server time now + 3 s (relay_v2.py); on a v0.3 relay it's a local countdown, then Go.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 BACKOFF_START_S = 1.0
 BACKOFF_MAX_S = 30.0
 COUNTDOWN_S = 3.0
+COUNTDOWN_MS = 3000
 
 
 class Relay:
@@ -32,7 +34,8 @@ class Relay:
         self.v03 = LegacyRelay(agent)
         self.impl: V2Relay | LegacyRelay = self.v2
         self.host = ""
-        self.countdown_ends: float | None = None
+        # What the UI's countdown shows: {"endsAt": wall-clock ms, "durationMs": ms}
+        self.countdown: dict | None = None
         self._task: asyncio.Task | None = None
         self._countdown_task: asyncio.Task | None = None
         self._announced: str | None = None
@@ -160,24 +163,33 @@ class Relay:
     # ---- director cues ----------------------------------------------------
 
     async def cue(self, command: str) -> None:
+        impl = self.impl
+        lead = self.agent.config.director.lead_ms
         if command == "countdown":
-            if self._countdown_task is None:
-                self.countdown_ends = time.time() + COUNTDOWN_S
-                self._countdown_task = asyncio.get_running_loop().create_task(self._countdown())
-                self.agent.hub.log("info", "⏱ Playing in 3 seconds…")
-                self.agent.changed()
+            if self.countdown is not None:
+                return
+            if not impl.legacy and impl.status == "connected" and impl.clock.synced:
+                await impl.send_go(COUNTDOWN_MS, countdown=True)
+                return
+            # A v0.3 relay (or no clock yet): count down here, then Go
+            self.show_countdown(time.time() * 1000 + COUNTDOWN_MS, COUNTDOWN_MS)
+            self._countdown_task = asyncio.get_running_loop().create_task(self._countdown())
+            self.agent.hub.log("info", "⏱ Playing in 3 seconds…")
             return
         if command == "stop" and self._countdown_task is not None:
             self._cancel_countdown()
             self.agent.hub.log("info", "■ Countdown cancelled")
-        await self.impl.send_cue("go" if command == "go" else "stop")
+        if command == "go":
+            await impl.send_go(lead)
+        else:
+            await impl.send_cue("stop")
 
     async def _countdown(self) -> None:
         try:
             await asyncio.sleep(COUNTDOWN_S)
             self._countdown_task = None
-            self.countdown_ends = None
-            await self.impl.send_cue("go")
+            self.clear_countdown()
+            await self.impl.send_go(0)
         except asyncio.CancelledError:
             pass
         finally:
@@ -187,5 +199,15 @@ class Relay:
         if self._countdown_task is not None:
             self._countdown_task.cancel()
         self._countdown_task = None
-        self.countdown_ends = None
+        self.clear_countdown()
+
+    # ---- the countdown in the UI (director: Play in 3s; actor: a cue more than 1 s ahead) ----
+
+    def show_countdown(self, ends_at_ms: float, duration_ms: int) -> None:
+        self.countdown = {"endsAt": int(ends_at_ms), "durationMs": int(duration_ms)}
         self.agent.changed()
+
+    def clear_countdown(self) -> None:
+        if self.countdown is not None:
+            self.countdown = None
+            self.agent.changed()

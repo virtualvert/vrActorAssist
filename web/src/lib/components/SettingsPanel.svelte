@@ -30,6 +30,12 @@
   function setVr(on: boolean) {
     app.setPrefs(on ? { vrMode: true, scale: Math.max(prefs.scale, VR_SCALE) } : { vrMode: false });
   }
+
+  const LEADS = [0, 150, 300, 500, 1000];
+
+  function setLead(value: number) {
+    if (Number.isFinite(value)) void app.call({ call: "setDirectorLocal", args: { leadMs: Math.round(value) } });
+  }
 </script>
 
 <Drawer open={app.settingsOpen} title="Settings" onclose={() => (app.settingsOpen = false)}>
@@ -98,6 +104,37 @@
       {/key}
     </section>
 
+    {#if data.director}
+      <section>
+        <h3 class="eyebrow">Director</h3>
+        <div class="field">
+          <span>GO lead time</span>
+          <div class="with-button">
+            <input
+              class="input mono lead"
+              type="number"
+              min="0"
+              max="2000"
+              step="10"
+              aria-label="GO lead time in milliseconds"
+              value={data.director.leadMs}
+              onchange={(e) => setLead(Number(e.currentTarget.value))}
+            />
+            <span class="faint">ms</span>
+          </div>
+          <div class="presets">
+            {#each LEADS as ms (ms)}
+              <Button size="s" variant={data.director.leadMs === ms ? "primary" : "subtle"} onclick={() => setLead(ms)}>{ms ? `${ms} ms` : "At once"}</Button>
+            {/each}
+          </div>
+          <small>
+            GO goes out for the relay's time now + this, so every actor starts together. It has to cover the slowest
+            actor's trip; 0 sends GO at once, as the v0.3 director did. Play in 3s always uses 3 s.
+          </small>
+        </div>
+      </section>
+    {/if}
+
     {#if data.actor}
       <section>
         <h3 class="eyebrow">Actor</h3>
@@ -143,6 +180,12 @@
           label="Start Soundpad when it isn't running"
           description="If Soundpad is closed, the app starts it (once per run)."
           onchange={(autoLaunch) => app.call({ call: "setActorLocal", args: { autoLaunch } })}
+        />
+        <Toggle
+          checked={data.actor.timing.autoCompensate}
+          label="Start sounds early by Soundpad's start latency"
+          description="Scheduled cues go to Soundpad {data.actor.timing.startLatencyMs} ms early{data.actor.timing.measured ? '' : ' (assumed until measured)'}, so the sound starts on the director's time."
+          onchange={(autoCompensateLatency) => app.call({ call: "setActorLocal", args: { autoCompensateLatency } })}
         />
         <Toggle
           checked={data.actor.osc.enabled}
@@ -263,5 +306,13 @@
   .with-button input {
     flex: 1;
     min-width: 0;
+  }
+
+  .with-button input.lead {
+    flex: 0 1 8rem;
+  }
+
+  .with-button:has(.lead) {
+    align-items: center;
   }
 </style>

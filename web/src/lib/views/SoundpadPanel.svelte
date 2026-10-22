@@ -1,13 +1,15 @@
 <script lang="ts">
-  import { FileCheck, Pause, Play, RefreshCw, RotateCcw, RotateCw, Search, Square, Volume2, VolumeX } from "@lucide/svelte";
+  import { Crosshair, FileCheck, Gauge, Pause, Play, RefreshCw, RotateCcw, RotateCw, Search, Square, Volume2, VolumeX, X } from "@lucide/svelte";
   import { onDestroy, untrack } from "svelte";
   import Button from "../components/Button.svelte";
+  import DelayEditor from "../components/DelayEditor.svelte";
   import Drawer from "../components/Drawer.svelte";
   import Segmented from "../components/Segmented.svelte";
   import { mediaLength, mediaTime } from "../format";
   import type { Lines, SoundRef } from "../protocol";
   import { LINE_HELP, LINE_OPTIONS, positionNow, searchSounds, soundpadReach, steadyPosition } from "../soundpad";
   import { app } from "../state.svelte";
+  import { armedText, armReason, DEFAULT_START_LATENCY_MS, isArmed } from "../timing";
 
   type LineChoice = Lines | "default";
   const SHOWN = 200;
@@ -21,6 +23,8 @@
   const reach = $derived(peer ? soundpadReach(peer) : "none");
   const list = $derived(peer ? (app.sounds[peer.id] ?? null) : null);
   const playing = $derived(!!sp && sp.status !== null && sp.status !== "STOPPED");
+  const armed = $derived(peer ? data.director?.armed[peer.id] : undefined);
+  const canCalibrate = $derived(!!peer && reach === "full" && peer.caps.includes("soundpad.calibrate") && !data.connection.legacy);
 
   let query = $state("");
   let line = $state<LineChoice>("default");
@@ -104,6 +108,37 @@
     if (playNumber && playNumber >= 1) void app.call({ call: "playIndex", args: { ids: ids(), index: Math.floor(playNumber) } });
   }
 
+  /** The line kept with an armed sound: the panel's choice where the actor's app can take it. */
+  const armLines = (): Lines | null => (reach === "full" && !data.connection.legacy && line !== "default" ? line : null);
+
+  /** Arm this sound for GO (the line choice goes with it); pressing it again on the armed sound clears it. */
+  function arm(sound: SoundRef, label: string) {
+    if (!peer) return;
+    const lines = armLines();
+    if (isArmed(armed, sound) && (armed?.lines ?? null) === lines) {
+      void app.call({ call: "disarm", args: { id: peer.id } });
+      return;
+    }
+    const reason = armReason(peer, sound, lines, data.connection.legacy);
+    if (reason) {
+      app.toast("error", reason);
+      return;
+    }
+    void app.call({ call: "arm", args: { id: peer.id, sound, label, lines } });
+  }
+
+  function armNumber() {
+    if (playNumber && playNumber >= 1) arm({ index: Math.floor(playNumber) }, `Sound ${Math.floor(playNumber)}`);
+  }
+
+  function calibrate() {
+    if (!peer) return;
+    // The armed sound or the one playing, so the test play is a sound the actor really uses
+    const sound: SoundRef | undefined =
+      armed && !("selected" in armed.sound) && !("category" in armed.sound) ? armed.sound : sp?.key ? { key: sp.key } : undefined;
+    void app.call({ call: "calibrate", args: { id: peer.id, sound } });
+  }
+
   function seconds(ms: number | null): string {
     return ms === null ? "" : mediaTime(ms);
   }
@@ -115,6 +150,13 @@
 
 <Drawer open={!!app.soundpadFor} title={peer ? `${peer.name}'s Soundpad` : "Soundpad"} onclose={() => (app.soundpadFor = null)}>
   <div class="panel">
+    {#if peer && armed}
+      <div class="armed-banner" role="status">
+        <Crosshair size="1.1em" aria-hidden="true" />
+        <span class="armed-text"><strong>Armed for GO:</strong> {armedText(armed)}</span>
+        <Button size="s" variant="ghost" onclick={() => app.call({ call: "disarm", args: { id: peer.id } })}><X size="1em" /> Clear</Button>
+      </div>
+    {/if}
     {#if !peer}
       <p class="faint">That actor isn't connected any more.</p>
     {:else if reach !== "full"}
@@ -226,12 +268,24 @@
         {:else}
           <ul class="list">
             {#each results.slice(0, SHOWN) as s (s.key)}
+              {@const on = isArmed(armed, { key: s.key })}
               <li class:current={playing && sp.key === s.key}>
                 <span class="num mono">{s.index}</span>
                 <span class="title">{s.title}</span>
                 <span class="mono small faint">{length(s.durationMs)}</span>
                 <Button size="s" variant="subtle" aria-label="Play {s.title}" onclick={() => play({ key: s.key }, s.title)}>
                   <Play size="0.9em" fill="currentColor" /> Play
+                </Button>
+                <Button
+                  size="s"
+                  class="arm"
+                  variant={on ? "go" : "ghost"}
+                  aria-pressed={on}
+                  aria-label="{on ? 'Clear the armed' : 'Arm'} {s.title} for GO"
+                  title={on ? "Armed: GO plays this. Press to clear" : "Arm for GO: GO plays this on them instead of their selected sound"}
+                  onclick={() => arm({ key: s.key }, s.title)}
+                >
+                  <Crosshair size="0.9em" /> {on ? "Armed" : "Arm"}
                 </Button>
               </li>
             {/each}
@@ -245,11 +299,22 @@
           <h3 class="eyebrow">Sent this session</h3>
           <ul class="list">
             {#each sent as f (f.sha256)}
+              {@const on = isArmed(armed, { sha256: f.sha256 })}
               <li>
                 <FileCheck size="1em" aria-hidden="true" />
                 <span class="title">{f.name}</span>
                 <Button size="s" variant="subtle" aria-label="Play {f.name}" onclick={() => play({ sha256: f.sha256 }, f.name)}>
                   <Play size="0.9em" fill="currentColor" /> Play
+                </Button>
+                <Button
+                  size="s"
+                  class="arm"
+                  variant={on ? "go" : "ghost"}
+                  aria-pressed={on}
+                  aria-label="{on ? 'Clear the armed' : 'Arm'} {f.name} for GO"
+                  onclick={() => arm({ sha256: f.sha256 }, f.name)}
+                >
+                  <Crosshair size="0.9em" /> {on ? "Armed" : "Arm"}
                 </Button>
               </li>
             {/each}
@@ -266,8 +331,39 @@
           <input class="input mono" type="number" min="1" step="1" bind:value={playNumber} placeholder="e.g. 3" />
         </label>
         <Button type="submit" variant="subtle" disabled={!playNumber || playNumber < 1}>Play #{playNumber ?? "N"}</Button>
-        <span class="faint small">Their All-sounds number; works with every app version.</span>
+        <Button
+          variant={playNumber && isArmed(armed, { index: Math.floor(playNumber) }) ? "go" : "ghost"}
+          disabled={!playNumber || playNumber < 1}
+          title="GO plays this number on them instead of their selected sound"
+          onclick={armNumber}
+        >
+          <Crosshair size="0.95em" /> Arm #{playNumber ?? "N"}
+        </Button>
+        <span class="faint small">Their All-sounds number; works with every app version (a v0.3 app can only be armed this way).</span>
       </form>
+
+      {#if peer.delayMs !== null || canCalibrate}
+        <section class="timing" aria-label="Timing">
+          <h3 class="eyebrow">Timing</h3>
+          {#if peer.delayMs !== null}
+            <DelayEditor id={peer.id} name={peer.name} delayMs={peer.delayMs} />
+          {/if}
+          {#if canCalibrate}
+            <div class="calibrate">
+              <Button variant="subtle" disabled={!sp?.available} onclick={calibrate}><Gauge size="1em" /> Calibrate</Button>
+              <span class="faint small">
+                {#if sp?.startLatencyMs !== null && sp?.startLatencyMs !== undefined}
+                  Start latency {sp.startLatencyMs} ms (median of their last plays). Their cues are sent that much early, so the sound starts on time.
+                {:else}
+                  Plays a sound for 1.5 s on their speakers only and measures how long Soundpad takes to start it ({DEFAULT_START_LATENCY_MS} ms is assumed until then).
+                {/if}
+              </span>
+            </div>
+          {:else if reach === "full"}
+            <span class="faint small">{peer.name}'s app is too old to calibrate.</span>
+          {/if}
+        </section>
+      {/if}
     {/if}
   </div>
 </Drawer>
@@ -423,6 +519,45 @@
 
   .number .field {
     width: 9rem;
+  }
+
+  .list :global(.arm) {
+    min-width: 6.4rem;
+    justify-content: flex-start;
+  }
+
+  .armed-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.6rem 0.55rem 0.85rem;
+    border-radius: var(--radius-s);
+    color: var(--go);
+    background: color-mix(in srgb, var(--go) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--go) 35%, transparent);
+  }
+
+  .armed-text {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--text);
+  }
+
+  .timing {
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .calibrate {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .calibrate .small {
+    flex: 1 1 14rem;
   }
 
   @container (max-width: 26rem) {

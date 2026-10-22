@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { AudioLines, Check, FileDown, FolderOpen, Radio, Volume2, VolumeX, X, Zap } from "@lucide/svelte";
+  import { AudioLines, Check, FileDown, FolderOpen, Gauge, Radio, Timer, Volume2, VolumeX, X, Zap } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import Button from "../components/Button.svelte";
   import ConnectBanner from "../components/ConnectBanner.svelte";
   import Toggle from "../components/Toggle.svelte";
+  import { actorHero } from "../actorHero";
   import { ago, fileSize, mediaLength, mediaTime, percent } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
   import type { AppState } from "../protocol";
   import { OWN_LINE_HELP, OWN_LINE_OPTIONS } from "../soundpad";
   import { app } from "../state.svelte";
+  import { clockText, delayText } from "../timing";
 
   interface Props {
     data: AppState;
@@ -16,43 +18,31 @@
 
   let { data }: Props = $props();
 
+  // Fine enough for the countdown's seconds; "2s ago" texts don't mind
   let now = $state(Date.now());
-  const clock = window.setInterval(() => (now = Date.now()), 1000);
+  const clock = window.setInterval(() => (now = Date.now()), 200);
   onDestroy(() => window.clearInterval(clock));
 
-  const self = $derived(data.peers.find((p) => p.self));
   const actor = $derived(data.actor);
-  const recentCue = $derived(actor?.lastCue && now - actor.lastCue.at < 3500 ? actor.lastCue : null);
   // Soundpad's real status when it answers on its pipe; null means only the cue flash is known
   const playback = $derived(actor?.soundpad.playback ?? null);
   const active = $derived(playback !== null && playback.status !== "STOPPED");
   const progress = $derived(playback && playback.durationMs > 0 ? Math.min(100, (playback.positionMs / playback.durationMs) * 100) : 0);
-
-  const hero = $derived.by(() => {
-    const c = data.connection;
-    if (c.status === "error") return { tone: "bad", title: "Can't connect", sub: c.detail };
-    if (c.status === "connecting") return { tone: "warn spin", title: "Connecting…", sub: c.detail };
-    if (c.status === "pending")
-      return { tone: "warn", title: "Waiting for the director", sub: "The director approves you once. After that you join automatically." };
-    if (c.status !== "connected") return { tone: "idle", title: "Not connected", sub: "Connect to your relay to receive cues." };
-    if (recentCue && !recentCue.ok) {
-      return { tone: "bad", title: "Cue failed", sub: actor?.soundpad.detail || "The last cue didn't run on this computer." };
-    }
-    if (playback) {
-      if (!active) return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
-      const where = `${playback.title ?? "Your selected sound"} · ${mediaTime(playback.positionMs)} / ${mediaLength(playback.durationMs)}`;
-      return playback.status === "PAUSED" ? { tone: "warn", title: "Paused", sub: where } : { tone: "go", title: "Playing", sub: where };
-    }
-    if (self?.activity === "playing" || recentCue) {
-      const sp = actor?.soundpad;
-      return {
-        tone: "go",
-        title: "GO!",
-        sub: sp?.enabled ? (sp.state === "simulated" ? "Cue received — Soundpad simulated on this system" : "Playing your selected sound") : "Cue received — Soundpad is off",
-      };
-    }
-    return { tone: "ready", title: "Ready", sub: "Waiting for the next cue from the director." };
+  // A cue scheduled more than a second ahead (the director's Play in 3s), on this PC's clock.
+  // A fresh reading when it arrives: `now` can be a tick old, which would show 4 for a 2.94 s wait.
+  $effect(() => {
+    if (data.countdown) now = Date.now();
   });
+  const timing = $derived(actor?.timing ?? null);
+  let calibrating = $state(false);
+
+  async function calibrate() {
+    calibrating = true;
+    await app.call({ call: "calibrate", args: {} });
+    calibrating = false;
+  }
+
+  const hero = $derived(actorHero(data, now));
 
   const files = $derived(actor?.files ?? null);
   const asking = $derived(files?.incoming.filter((f) => f.state === "asking") ?? []);
@@ -188,6 +178,46 @@
         />
       </section>
 
+      {#if timing}
+        <section class="card card-pad tool timing">
+          <div class="tool-head">
+            <span class="tool-icon role-director"><Timer size="1.3em" /></span>
+            <div>
+              <h3>Timing</h3>
+              <span class="chip" class:ok-text={data.clock.synced}>{data.clock.synced ? "Synced with the relay" : "Not synced"}</span>
+            </div>
+          </div>
+          <p class="small">
+            {clockText(data.clock)}{data.clock.rttMs !== null ? ` · round trip ${data.clock.rttMs} ms` : ""}
+          </p>
+          <p class="small">
+            Soundpad starts a sound about <strong class="mono">{timing.startLatencyMs} ms</strong> after the command
+            {timing.measured ? `(measured over ${timing.samples} play${timing.samples === 1 ? "" : "s"})` : "(assumed until measured)"}.
+          </p>
+          {#if timing.delayMs !== 0}
+            <p class="small">The director set your delay: your cues start <strong class="mono">{delayText(timing.delayMs)}</strong> {timing.delayMs > 0 ? "later" : "earlier"}.</p>
+          {/if}
+          <div class="calibrate">
+            <Button
+              size="s"
+              variant="subtle"
+              disabled={calibrating || !(actor.soundpad.state === "ready" || app.kind === "demo")}
+              title={actor.soundpad.state === "ready" || app.kind === "demo" ? undefined : "Needs Soundpad running"}
+              onclick={calibrate}
+            >
+              <Gauge size="1em" /> {calibrating ? "Calibrating…" : "Calibrate"}
+            </Button>
+            <span class="faint small">A 1.5 s test play on your speakers only (the audience doesn't hear it).</span>
+          </div>
+          <Toggle
+            checked={timing.autoCompensate}
+            label="Start sounds early by that much"
+            description="So the sound starts at the director's time, together with everyone"
+            onchange={(autoCompensateLatency) => app.call({ call: "setActorLocal", args: { autoCompensateLatency } })}
+          />
+        </section>
+      {/if}
+
       <section class="card card-pad tool osc">
         <div class="tool-head">
           <span class="tool-icon role-camera"><Radio size="1.3em" /></span>
@@ -269,8 +299,9 @@
       "offers offers"
       "hero stage"
       "sp osc"
+      "sp timing"
       "files files";
-    grid-template-rows: auto auto minmax(20rem, 1fr) auto auto;
+    grid-template-rows: auto auto minmax(20rem, 1fr) auto auto auto;
     gap: var(--gap);
     min-height: 100%;
     padding: var(--gap);
@@ -413,6 +444,21 @@
 
   .tool.sp {
     grid-area: sp;
+  }
+
+  .tool.timing {
+    grid-area: timing;
+  }
+
+  .calibrate {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+  }
+
+  .ok-text {
+    color: var(--ok);
   }
 
   .tool.osc {
@@ -595,8 +641,8 @@
   @container (max-width: 56rem) {
     .view {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-areas: "banner" "offers" "hero" "stage" "sp" "osc" "files";
-      grid-template-rows: auto auto auto 20rem auto auto auto;
+      grid-template-areas: "banner" "offers" "hero" "stage" "sp" "timing" "osc" "files";
+      grid-template-rows: auto auto auto 20rem auto auto auto auto;
     }
 
     .hero {

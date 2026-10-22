@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { AudioLines, Check, UserPlus, Trash, X } from "@lucide/svelte";
+  import { AudioLines, Check, Crosshair, Timer, UserPlus, Trash, X } from "@lucide/svelte";
   import Button from "../components/Button.svelte";
+  import DelayEditor from "../components/DelayEditor.svelte";
   import StatusDot from "../components/StatusDot.svelte";
   import { initials, latencyLevel, peerSubtitle } from "../format";
   import type { AppState, Peer } from "../protocol";
   import { soundpadReach } from "../soundpad";
   import { app } from "../state.svelte";
+  import { armedText, delayText, LATE_MS } from "../timing";
 
   interface Props {
     data: AppState;
@@ -18,6 +20,9 @@
   const directors = $derived(data.peers.filter((p) => p.role === "director" && !p.self));
   const targets = $derived(new Set(data.targets));
   let confirmForget = $state<string | null>(null);
+  /** The actor whose delay editor is open under their row. */
+  let delayFor = $state<string | null>(null);
+  const armed = $derived(data.director?.armed ?? {});
 
   function setTargets(ids: string[]) {
     void app.call({ call: "setTargets", args: { ids } });
@@ -80,6 +85,8 @@
     <ul class="list" aria-label="Actors">
       {#each actors as p (p.id)}
         {@const on = targets.has(p.id)}
+        {@const sound = armed[p.id]}
+        {@const late = p.lastLateMs !== null && p.lastLateMs > LATE_MS}
         <li class="actor-row" class:on>
           <button
             class="target"
@@ -103,6 +110,19 @@
               <AudioLines size="1.05em" />
             </Button>
           {/if}
+          {#if p.delayMs !== null}
+            <Button
+              size="s"
+              icon
+              variant={delayFor === p.id ? "primary" : "ghost"}
+              aria-label="{p.name}'s delay"
+              aria-expanded={delayFor === p.id}
+              title="Delay: {delayText(p.delayMs)}"
+              onclick={() => (delayFor = delayFor === p.id ? null : p.id)}
+            >
+              <Timer size="1.05em" />
+            </Button>
+          {/if}
           <Button
             size="s"
             icon={confirmForget !== p.id}
@@ -113,6 +133,32 @@
           >
             {#if confirmForget === p.id}Forget?{:else}<Trash size="1em" />{/if}
           </Button>
+          {#if sound || (p.delayMs !== null && p.delayMs !== 0) || late}
+            <div class="extras">
+              {#if sound}
+                <span class="chip armed" title="GO plays this on {p.name} instead of their selected sound">
+                  <Crosshair size="0.95em" aria-hidden="true" />
+                  <span class="armed-text">{armedText(sound)}</span>
+                  <button type="button" class="clear" aria-label="Clear {p.name}'s armed sound" onclick={() => app.call({ call: "disarm", args: { id: p.id } })}>
+                    <X size="0.95em" />
+                  </button>
+                </span>
+              {/if}
+              {#if p.delayMs !== null && p.delayMs !== 0}
+                <button type="button" class="chip delay" title="Change {p.name}'s delay" onclick={() => (delayFor = p.id)}>
+                  <Timer size="0.95em" aria-hidden="true" /> {delayText(p.delayMs)}
+                </button>
+              {/if}
+              {#if late}
+                <span class="chip late" title="How late {p.name}'s last scheduled start ran">Last start {p.lastLateMs} ms late</span>
+              {/if}
+            </div>
+          {/if}
+          {#if delayFor === p.id && p.delayMs !== null}
+            <div class="delay-edit">
+              <DelayEditor id={p.id} name={p.name} delayMs={p.delayMs} ondone={() => (delayFor = null)} />
+            </div>
+          {/if}
         </li>
       {:else}
         <li class="empty faint">
@@ -220,6 +266,7 @@
 
   .actor-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
     padding: 0.3rem 0.5rem 0.3rem 0.3rem;
@@ -314,6 +361,66 @@
 
   .actor-row :global(.sp-off) {
     color: var(--warn);
+  }
+
+  .extras {
+    flex-basis: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    padding: 0 0.4rem 0.25rem calc(var(--target) * 0.6 + 0.7rem + 0.4rem);
+    min-width: 0;
+  }
+
+  .extras .chip {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .armed {
+    color: var(--go);
+    border-color: color-mix(in srgb, var(--go) 40%, transparent);
+    background: color-mix(in srgb, var(--go) 10%, var(--surface-3));
+    padding-right: 0.2rem;
+  }
+
+  .armed-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .clear {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 1.5rem;
+    aspect-ratio: 1;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: inherit;
+  }
+
+  .clear:hover {
+    background: color-mix(in srgb, var(--go) 22%, transparent);
+  }
+
+  button.chip.delay {
+    cursor: pointer;
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+    background: color-mix(in srgb, var(--accent) 10%, var(--surface-3));
+  }
+
+  .late {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  }
+
+  .delay-edit {
+    flex-basis: 100%;
+    padding: 0.5rem 0.4rem 0.4rem;
+    border-top: 1px solid var(--border);
   }
 
   .empty {

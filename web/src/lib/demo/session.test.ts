@@ -291,6 +291,71 @@ describe("DemoSession", () => {
     expect(cue && cue.type === "state" && cue.state.actor!.soundpad.playback!.lines).toBe("both");
   });
 
+  test("director arms sounds: GO plays them, a v0.3 actor only by number, disarm goes back to GO", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(1000, s);
+    const by = (name: string) => lastState().peers.find((p) => p.name === name)!;
+    const [coda, infinity, quincey] = [by("Coda"), by("Infinity"), by("Quincey")];
+    s.handle({ call: "setTargets", args: { ids: [coda.id, infinity.id, quincey.id] } });
+    s.handle({ call: "requestSounds", args: { id: coda.id } });
+    const list = [...events].reverse().find((e) => e.type === "sounds");
+    const scene2 = list && list.type === "sounds" ? list.sounds[1] : null;
+    s.handle({ call: "arm", args: { id: coda.id, sound: { key: scene2!.key }, label: scene2!.title, lines: "speakers" } });
+    s.handle({ call: "arm", args: { id: quincey.id, sound: { key: scene2!.key }, label: "x" } });
+    expect(events.some((e) => e.type === "toast" && e.level === "error" && e.text.includes("by its number"))).toBe(true);
+    s.handle({ call: "arm", args: { id: quincey.id, sound: { index: 3 }, label: "Sound 3" } });
+    expect(Object.keys(lastState().director!.armed).sort()).toEqual([coda.id, quincey.id].sort());
+
+    s.handle({ call: "cue", args: { command: "go" } });
+    expect(by("Coda").soundpad).toMatchObject({ status: "PLAYING", title: scene2!.title, lines: "speakers" });
+    expect(by("Infinity").soundpad).toMatchObject({ status: "PLAYING", title: null, lines: "both" });
+    expect(by("Coda").lastLateMs).not.toBeNull();
+    expect(Object.keys(lastState().director!.armed)).toHaveLength(2); // still armed after GO
+    s.handle({ call: "cue", args: { command: "stop" } });
+
+    s.handle({ call: "disarm", args: { id: coda.id } });
+    s.handle({ call: "cue", args: { command: "go" } });
+    expect(by("Coda").soundpad).toMatchObject({ status: "PLAYING", title: null });
+  });
+
+  test("director timing: lead, per-actor delay, calibration", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(1000, s);
+    expect(lastState().director!.leadMs).toBe(300);
+    expect(lastState().clock.synced).toBe(true);
+    s.handle({ call: "setDirectorLocal", args: { leadMs: 5000 } });
+    expect(lastState().director!.leadMs).toBe(2000);
+    const coda = lastState().peers.find((p) => p.name === "Coda")!;
+    expect(coda.delayMs).toBe(0);
+    s.handle({ call: "setDelay", args: { id: coda.id, ms: 150 } });
+    expect(lastState().peers.find((p) => p.id === coda.id)!.delayMs).toBe(150);
+    s.handle({ call: "calibrate", args: { id: coda.id } });
+    clock.advance(2000, s);
+    expect(lastState().peers.find((p) => p.id === coda.id)!.soundpad!.startLatencyMs).toBeGreaterThan(40);
+    const quincey = lastState().peers.find((p) => p.name === "Quincey")!;
+    s.handle({ call: "calibrate", args: { id: quincey.id } });
+    expect(events.some((e) => e.type === "toast" && e.text.includes("too old to calibrate"))).toBe(true);
+  });
+
+  test("actor: countdown before a Play in 3s, calibration, compensation", () => {
+    const s = make(new MemoryStorage(), "actor");
+    clock.advance(3000, s);
+    expect(lastState().actor!.timing).toEqual({ startLatencyMs: 60, measured: false, samples: 0, autoCompensate: true, delayMs: 0 });
+    // The second incoming cue is a Play in 3s: the countdown shows, then GO
+    for (let waited = 0; !lastState().countdown && waited < 30_000; waited += 250) clock.advance(250, s);
+    const countdown = lastState().countdown;
+    expect(countdown?.durationMs).toBe(3000);
+    clock.advance(3500, s);
+    expect(lastState().countdown).toBeNull();
+    expect(lastState().actor!.lastCue?.command).toBe("*go");
+
+    s.handle({ call: "calibrate", args: {} });
+    clock.advance(2000, s);
+    expect(lastState().actor!.timing).toMatchObject({ measured: true, samples: 1 });
+    s.handle({ call: "setActorLocal", args: { autoCompensateLatency: false } });
+    expect(lastState().actor!.timing.autoCompensate).toBe(false);
+  });
+
   test("camera roll and cut toggle recording", () => {
     const s = make(new MemoryStorage(), "camera");
     clock.advance(3000, s);

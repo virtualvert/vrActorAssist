@@ -234,6 +234,16 @@ export interface SoundpadAck {
   late_ms?: number | null;
   error?: string | null;
   command?: string | null;
+  start_latency_ms?: number | null;
+}
+
+/**
+ * A speakers-only test play that measures the actor's start latency (§8.2.3). Without `sound`
+ * the actor picks the sound it last played by number, else sound 1 (the selected sound can't be
+ * played on the speakers line alone).
+ */
+export interface SoundpadCalibrate {
+  sound?: SoundRef | null;
 }
 
 /** Relative: negative jumps back. */
@@ -378,7 +388,7 @@ export interface MessageData {
   "soundpad.list.request": SoundpadListRequest;
   "soundpad.list": SoundpadList;
   "soundpad.state": SoundpadState;
-  "soundpad.calibrate": Record<string, unknown>;
+  "soundpad.calibrate": SoundpadCalibrate;
   "file.batch.start": FileBatchStart;
   "file.offer": FileOffer;
   "file.accept": FileAccept;

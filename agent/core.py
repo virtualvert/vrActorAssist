@@ -16,18 +16,20 @@ import soundpad
 
 from vrcas_protocol import validate
 
-from .config import LINES
+from .actor_runtime import PlayError
+from .config import LINES, clamp_lead
 from .files import Files, received_path
 from .folders import FolderError, Folders, pick_folder
 from .hub import Hub
 from .relay import Relay
 from .soundpad_remote import LINES_TEXT, SoundpadRemote
 
-COUNTDOWN_MS = 3000
 MAX_SEND_ITEMS = 500
 # Cues and Soundpad controls repeated with the same arguments this soon are dropped (Agent._repeated)
-REPEATABLE_CALLS = {"cue", "play", "playIndex", "transport"}
+REPEATABLE_CALLS = {"cue", "play", "playIndex", "transport", "calibrate"}
 REPEAT_S = 0.15
+DELAY_LIMIT_MS = 10_000
+NO_CLOCK = {"synced": False, "offsetMs": None, "rttMs": None}
 
 
 class CallError(Exception):
@@ -44,8 +46,12 @@ class Agent:
         self.files = Files(self)
         self.soundpad = SoundpadRemote(self)
         self.actor.received_lookup = lambda sha256: received_path(store.folder, sha256)
+        self.actor.on_latency = self._latency_measured
         self.relay = Relay(self)
         self.last_cue: dict | None = None
+        # Director: the sound GO plays on an actor instead of their selected one, by peer id
+        # ({sound, label, lines}); kept until cleared, in memory only (Phase 2 M3)
+        self.armed: dict[str, dict] = {}
         self._last_control: tuple[str, float] | None = None
         # Set by the launcher: returns a fresh one-time URL for the local UI.
         self.ui_url: Callable[[], str] | None = None
@@ -56,6 +62,12 @@ class Agent:
 
     def changed(self) -> None:
         self.hub.state_changed()
+
+    def _latency_measured(self, latencies: list[float]) -> None:
+        """The actor measured a start: keep the last few in the config (§8.2.3)."""
+        self.config.soundpad.start_latencies = latencies
+        self.store.save()
+        self.changed()
 
     # ---- lifecycle --------------------------------------------------------
 
@@ -98,13 +110,13 @@ class Agent:
                     "self": True,
                     "caps": [],
                     "soundpad": None,
+                    "delayMs": None,
+                    "lastLateMs": None,
                 }
             )
             if relay.status == "connected":
                 peers.extend(relay.peers())
-        countdown = None
-        if relay.countdown_ends is not None:
-            countdown = {"endsAt": int(relay.countdown_ends * 1000), "durationMs": COUNTDOWN_MS}
+        v2 = not relay.legacy and relay.status == "connected"
         return {
             "appVersion": APP_VERSION,
             "demo": False,
@@ -126,18 +138,24 @@ class Agent:
             "peers": peers,
             "pending": list(relay.pending) if cfg.role == "director" and relay.status == "connected" else [],
             "targets": relay.target_ids() if cfg.role == "director" else [],
-            "countdown": countdown,
+            "countdown": relay.countdown,
+            "clock": relay.impl.clock.view() if v2 else dict(NO_CLOCK),
             "actor": (
                 {
                     "soundpad": self.actor.soundpad_state(),
                     "osc": self.actor.osc_state(),
                     "lastCue": self.last_cue,
                     "files": self.files.receiver.view(),
+                    "timing": {**self.actor.timing_state(), "delayMs": relay.impl.delay_ms if v2 else 0},
                 }
                 if cfg.role == "actor"
                 else None
             ),
-            "director": {"files": self.files.sender.view()} if cfg.role == "director" else None,
+            "director": (
+                {"files": self.files.sender.view(), "leadMs": cfg.director.lead_ms, "armed": dict(self.armed)}
+                if cfg.role == "director"
+                else None
+            ),
             "camera": (
                 {
                     "obs": {"connected": False, "detail": "OBS control isn't built yet. It arrives with the OBS addon."},
@@ -181,6 +199,7 @@ class Agent:
         self.config.role = role
         self.store.save()
         self.last_cue = None
+        self.armed.clear()
         self.relay.clear_targets()
         self.hub.log("info", f"Role set to {role}")
         await self.actor.refresh()  # opens or closes Soundpad's pipe
@@ -275,8 +294,18 @@ class Agent:
             cfg.soundpad.auto_add_received = bool(args["autoAddReceived"])
         if "autoLaunch" in args:
             cfg.soundpad.auto_launch = bool(args["autoLaunch"])
+        if "autoCompensateLatency" in args:
+            cfg.soundpad.auto_compensate_latency = bool(args["autoCompensateLatency"])
         self.store.save()
         await self.actor.refresh()
+
+    async def _call_setDirectorLocal(self, args: dict) -> None:
+        self._require_director()
+        if "leadMs" in args:
+            self.config.director.lead_ms = clamp_lead(args["leadMs"])
+            lead = self.config.director.lead_ms
+            self.hub.log("info", f"GO lead time: {lead} ms" if lead else "GO lead time: 0 (GO goes out at once)")
+        self.store.save()
 
     async def _call_detectSoundpad(self, args: dict) -> None:
         path = await asyncio.to_thread(soundpad.find_soundpad_exe)
@@ -375,6 +404,72 @@ class Agent:
         if cached:
             self.hub.event(cached)  # show the last list right away; a fresh one follows
         await self._relay_action(relay.send("soundpad.list.request", {}, {"ids": ids}))
+
+    # ---- timing (spec §8.2) and armed sounds -----------------------------------
+
+    def _peer_name(self, peer_id: str) -> str:
+        return next((p["name"] for p in self.relay.peers() if p["id"] == peer_id), "That actor")
+
+    async def _call_arm(self, args: dict) -> None:
+        """Arm a sound for one actor: GO then plays it on them instead of their selected sound."""
+        self._require_director()
+        impl = self.relay.impl
+        if impl.status != "connected":
+            raise CallError("Not connected to the relay")
+        actor_id, sound, lines = str(args.get("id", "")), args.get("sound"), args.get("lines")
+        if lines is not None and lines not in LINES:
+            raise CallError("Unknown output line")
+        try:
+            payload = validate("soundpad.play", {"sound": sound, **({"lines": lines} if lines else {})})
+        except ValueError as exc:
+            raise CallError(f"Can't arm that: {exc}") from exc
+        ref = payload.sound.model_dump(exclude_none=True)
+        if not ref:
+            raise CallError("Pick a sound to arm")
+        reason = impl.can_arm(actor_id, ref, lines)
+        if reason:
+            raise CallError(reason)
+        label = str(args.get("label") or "").strip()[:120] or (f"Sound {ref['index']}" if "index" in ref else "A sound")
+        self.armed[actor_id] = {"sound": ref, "label": label, "lines": lines}
+        self.hub.log("info", f"Armed for GO: {label} on {self._peer_name(actor_id)}" + (f" ({LINES_TEXT[lines]})" if lines else ""))
+
+    async def _call_disarm(self, args: dict) -> None:
+        self._require_director()
+        actor_id = str(args.get("id", ""))
+        if self.armed.pop(actor_id, None) is not None:
+            self.hub.log("info", f"Cleared the armed sound on {self._peer_name(actor_id)}: GO plays their selected sound")
+
+    async def _call_setDelay(self, args: dict) -> None:
+        """A per-actor delay (§8.2.3), stored by the relay and applied by the actor."""
+        self._require_director()
+        ms = args.get("ms")
+        if isinstance(ms, bool) or not isinstance(ms, int) or not -DELAY_LIMIT_MS <= ms <= DELAY_LIMIT_MS:
+            raise CallError(f"Enter a delay between −{DELAY_LIMIT_MS} and {DELAY_LIMIT_MS} ms")
+        await self._relay_action(self.relay.impl.set_delay(str(args.get("id", "")), ms))
+
+    async def _call_calibrate(self, args: dict) -> None:
+        """Measure an actor's start latency with a speakers-only test play (§8.2.3). Directors name
+        the actor (`id`); an actor calibrates its own Soundpad."""
+        if self.config.role == "actor" and not args.get("id"):
+            try:
+                await self.soundpad.calibrate_here()
+            except PlayError as exc:
+                raise CallError(str(exc)) from exc
+            return
+        relay, ids = self._v2_actors({"ids": [args.get("id")]}, "Calibration")
+        session = relay.sessions[ids[0]]
+        if "soundpad.calibrate" not in session.capabilities:
+            raise CallError(f"{session.name}'s app is too old to calibrate")
+        data: dict[str, Any] = {}
+        if isinstance(args.get("sound"), dict):
+            data["sound"] = args["sound"]
+        try:
+            validate("soundpad.calibrate", data)
+        except ValueError as exc:
+            raise CallError(f"Can't calibrate with that sound: {exc}") from exc
+        await self._relay_action(relay.send("soundpad.calibrate", data, {"ids": ids}))
+        self.hub.log("info", f"Calibrating {session.name}'s start latency (a short speakers-only play)…")
+        self.hub.traffic("self", ids, "cue")
 
     async def _call_pickReceiveDir(self, args: dict) -> None:
         try:

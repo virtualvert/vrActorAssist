@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { Hash, Play, Square, Timer } from "@lucide/svelte";
+  import { Crosshair, Hash, Play, Square, Timer, TriangleAlert } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import Button from "../components/Button.svelte";
   import type { AppState } from "../protocol";
   import { app } from "../state.svelte";
+  import { leadWarnings } from "../timing";
 
   interface Props {
     data: AppState;
@@ -20,6 +21,7 @@
   let timer: number | null = null;
   $effect(() => {
     if (counting && timer === null) {
+      now = Date.now(); // not the time the deck was first drawn
       timer = window.setInterval(() => (now = Date.now()), 50);
     } else if (!counting && timer !== null) {
       window.clearInterval(timer);
@@ -39,6 +41,18 @@
     return `→ ${shown}${names.length > 3 ? ` +${names.length - 3}` : ""}`;
   });
 
+  // How GO is timed (spec §8.2.2): one server time for everyone, now + the lead
+  const lead = $derived(data.director?.leadMs ?? 0);
+  const armedCount = $derived(targeted.filter((p) => data.director?.armed[p.id]).length);
+  const timing = $derived.by(() => {
+    if (!connected) return null;
+    if (data.connection.legacy) return "v0.3 relay: GO goes out at once and Play in 3s counts down here.";
+    if (!data.clock.synced) return "Syncing with the relay's clock… until then GO goes out at once.";
+    if (!lead) return "GO goes out at once (lead time 0 in Settings).";
+    return `GO starts everyone together ${lead} ms after you press it.`;
+  });
+  const warnings = $derived(connected && !data.connection.legacy ? leadWarnings(data.peers, data.targets, lead, data.clock.rttMs) : []);
+
   const blockReason = $derived(!connected ? "Not connected" : !targeted.length ? "No actors targeted" : undefined);
 
   // *play:N: sound N of each targeted actor's All-sounds list; every app version plays it
@@ -56,6 +70,11 @@
   <div class="summary">
     <span class="eyebrow">Cue</span>
     <span class="who" class:empty={!targeted.length || !connected}>{summary}</span>
+    {#if armedCount}
+      <span class="chip armed" title="Actors with an armed sound play it on GO instead of their selected sound">
+        <Crosshair size="0.95em" aria-hidden="true" /> {armedCount} armed
+      </span>
+    {/if}
     <form class="by-number" onsubmit={playNumber} aria-label="Play a sound by number on the targeted actors">
       <label class="number">
         <Hash size="0.95em" aria-hidden="true" />
@@ -95,6 +114,15 @@
       <Square size="1em" fill="currentColor" /> {counting ? "CANCEL" : "STOP"}
     </Button>
   </div>
+  {#if timing}
+    <p class="timing faint">{timing}</p>
+  {/if}
+  {#each warnings as w (w.name)}
+    <p class="lead-warn" role="status">
+      <TriangleAlert size="1em" aria-hidden="true" />
+      {w.name} may start late: a cue takes about {w.tripMs} ms to reach them and the GO lead is {lead} ms. Raise it in Settings → Director.
+    </p>
+  {/each}
 </div>
 
 <style>
@@ -127,6 +155,27 @@
   .who.empty {
     color: var(--text-3);
     font-weight: 500;
+  }
+
+  .armed {
+    flex: none;
+    color: var(--go);
+    border-color: color-mix(in srgb, var(--go) 40%, transparent);
+  }
+
+  .timing,
+  .lead-warn {
+    margin: 0;
+    padding: 0 0.25rem;
+    font-size: 0.8125rem;
+  }
+
+  .lead-warn {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: var(--warn);
+    font-weight: 600;
   }
 
   .by-number {
