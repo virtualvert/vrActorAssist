@@ -198,7 +198,8 @@ Original questions:
 ## 3. Tester guide
 
 Published 2026-10-22 as a private Artifact: https://claude.ai/artifact/9fXHjpe4ETuNzRTH5iYsMe (share it from its
-Share menu once B1 and B2 are done). Contents: what to install (Soundpad, WebView2), download from the releases page,
+Share menu once the pre-release (B1) is up and the relay has restarted for S4). Version 3 matches the tester build
+(Open log folder, "Approved, not connected", a host name alone works). Contents: what to install (Soundpad, WebView2), download from the releases page,
 SmartScreen, relay address `wss://doggoos.tail73c00a.ts.net`, approval, what to try per role, common problems, what to
 send in a report (version, `%APPDATA%\vrcActorSync\logs\agent.log`), limits of the preview. No director or relay secret.
 Its download step points at the GitHub releases page and expects a "vrcActorSync 0.4 preview" release there (B1).
@@ -278,4 +279,31 @@ Report per step: pass or fail and what the user saw, the exe size and SHA-256, t
 for the pre-release. With the user's OK, delete $env:TEMP\vrcas-logo-pin from the icon check (its config holds the
 live director secret) once it's no longer used as the director, and $env:TEMP\vrcas-prep-exe.
 ```
+
+### 4.2 Laptop results (2026-10-22): all five steps pass
+
+Windows 11 IoT Enterprise LTSC 2024, Python 3.12, PyInstaller 6.22.3, pywebview 6.2.1, Bun 1.4.2; built from 2637e3a.
+
+- **Exe for the pre-release:** `dist\vrcActorSync.exe` in the laptop's `..\vrcas-prep` worktree, 17,566,028 bytes,
+  SHA-256 `225419535DAD62E0B179C4B159AEF6DFD7F3E57275EB790AC54935B470AC112F` (rechecked after the run). The merge into
+  `feat/web-ui` adds only docs (89def31 and this section), so it's the same code as the merge.
+- **1 Version:** top bar and Settings → About say `0.4.0-preview.1`; Logs shows the data dir's `logs` folder (8.3 path).
+- **2 Open log folder:** Explorer opens on it with `agent.log`; a second press brings the same window to the front; no
+  errors.
+- **3 Bare host name:** `config.json` keeps `doggoos.tail73c00a.ts.net` as typed; it connects over wss ("Connected to
+  doggoos.tail73c00a.ts.net as actor (v2 relay 0.4.0-dev)") after approval.
+- **4 GO / STOP / forget:** two GO / STOP pairs; Soundpad started ~30 ms after each command, each STOP arrived ~70 ms
+  after the director sent it. Forget while connected: "The director removed you from the session.", no reconnect, clean
+  close. Not confirmed by ear: that the second STOP silenced Soundpad (both are in the log; the icon run's STOP was heard).
+- **5 SmartScreen** (a copy with `Zone.Identifier` ZoneId=3 and `portable.flag`): title "Windows Defender SmartScreen",
+  "Windows protected your PC", "Microsoft Defender SmartScreen prevented an unrecognized app from starting. Running
+  this app might put your PC at risk." → More info → "App: vrcActorSync.exe", "Publisher: Unknown publisher" →
+  Run anyway starts it on the first-run screen. Run anyway removes the mark, so the next start skips the dialog.
+  No Defender detections.
+- Clock: the laptop runs ~9.4 s behind the relay; cues are timed in server time, so playback stayed on time.
+- Left on the laptop: `%TEMP%\vrcas-logo-pin` (holds the live director secret; deleted once that director is closed),
+  the `..\vrcas-prep` worktree and its exe.
+
+**Status:** B1 the user publishes (this exe); B2 done; B3, S1, S2, S4 built and checked; S3 is guide-only. Next:
+merge into `feat/web-ui`, restart the live relay for S4, publish, share the guide.
 
