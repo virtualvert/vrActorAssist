@@ -117,7 +117,7 @@
   {#if timing}
     <p class="timing faint">{timing}</p>
   {/if}
-  {#each warnings as w (w.name)}
+  {#each warnings as w (w.id)}
     <p class="lead-warn" role="status">
       <TriangleAlert size="1em" aria-hidden="true" />
       {w.name} may start late: a cue takes about {w.tripMs} ms to reach them and the GO lead is {lead} ms. Raise it in Settings → Director.

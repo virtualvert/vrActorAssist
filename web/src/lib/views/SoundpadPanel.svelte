@@ -267,7 +267,9 @@
           <p class="faint small">{list.sounds.length ? "No sound matches." : "Their Soundpad list is empty."}</p>
         {:else}
           <ul class="list">
-            {#each results.slice(0, SHOWN) as s (s.key)}
+            <!-- Not keyed by s.key: the same file can be in Soundpad twice (same path, same key),
+                 and a duplicate key throws, which stopped the whole page updating -->
+            {#each results.slice(0, SHOWN) as s}
               {@const on = isArmed(armed, { key: s.key })}
               <li class:current={playing && sp.key === s.key}>
                 <span class="num mono">{s.index}</span>

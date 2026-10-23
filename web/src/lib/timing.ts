@@ -25,6 +25,8 @@ export function clockText(clock: ClockState): string {
 }
 
 export interface LeadWarning {
+  /** The peer's session id (names aren't unique). */
+  id: string;
   name: string;
   /** Director → relay → actor, one way (ms). */
   tripMs: number;
@@ -40,7 +42,7 @@ export function leadWarnings(peers: Peer[], targets: string[], leadMs: number, o
   const wanted = new Set(targets);
   return peers
     .filter((p) => p.role === "actor" && wanted.has(p.id) && p.latencyMs !== null)
-    .map((p) => ({ name: p.name, tripMs: Math.round(((ownRttMs ?? 0) + (p.latencyMs ?? 0)) / 2) }))
+    .map((p) => ({ id: p.id, name: p.name, tripMs: Math.round(((ownRttMs ?? 0) + (p.latencyMs ?? 0)) / 2) }))
     .filter((w) => w.tripMs > budget);
 }
 

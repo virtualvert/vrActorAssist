@@ -3,15 +3,18 @@ references, the drift guard, output lines, volume / pause / seek / mute, lists, 
 
 import asyncio
 import hashlib
+import json
 import re
 
 import pytest
+from vrcas_protocol import make, validate
 
 import soundpad
 from agent import actor_runtime
 from agent.actor_runtime import ActorRuntime
 from agent.soundpad_pipe import SoundpadPipe, Sound
 from agent.sounds import LIST_PAGE, normal_path, pages, sound_key
+from server.settings import Settings
 
 from .test_relay_v2 import relay  # noqa: F401  (fixture)
 from .test_soundpad_pipe import FakeSoundpad, actor_config, windows_cli  # noqa: F401  (fixture)
@@ -94,6 +97,23 @@ def test_pages():
     assert out[0]["sounds"][0] == {"index": 1, "key": sound_key("C:\\s\\1.wav"), "title": "t1", "duration_ms": 47000}
     assert "url" not in out[0]["sounds"][0]
     assert pages([], []) == [{"total": 0, "first": 1, "sounds": [], "categories": [], "last": True}]
+
+
+def test_pages_always_pass_the_relay():
+    """One over-long title, or 500 long non-Latin ones, used to get a page dropped by the relay, and
+    the director never got the list (tester session 2026-10-22)."""
+    sounds = [Sound(1, "C:\\s\\long.wav", "x" * 400, "", 3, "", "", 0, "")]
+    sounds += [Sound(i, f"C:\\s\\{i}.wav", "「場面」" * 70 + str(i), "", 3, "", "", 0, "") for i in range(2, 1201)]
+    out = pages(sounds, [{"index": 2, "name": "名" * 400}])
+    assert len(out[0]["sounds"][0]["title"]) == 300
+    assert len(out[0]["categories"][0]["name"]) == 300
+    assert len(out) > 3  # split by size, not just every 500
+    assert [s["index"] for p in out for s in p["sounds"]] == list(range(1, 1201))
+    assert [p["last"] for p in out] == [False] * (len(out) - 1) + [True]
+    for page in out:
+        validate("soundpad.list", page)
+        frame = json.dumps(make("soundpad.list", page, to={"ids": ["s_director"]}).wire(), ensure_ascii=False)
+        assert len(frame.encode("utf-8")) < Settings().max_frame_bytes
 
 
 # ---- playing ------------------------------------------------------------------------------------

@@ -8,11 +8,19 @@ index, and checks before playing that the index still holds that file (index dri
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 
 from .soundpad_pipe import Sound
 
 LIST_PAGE = 500
+# soundpad.list limits (vrcas_protocol SoundEntry, CategoryEntry, SoundpadList): the relay checks
+# every message and drops a page that breaks one, so the director would never get the list
+TEXT_MAX = 300
+CATEGORIES_MAX = 500
+# The relay also drops text frames over 256 KiB (server settings.max_frame_bytes); 500 long
+# non-Latin titles can pass that, so a page ends at this many bytes of entries too
+PAGE_BYTES = 160 * 1024
 
 
 def normal_path(path: str) -> str:
@@ -29,24 +37,36 @@ def entry(sound: Sound) -> dict:
     return {
         "index": sound.index,
         "key": sound_key(sound.url),
-        "title": sound.title,
+        "title": sound.title[:TEXT_MAX],
         "duration_ms": sound.duration_s * 1000 if sound.duration_s is not None else None,
     }
 
 
-def pages(sounds: list[Sound], categories: list[dict], size: int = LIST_PAGE) -> list[dict]:
-    """soundpad.list payloads: pages of `size` sounds; the first page carries the categories."""
-    out = []
-    for start in range(0, max(len(sounds), 1), size):
-        chunk = sounds[start:start + size]
-        out.append({
-            "total": len(sounds),
-            "first": chunk[0].index if chunk else 1,
-            "sounds": [entry(s) for s in chunk],
-            "categories": categories if start == 0 else [],
-            "last": start + size >= len(sounds),
-        })
-    return out
+def _json_bytes(value: object) -> int:
+    return len(json.dumps(value, ensure_ascii=False).encode("utf-8")) + 1
+
+
+def pages(sounds: list[Sound], categories: list[dict], size: int = LIST_PAGE, max_bytes: int = PAGE_BYTES) -> list[dict]:
+    """soundpad.list payloads: pages of at most `size` sounds and about `max_bytes` of entries, so
+    every page gets past the relay; the first page carries the categories."""
+    categories = [{"index": c["index"], "name": c["name"][:TEXT_MAX]} for c in categories[:CATEGORIES_MAX]]
+    chunks: list[list[dict]] = [[]]
+    used = _json_bytes(categories)
+    for sound in sounds:
+        item = entry(sound)
+        cost = _json_bytes(item)
+        if chunks[-1] and (len(chunks[-1]) >= size or used + cost > max_bytes):
+            chunks.append([])
+            used = 0
+        chunks[-1].append(item)
+        used += cost
+    return [{
+        "total": len(sounds),
+        "first": chunk[0]["index"] if chunk else 1,
+        "sounds": chunk,
+        "categories": categories if n == 0 else [],
+        "last": n == len(chunks) - 1,
+    } for n, chunk in enumerate(chunks)]
 
 
 @dataclass

@@ -51,7 +51,7 @@ describe("leadWarnings", () => {
   const peers = [actor("near", { latencyMs: 40 }), actor("far", { latencyMs: 380 }), actor("off", { latencyMs: 900 })];
   test("only targeted actors whose trip eats most of the lead", () => {
     // budget (300 − 60) × 0.8 = 192; far: (20 + 380) / 2 = 200
-    expect(leadWarnings(peers, ["near", "far"], 300, 20)).toEqual([{ name: "far", tripMs: 200 }]);
+    expect(leadWarnings(peers, ["near", "far"], 300, 20)).toEqual([{ id: "far", name: "far", tripMs: 200 }]);
     expect(leadWarnings(peers, ["near", "far"], 600, 20)).toEqual([]);
     expect(leadWarnings(peers, ["near", "far", "off"], 0, 20)).toEqual([]);
   });

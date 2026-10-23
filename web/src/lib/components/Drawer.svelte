@@ -47,7 +47,20 @@
       <h2>{title}</h2>
       <Button icon variant="ghost" aria-label="Close" onclick={onclose}><X size="1.3em" /></Button>
     </header>
-    <div class="body">{@render children()}</div>
+    <div class="body">
+      <!-- An error in a panel stays in the panel: without this, one throw stopped the whole
+           page updating (stale cast checkmarks, drawers that wouldn't open) -->
+      <svelte:boundary onerror={(error) => console.error(`${title}:`, error)}>
+        {@render children()}
+        {#snippet failed(error, reset)}
+          <div class="failed" role="alert">
+            <p><strong>This panel hit an error.</strong> The rest of the app keeps working.</p>
+            <p class="detail">{error instanceof Error ? error.message : String(error)}</p>
+            <Button size="s" variant="subtle" onclick={reset}>Try again</Button>
+          </div>
+        {/snippet}
+      </svelte:boundary>
+    </div>
     {#if footer}<footer>{@render footer()}</footer>{/if}
   </div>
 </dialog>
@@ -112,6 +125,23 @@
     flex: 1;
     overflow-y: auto;
     padding: var(--pad);
+  }
+
+  .failed {
+    display: grid;
+    gap: 0.6rem;
+    justify-items: start;
+    padding: 0.65rem 0.85rem;
+    border-radius: var(--radius-s);
+    color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 10%, transparent);
+    font-size: 0.875rem;
+  }
+
+  .failed .detail {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    overflow-wrap: anywhere;
   }
 
   footer {
