@@ -22,7 +22,10 @@ The v0.4 design lives in `docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-
 server_ws.py            Relay entry point. Run: python server_ws.py --port 5555 --secret ... [--host] [--data-dir] [--no-legacy]
 server/                 The relay (FastAPI): /v2/ws (protocol v2), /ws (v0.3 clients), / and /health (spec §6)
   app.py                create_app(settings, clock): endpoints, status loop
-  relay.py              Shared state and operations: approve / deny / forget, replacing old connections, ping + status loop
+  relay.py              Shared state and operations: approve / deny / forget, replacing old connections, ping + status loop;
+                        link health in server.log (close code on every disconnect, unanswered or slow pings, a late status loop)
+  keepalive.py          uvicorn's WebSocket keepalive (ping every 30 s, dropped after 30 s without a pong); its own timeouts
+                        reach the app as 1011 instead of uvicorn's 1005, so server.log can tell them from a cut connection
   router.py             /v2/ws: hello / welcome, permission check, routing by `to`, presence.roster / .latency, time.pong
   transfers.py          File transfers on /v2/ws: one entry per offer; binary chunks only sender → recipient after accept
   legacy_bridge.py      /ws: the v0.3 handler (byte for byte), translation to and from v2, scheduling emulation
@@ -48,7 +51,8 @@ start-server*.sh        VPS start/stop scripts (Caddy / Tailscale Funnel)
 agent/                  v0.4 desktop agent (python -m agent)
   __main__.py           CLI, port pick, uvicorn server, window vs browser
   core.py               Agent: config + relay + actor runtime; snapshot() = UI state; _call_* = UI requests
-  relay.py              The relay connection: reconnect loop, the countdown in the UI; tries /v2/ws, else /ws
+  relay.py              The relay connection: reconnect loop, the countdown in the UI; tries /v2/ws, else /ws;
+                        drops (close codes) and failed attempts (the exception) go to agent.log
   relay_v2.py           Protocol v2 client: hello, roster with session ids, approvals, cue.* / osc.param + cue.ack, file.* and soundpad.* hand-off,
                         clock sync, actions with `at` (actors), GO / Play in 3s / Stop / delays (directors)
   timesync.py           Clock sync with the relay (time.ping / time.pong, lowest round trip of 8; perf_counter, spec §8.2.1)
@@ -87,7 +91,7 @@ tools/soundpad_probe.py Windows-only probe for Soundpad's named-pipe API (spec A
                         results go to tools/probe-results/ (git-ignored: sound titles and paths)
 tools/vrchat_window_probe.py  Windows-only VRChat window ↔ recording-size probe (spec §8.5.8, Appendix C);
                         window-manager calls only (EAC), read-only unless --resize / --restore
-tests/                  Relay tests: protocol, permissions, v2 relay, bridge, scheduling, v0.3 hotfixes
+tests/                  Relay tests: protocol, permissions, v2 relay, bridge, scheduling, v0.3 hotfixes, link health (server.log)
   legacy_relay/         Frozen v0.3.3 server_ws.py: source of the golden transcript, fallback target for agent tests
   golden/               Recorded v0.3 session that /ws must reproduce byte for byte
   legacy_client.py      Scripted v0.3 client + the golden session (--record re-records from the frozen relay)

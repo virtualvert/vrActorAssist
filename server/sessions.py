@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import secrets
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from .permissions import legacy_role
+from .settings import Throttle
 
 
 @dataclass(eq=False)
@@ -38,6 +40,15 @@ class Session:
     retired: bool = False
     # v0.3 actors: cues held back until their fire time (scheduling emulation, spec §11.3)
     held: list[tuple[asyncio.Task, str]] = field(default_factory=list)
+    # Link health for server.log (relay.py): when it connected and last sent anything (time.time()),
+    # status rounds in a row without a pong, and the rate limit on slow-link lines
+    connected_at: float = field(default_factory=time.time)
+    last_received: float = 0.0
+    missed_pongs: int = 0
+    stall_logged: bool = False
+    health: Throttle = field(default_factory=Throttle)
+    # "4403 Reconnected from another location" once the relay has closed this connection
+    closed_by_relay: str = ""
 
     @property
     def legacy(self) -> bool:
@@ -61,7 +72,9 @@ class Session:
         except Exception:
             return False
 
-    async def close(self, code: int = 1000) -> None:
+    async def close(self, code: int = 1000, why: str = "") -> None:
+        """`why` is for server.log only; the close frame carries just the code, as before."""
+        self.closed_by_relay = f"{code} {why}".strip()
         try:
             await self.websocket.close(code=code)
         except Exception:

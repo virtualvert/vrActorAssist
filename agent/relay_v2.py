@@ -15,11 +15,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.exceptions import InvalidStatus
 
 from shared import get_platform_id
 
@@ -125,6 +126,9 @@ class V2Relay:
         self._machine_id = machine_id()
         self._actions = ActionQueue()
         self._pings: asyncio.Task | None = None
+        # For agent/relay.py's "Lost connection" line (time.monotonic())
+        self.opened_at: float | None = None
+        self.last_message_at = 0.0
         # What an actor announces in hello (tests pretend to be older builds by changing it)
         self.capabilities = list(ACTOR_CAPABILITIES)
 
@@ -160,9 +164,12 @@ class V2Relay:
 
     async def _session(self, url: str) -> str | None:
         """One connection. Returns a message when we must not reconnect. Raises V2Unavailable
-        when the relay doesn't speak v2."""
+        when the relay doesn't speak v2, and ConnectionClosed (with the close codes) when the
+        connection ends."""
+        self.opened_at = None
         try:
             async with connect(url, **connect_kwargs(url)) as ws:
+                self.opened_at = self.last_message_at = time.monotonic()
                 return await self._converse(ws)
         except InvalidStatus as exc:  # only raised by the opening handshake
             if exc.response.status_code in (403, 404):
@@ -184,22 +191,20 @@ class V2Relay:
         if cfg.role == "director":
             hello["secret"] = cfg.secret
         await self._send("hello", hello)
-        try:
-            async for raw in ws:
-                if isinstance(raw, bytes):
-                    await self.agent.files.on_chunk(raw)
-                    continue
-                try:
-                    env = json.loads(raw)
-                except ValueError:
-                    continue
-                if isinstance(env, dict):
-                    fatal = await self._on_message(env)
-                    if fatal:
-                        return fatal
-        except ConnectionClosed:
-            pass
-        return None
+        while True:
+            raw = await ws.recv()
+            self.last_message_at = time.monotonic()
+            if isinstance(raw, bytes):
+                await self.agent.files.on_chunk(raw)
+                continue
+            try:
+                env = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(env, dict):
+                fatal = await self._on_message(env)
+                if fatal:
+                    return fatal
 
     async def _send(self, msg_type: str, data: dict, to: Any = "server", reply_to: str | None = None) -> str:
         """Returns the message id (a relay error names it in reply_to)."""

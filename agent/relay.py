@@ -5,6 +5,10 @@ attempt continues on /ws in compatibility mode (relay_legacy.py), so a relay tha
 is picked up at the next reconnect. This class owns the reconnect loop and the countdown shown
 in the UI; the protocol objects own everything they learn from the relay. On a v2 relay Play in 3s
 is one cue for server time now + 3 s (relay_v2.py); on a v0.3 relay it's a local countdown, then Go.
+
+agent.log gets every dropped connection with its close codes (a keepalive timeout, the relay
+restarting, a connection cut without a close frame), how long it lasted and how long the relay
+had been silent, and every failed attempt to connect with the exception.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ import asyncio
 import time
 from typing import TYPE_CHECKING
 
-from websockets.exceptions import InvalidURI, WebSocketException
+from websockets.exceptions import ConnectionClosed, InvalidURI, WebSocketException
 
 from .relay_legacy import LegacyRelay, host_of, ws_url
 from .relay_v2 import V2Relay, V2Unavailable, v2_url
@@ -25,6 +29,29 @@ BACKOFF_START_S = 1.0
 BACKOFF_MAX_S = 30.0
 COUNTDOWN_S = 3.0
 COUNTDOWN_MS = 3000
+
+
+def error_text(exc: BaseException) -> str:
+    """A relay connection problem for the log: a close in websockets' own words ("sent 1011
+    (internal error) keepalive ping timeout; no close frame received"), anything else as its type
+    and text (a TimeoutError or an SSL EOF says little without the type)."""
+    if isinstance(exc, ConnectionClosed):
+        return str(exc)
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+def span(seconds: float) -> str:
+    """A duration for the log: '0.4 s', '41 s', '12 min', '2 h 05 min'."""
+    seconds = max(0.0, seconds)
+    if seconds < 10:
+        return f"{seconds:.1f} s"
+    if seconds < 120:
+        return f"{seconds:.0f} s"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60:02d} min"
 
 
 class Relay:
@@ -129,6 +156,7 @@ class Relay:
 
     async def _run(self) -> None:
         backoff = BACKOFF_START_S
+        failures = 0  # attempts in a row that didn't connect
         try:
             legacy_url = ws_url(self.agent.config.server_url)
         except ValueError as exc:
@@ -140,17 +168,31 @@ class Relay:
             fatal = None
             try:
                 fatal = await self._attempt(legacy_url)
-                backoff = BACKOFF_START_S
+                backoff, failures = BACKOFF_START_S, 0
             except asyncio.CancelledError:
                 raise
+            except ConnectionClosed as exc:  # we were connected; the connection ended
+                backoff, failures = BACKOFF_START_S, 0
+                self._log_drop(exc, backoff)
             except (OSError, WebSocketException, InvalidURI, asyncio.TimeoutError) as exc:
-                self.agent.hub.log("warning", f"Relay connection failed: {exc}")
+                failures += 1
+                attempt = f" (attempt {failures})" if failures > 1 else ""
+                self.agent.hub.log("warning", f"Relay connection failed{attempt}: {error_text(exc)}. "
+                                   f"Retrying in {int(backoff)} s.")
             if fatal:
                 self.impl._reset(fatal, status="error")
                 return
             self.impl._reset(f"Lost connection to {self.host}. Retrying in {int(backoff)} s…", status="connecting")
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, BACKOFF_MAX_S)
+
+    def _log_drop(self, exc: ConnectionClosed, retry_s: float) -> None:
+        impl, now = self.impl, time.monotonic()
+        parts = [error_text(exc)]
+        if impl.opened_at is not None:
+            parts.append(f"connected {span(now - impl.opened_at)}")
+            parts.append(f"last message from the relay {span(now - impl.last_message_at)} ago")
+        self.agent.hub.log("warning", f"Lost connection to {self.host}: {'; '.join(parts)}. Retrying in {int(retry_s)} s.")
 
     async def _attempt(self, legacy_url: str) -> str | None:
         self._use(self.v2)

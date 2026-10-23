@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from websockets.asyncio.client import connect
-from websockets.exceptions import ConnectionClosed
 
 from shared import format_message, get_machine_id, get_platform_id, parse_message
 
@@ -90,8 +89,15 @@ def version_tuple(version: str) -> tuple[int, ...]:
         return (0,)
 
 
+# WebSocket keepalive, as on the relay (server/keepalive.py): a ping every 30 s, and a connection
+# whose ping goes unanswered for 30 s counts as dead. It was 10 s until 0.4; a 10–20 s stall on the
+# relay's network path then dropped actors that were otherwise fine (2026-10-22).
+PING_INTERVAL_S = 30
+PING_TIMEOUT_S = 30
+
+
 def connect_kwargs(url: str) -> dict:
-    kwargs = {"open_timeout": 10, "ping_interval": 30, "ping_timeout": 10, "max_size": 2**24}
+    kwargs = {"open_timeout": 10, "ping_interval": PING_INTERVAL_S, "ping_timeout": PING_TIMEOUT_S, "max_size": 2**24}
     if url.startswith("wss://"):
         kwargs["ssl"] = ssl_context()
     return kwargs
@@ -181,6 +187,9 @@ class LegacyRelay:
         self._ws = None
         self._machine_id = machine_id()
         self._actions = ActionQueue()
+        # For agent/relay.py's "Lost connection" line (time.monotonic())
+        self.opened_at: float | None = None
+        self.last_message_at = 0.0
 
     # ---- connection -------------------------------------------------------
 
@@ -201,10 +210,13 @@ class LegacyRelay:
         self.agent.changed()
 
     async def _session(self, url: str) -> str | None:
-        """One connection. Returns a message when we must not reconnect (e.g. bad secret)."""
+        """One connection. Returns a message when we must not reconnect (e.g. bad secret); raises
+        ConnectionClosed, with the close codes, when the connection ends."""
         cfg = self.agent.config
+        self.opened_at = None
         async with connect(url, **connect_kwargs(url)) as ws:
             self._ws = ws
+            self.opened_at = self.last_message_at = time.monotonic()
             self.agent.hub.log("info", f"Connected to {self.host}, registering as {cfg.role}…")
             await ws.send(
                 format_message(
@@ -217,16 +229,14 @@ class LegacyRelay:
                     platform=get_platform_id(),
                 )
             )
-            try:
-                async for raw in ws:
-                    if isinstance(raw, bytes):
-                        raw = raw.decode("utf-8", errors="replace")
-                    fatal = await self._on_message(raw)
-                    if fatal:
-                        return fatal
-            except ConnectionClosed:
-                pass
-        return None
+            while True:
+                raw = await ws.recv()
+                self.last_message_at = time.monotonic()
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="replace")
+                fatal = await self._on_message(raw)
+                if fatal:
+                    return fatal
 
     async def send(self, text: str) -> None:
         if self._ws is None:

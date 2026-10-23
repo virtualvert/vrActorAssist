@@ -79,7 +79,7 @@ class Router:
                 first = await asyncio.wait_for(self._receive(session), relay.settings.hello_timeout_s)
             except asyncio.TimeoutError:
                 await self._send(session, "denied", {"reason": "No hello received"})
-                await session.close(CLOSE_HELLO_TIMEOUT)
+                await session.close(CLOSE_HELLO_TIMEOUT, "No hello received")
                 return
             if first is None:
                 await session.close(CLOSE_BAD_HELLO)
@@ -90,8 +90,8 @@ class Router:
                 received = await self._receive(session)
                 if received is not None:
                     await self._dispatch(session, *received)
-        except WebSocketDisconnect:
-            self.log(f"Client disconnected: {session.name}")
+        except WebSocketDisconnect as exc:
+            relay.disconnected(session, exc.code, exc.reason)
         except Exception as e:  # one bad session must not take the relay down
             self.log(f"Error ({session.name}): {e!r}")
         finally:
@@ -101,7 +101,8 @@ class Router:
         """One frame as (envelope, receive time). None when the frame was rejected."""
         message = await session.websocket.receive()
         if message["type"] == "websocket.disconnect":
-            raise WebSocketDisconnect(message.get("code", 1000))
+            raise WebSocketDisconnect(message.get("code", 1000), message.get("reason"))
+        session.last_received = time.time()
         received_ms = self.relay.clock.now_ms()
         text = message.get("text")
         if text is None:
@@ -458,11 +459,11 @@ class Router:
 
     async def send_denied(self, session: Session, reason: str, code: int = CLOSE_REMOVED) -> None:
         await self._send(session, "denied", {"reason": reason})
-        await session.close(code)
+        await session.close(code, reason)
 
     async def send_forgotten(self, session: Session) -> None:
         await self._send(session, "approval.forgotten", {})
-        await session.close(CLOSE_REMOVED)
+        await session.close(CLOSE_REMOVED, "Forgotten by a director")
 
     async def _cleanup(self, session: Session) -> None:
         relay = self.relay
