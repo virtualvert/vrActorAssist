@@ -48,6 +48,28 @@ export function soundpadReach(peer: Pick<Peer, "role" | "caps">): SoundpadReach 
   return peer.caps.includes("soundpad.list") ? "full" : "old";
 }
 
+export type WontAdd = "off" | "trial";
+
+/**
+ * Why an actor's app won't add the files it receives to Soundpad, so playing them fails: "off" (the
+ * actor's own setting "Add received files to Soundpad"), "trial" (the Soundpad trial can't add
+ * sounds). null: it adds them, or nobody knows (apps before this report don't say, v0.3 apps
+ * send no Soundpad state).
+ */
+export function wontAddReceived(sp: Pick<PeerSoundpad, "autoAddReceived" | "trial"> | null): WontAdd | null {
+  if (sp?.autoAddReceived === false) return "off";
+  if (sp?.trial === true) return "trial";
+  return null;
+}
+
+/** The director's warning about that: whose setting it is, and what happens to the files. */
+export function wontAddText(name: string, why: WontAdd): string {
+  const saved = "The files are saved on their PC, but playing them fails";
+  return why === "off"
+    ? `${name}'s app won't add received files to Soundpad: their setting "Add received files to Soundpad" is off. ${saved} until ${name} turns it on or adds them in Soundpad.`
+    : `${name} has the Soundpad trial, which can't add sounds. ${saved} until ${name} adds them in Soundpad by hand.`;
+}
+
 export const LINE_OPTIONS = [
   { value: "default", label: "Default" },
   { value: "both", label: "Both" },

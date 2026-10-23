@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { positionNow, searchSounds, soundpadReach, steadyPosition } from "./soundpad";
+import { positionNow, searchSounds, soundpadReach, steadyPosition, wontAddReceived, wontAddText } from "./soundpad";
 
 describe("positionNow", () => {
   const base = { positionMs: 1400, durationMs: 5000, at: 10_000 };
@@ -49,4 +49,23 @@ test("soundpadReach", () => {
   expect(soundpadReach({ role: "actor", caps: ["legacy"] })).toBe("legacy");
   expect(soundpadReach({ role: "actor", caps: ["soundpad", "osc", "files"] })).toBe("old");
   expect(soundpadReach({ role: "camera", caps: [] })).toBe("none");
+});
+
+describe("wontAddReceived", () => {
+  test("the actor's setting first, then the trial", () => {
+    expect(wontAddReceived({ autoAddReceived: false, trial: false })).toBe("off");
+    expect(wontAddReceived({ autoAddReceived: false, trial: true })).toBe("off");
+    expect(wontAddReceived({ autoAddReceived: true, trial: true })).toBe("trial");
+    expect(wontAddReceived({ autoAddReceived: true, trial: false })).toBeNull();
+  });
+  test("unknown is no warning: older apps don't say, v0.3 apps send no state", () => {
+    expect(wontAddReceived({ autoAddReceived: null, trial: null })).toBeNull();
+    expect(wontAddReceived({ autoAddReceived: true, trial: null })).toBeNull();
+    expect(wontAddReceived(null)).toBeNull();
+  });
+  test("the warning names whose setting it is", () => {
+    expect(wontAddText("Coda", "off")).toStartWith(`Coda's app won't add received files to Soundpad: their setting "Add received files to Soundpad" is off.`);
+    expect(wontAddText("Coda", "off")).toEndWith("until Coda turns it on or adds them in Soundpad.");
+    expect(wontAddText("Coda", "trial")).toStartWith("Coda has the Soundpad trial, which can't add sounds.");
+  });
 });

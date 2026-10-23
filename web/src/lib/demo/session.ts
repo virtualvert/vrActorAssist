@@ -90,6 +90,8 @@ const INCOMING_FILES_AFTER_MS = 9000;
 const RECEIVE_DIR = "C:\\Users\\you\\Documents\\vrcActorSync";
 /** Juno's Soundpad isn't running in the demo, so the "unavailable" look shows up. */
 const SOUNDPAD_OFF = "Juno";
+/** Infinity turned off "Add received files to Soundpad", so the director's warning shows up. */
+const NO_AUTO_ADD = "Infinity";
 const SELECTED_SOUND_MS = 6000;
 const DEMO_SOUNDPAD_EXE = "C:\\Program Files\\Soundpad\\Soundpad.exe";
 const NO_CLOCK: ClockState = { synced: false, offsetMs: null, rttMs: null };
@@ -643,6 +645,10 @@ export class DemoSession {
         this.#log("warning", `${p.name}: play — ${p.soundpad?.detail || "Soundpad isn't answering"}`);
         continue;
       }
+      if ("sha256" in sound && p.soundpad?.autoAddReceived === false) {
+        this.#log("warning", `${p.name}: play — ${label ?? "That file"} isn't in Soundpad, and this actor's app has 'Add received files to Soundpad' turned off`);
+        continue;
+      }
       const list = demoSounds(p.name);
       const entry = "key" in sound ? list.find((s) => s.key === sound.key) : "index" in sound ? list.find((s) => s.index === sound.index) : undefined;
       if (volume !== undefined) this.#spSet(p, { volume });
@@ -1056,6 +1062,8 @@ export class DemoSession {
               volume: member.name !== SOUNDPAD_OFF ? 80 : null,
               muted: member.name !== SOUNDPAD_OFF ? false : null,
               detail: member.name === SOUNDPAD_OFF ? "Soundpad isn't running (its remote-control pipe isn't open)" : "",
+              autoAddReceived: member.name !== NO_AUTO_ADD,
+              trial: member.name !== SOUNDPAD_OFF ? false : null,
               at: this.#clock.now(),
               startLatencyMs: null,
             }

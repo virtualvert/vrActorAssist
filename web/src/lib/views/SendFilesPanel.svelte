@@ -5,6 +5,7 @@
   import { assignments, baseName, groupFiles, parseCharacterName } from "../files/character";
   import { fileSize, percent } from "../format";
   import type { FolderListing, Peer, SendBatch, SendFileState } from "../protocol";
+  import { wontAddReceived, wontAddText } from "../soundpad";
   import { app } from "../state.svelte";
 
   // Per-viewer conveniences only: the last folder, and which actor plays which character (by
@@ -54,6 +55,13 @@
     plan.items.some((i) => (sizeOf.get(i.path) ?? 0) > BIG_FOR_V03 && actors.find((p) => p.id === i.actorId)?.caps.includes("legacy")),
   );
   const totalBytes = $derived(plan.items.reduce((sum, i) => sum + (sizeOf.get(i.path) ?? 0), 0));
+  /** Recipients whose app won't add the files to Soundpad (their own setting, or the Soundpad trial). */
+  const wontAdd = $derived(
+    actors.flatMap((p) => {
+      const why = plan.items.some((i) => i.actorId === p.id) ? wontAddReceived(p.soundpad) : null;
+      return why ? [{ id: p.id, text: wontAddText(p.name, why) }] : [];
+    }),
+  );
 
   function load(): { folder?: string; cast?: Record<string, string> } {
     try {
@@ -300,6 +308,9 @@
             even after a cancel. Updating them to vrcActorSync 0.4 avoids both.
           </p>
         {/if}
+        {#each wontAdd as w (w.id)}
+          <p class="message note">{w.text}</p>
+        {/each}
         {#if plan.clashes.length}
           <p class="message bad">One actor would get two files named <span class="mono">{plan.clashes[0]}</span>. Leave one out or send it to someone else.</p>
         {/if}

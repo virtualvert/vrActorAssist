@@ -318,6 +318,8 @@ export interface SoundpadState {
   volume?: number | null;
   muted?: boolean | null;
   detail?: string;
+  auto_add_received?: boolean | null;
+  trial?: boolean | null;
 }
 
 export interface SoundpadStop {
