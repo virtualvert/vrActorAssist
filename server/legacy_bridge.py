@@ -141,6 +141,7 @@ class LegacyBridge:
         try:
             while True:
                 data = await websocket.receive_text()
+                session.last_received = time.time()
                 try:
                     msg_type, msg_data = parse_message(data)
                 except (ValueError, IndexError):
@@ -167,8 +168,8 @@ class LegacyBridge:
                             text=f"Permission denied: only the director can send {msg_type}"))
                     continue
                 await self._handle(session, msg_type, msg_data, data)
-        except WebSocketDisconnect:
-            self.log(f"Client disconnected: {session.name}")
+        except WebSocketDisconnect as exc:
+            relay.disconnected(session, exc.code, exc.reason)
         except Exception as e:
             self.log(f"Error: {e}")
         finally:
@@ -213,7 +214,7 @@ class LegacyBridge:
                 return True
             self.log(f"Director '{name}' failed auth")
             await session.send_text(format_message("DENIED", reason="Invalid secret"))
-            await session.close()
+            await session.close(why="Invalid secret")
             return False
 
         if machine_id in relay.approvals:
@@ -441,11 +442,11 @@ class LegacyBridge:
 
     async def send_denied(self, session: Session, reason: str) -> None:
         await session.send_text(format_message("DENIED", reason=reason))
-        await session.close()
+        await session.close(why=reason)
 
     async def send_replaced(self, session: Session) -> None:
         await session.send_text(format_message("MSG", sender="SERVER", text="Reconnected from another location"))
-        await session.close()
+        await session.close(why="Reconnected from another location")
 
     async def notify_forgotten(self, machine_id: str) -> None:
         for s in self.relay.registry:

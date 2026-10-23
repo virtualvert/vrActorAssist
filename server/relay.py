@@ -2,6 +2,11 @@
 
 Every change is announced twice: in v0.3 terms to /ws sessions (legacy_bridge.LegacyBridge, in
 the exact order the v0.3 relay used) and as presence.roster to /v2/ws sessions (router.Router).
+
+server.log also gets what's needed to tell why someone dropped: every disconnect with its close
+code, how long the client had been silent and how long it was connected; pings still unanswered
+when the status goes out and round trips over slow_rtt_ms (once a minute per session at most);
+and a status loop that ran late, which means the relay itself stalled rather than the network.
 """
 
 from __future__ import annotations
@@ -13,15 +18,55 @@ from dataclasses import dataclass
 from shared import APP_VERSION as LEGACY_VERSION
 
 from . import SERVER_VERSION
+from .keepalive import TIMED_OUT
 from .legacy_bridge import LegacyBridge
 from .router import Router
 from .sessions import Approvals, Registry, Session
-from .settings import Log, Settings
+from .settings import Log, Settings, Throttle
 from .timesync import Clock
 from .transfers import Transfers
 from .updates import find_update, load_manifest
 
-__all__ = ["LEGACY_VERSION", "SERVER_VERSION", "PendingEntry", "Relay"]
+__all__ = ["LEGACY_VERSION", "SERVER_VERSION", "PendingEntry", "Relay", "close_text", "span"]
+
+# What a close code means (RFC 6455 §7.4.1, and router.py's own 44xx codes)
+CLOSE_NAMES = {
+    1000: "normal closure",
+    1001: "going away",
+    1002: "protocol error",
+    1003: "unsupported data",
+    1005: "connection lost, no close frame",
+    1006: "connection lost, no close frame",
+    1007: "invalid data",
+    1008: "policy violation",
+    1009: "message too big",
+    1011: "internal error",
+    1012: "service restart",
+    4400: "bad hello",
+    4401: "wrong secret",
+    4403: "removed by the relay",
+    4408: "no hello in time",
+}
+
+
+def close_text(code: int | None, reason: str | None = None) -> str:
+    """'1011 keepalive ping timeout', '1000 normal closure', '1005 connection lost, no close frame'."""
+    if code is None:
+        return "no close code"
+    return f"{code} {reason or CLOSE_NAMES.get(code, 'unknown close code')}"
+
+
+def span(seconds: float) -> str:
+    """A duration for the log: '0.4 s', '41 s', '12 min', '2 h 05 min'."""
+    seconds = max(0.0, seconds)
+    if seconds < 10:
+        return f"{seconds:.1f} s"
+    if seconds < 120:
+        return f"{seconds:.0f} s"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    return f"{minutes // 60} h {minutes % 60:02d} min"
 
 
 @dataclass(eq=False)
@@ -48,6 +93,7 @@ class Relay:
         self.bridge = LegacyBridge(self)
         self.router = Router(self)
         self._status_task: asyncio.Task | None = None
+        self._lag = Throttle()
 
     # ---- lifecycle --------------------------------------------------------------------------
 
@@ -149,11 +195,13 @@ class Relay:
     def record_pong(self, session: Session, rtt_ms: int | None = None) -> None:
         """A PONG (v0.3) or time.pong (v2) arrived: same rolling average as the v0.3 relay."""
         now = time.time()
+        previous = session.last_ping_received or session.connected_at
         session.last_ping_received = now
         if rtt_ms is None:
             if session.last_ping_sent <= 0:
                 return
             rtt_ms = int((now - session.last_ping_sent) * 1000)
+        self._pong_health(session, rtt_ms, now - previous)
         if session.latency_ms > 0:
             session.latency_ms = int((session.latency_ms + rtt_ms) / 2)
         else:
@@ -162,14 +210,71 @@ class Relay:
     async def _status_loop(self) -> None:
         settings = self.settings
         while True:
+            started = time.monotonic()
             await asyncio.sleep(settings.status_interval_s)
+            self._check_lag(time.monotonic() - started - settings.status_interval_s)
             await self.bridge.ping_actors()
             await self.router.ping_sessions()
             await asyncio.sleep(settings.status_grace_s)
             now = time.time()
             for session in self.registry.approved():
                 tracked = session.role == "actor" if session.legacy else True
+                if tracked:
+                    self._check_pong(session, now)
                 if tracked and session.last_ping_received > 0 and now - session.last_ping_received > settings.ping_timeout_s:
                     session.latency_ms = -1  # timed out
             await self.bridge.send_actor_status()
             await self.router.send_latency()
+
+    # ---- link health in server.log -------------------------------------------------------------
+
+    def disconnected(self, session: Session, code: int | None, reason: str | None = None) -> None:
+        """The "Client disconnected" line: how it closed, when the client last sent anything, and
+        how long it was connected. A long silence before a 1005 or a keepalive timeout means the
+        network stalled; a short one, that the connection was cut."""
+        now = time.time()
+        scope = getattr(session.websocket, "scope", None) or {}
+        if session.closed_by_relay:
+            how = f"{session.closed_by_relay}, closed by the relay"
+        elif scope.get(TIMED_OUT):
+            how = "1011 keepalive ping timeout: the relay's ping got no pong"
+        else:
+            how = close_text(code, reason)
+        parts = [how]
+        if session.last_received:
+            parts.append(f"last message {span(now - session.last_received)} ago")
+        parts.append(f"connected {span(now - session.connected_at)}")
+        self.log(f"Client disconnected: {session.name} ({'; '.join(parts)})")
+
+    def _health(self, session: Session, text: str) -> bool:
+        """A slow-link line, at most one per session per health_log_every_s. Returns whether it was logged."""
+        line = session.health(text, self.settings.health_log_every_s)
+        if line:
+            self.log(line)
+        return line is not None
+
+    def _check_pong(self, session: Session, now: float) -> None:
+        """Status time: is this round's ping still unanswered? Logged once per run of misses."""
+        sent = session.last_ping_sent
+        if sent <= 0 or session.last_ping_received >= sent:
+            return
+        session.missed_pongs += 1
+        if session.missed_pongs == 1:
+            heard = f", last message {span(now - session.last_received)} ago" if session.last_received else ""
+            session.stall_logged = self._health(
+                session, f"No pong from {session.role} '{session.name}' within {span(now - sent)}{heard}")
+
+    def _pong_health(self, session: Session, rtt_ms: int, since_last_s: float) -> None:
+        if session.missed_pongs:
+            if session.stall_logged:  # the end of a stall whose start is in the log
+                self.log(f"{session.role.capitalize()} '{session.name}' answered again: round trip {rtt_ms} ms, "
+                         f"{span(since_last_s)} since its last pong")
+            session.missed_pongs, session.stall_logged = 0, False
+        elif rtt_ms > self.settings.slow_rtt_ms:
+            self._health(session, f"Slow round trip to {session.role} '{session.name}': {rtt_ms} ms")
+
+    def _check_lag(self, late_s: float) -> None:
+        if late_s > self.settings.loop_lag_s:
+            line = self._lag(f"Status loop ran {late_s:.1f} s late: the relay itself was stalled", self.settings.health_log_every_s)
+            if line:
+                self.log(line)

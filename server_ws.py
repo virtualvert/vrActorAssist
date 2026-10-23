@@ -11,6 +11,7 @@ import uvicorn
 
 from server import SERVER_VERSION
 from server.app import create_app
+from server.keepalive import WS_PING_INTERVAL_S, WS_PING_TIMEOUT_S, protocol_class
 from server.settings import DEFAULT_DATA_DIR, DEFAULT_PORT, DEFAULT_SECRET, Settings
 from server.updates import compare_versions, find_update, load_manifest, parse_version  # noqa: F401 (moved; kept importable)
 from shared import APP_VERSION
@@ -42,12 +43,14 @@ if __name__ == "__main__":
     if settings.data_dir != DEFAULT_DATA_DIR:
         relay.log(f"Data folder: {settings.data_dir}")
 
-    # Run with websocket ping enabled
+    # WebSocket keepalive: a ping every 30 s, a client that hasn't answered in 30 s is dropped
+    # (server/keepalive.py; the drop shows in server.log as 1011 keepalive ping timeout)
     uvicorn.run(
         app,
         host=args.host,
         port=args.port,
         log_level="info",
-        ws_ping_interval=30.0,  # Send ping every 30 seconds
-        ws_ping_timeout=10.0,  # Wait 10 seconds for pong
+        ws=protocol_class(),
+        ws_ping_interval=WS_PING_INTERVAL_S,
+        ws_ping_timeout=WS_PING_TIMEOUT_S,
     )
