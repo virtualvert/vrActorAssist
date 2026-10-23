@@ -314,6 +314,9 @@ export class DemoSession {
       case "cancelBatch":
         this.#cancelBatch(call.args.id);
         break;
+      case "clearBatches":
+        this.#clearBatches(call.args.id);
+        break;
       case "answerFile":
         this.#answerFile(call.args.transferId, call.args.accept, call.args.rest ?? false, call.args.always ?? false);
         break;
@@ -817,6 +820,13 @@ export class DemoSession {
       this.#endBatch(each, "cancelled", "Cancelled by director");
       this.#log("warning", `Files to ${name} cancelled`);
     }
+  }
+
+  #clearBatches(id: string): void {
+    const files = this.state.director?.files;
+    if (!files) return;
+    const finished = (b: SendBatch) => b.state === "done" || b.state === "cancelled" || b.state === "failed";
+    files.batches = files.batches.filter((b) => !(finished(b) && (id === "all" || b.id === id)));
   }
 
   // ---- files (actor receives) ---------------------------------------------

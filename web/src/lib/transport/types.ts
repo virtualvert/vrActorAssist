@@ -10,6 +10,8 @@ export interface FolderAccess {
   /** "audio" (default): audio files outside normalized/. "all": every non-hidden file, for sending. */
   open(folder: string, kind?: "audio" | "all"): Promise<FolderListing>;
   read(folder: string, path: string): Promise<ArrayBuffer>;
+  /** Lengths in ms of audio and video files (from their headers); null for anything else. At most 500 paths per call. */
+  durations(folder: string, paths: string[]): Promise<Record<string, number | null>>;
   /** Writes `<folder>/normalized/<path>` and resolves to the full path written. */
   write(folder: string, path: string, data: Uint8Array<ArrayBuffer>): Promise<string>;
 }

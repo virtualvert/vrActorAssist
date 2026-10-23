@@ -176,6 +176,12 @@
           label="Play sounds on cue"
           onchange={(soundpadEnabled) => app.call({ call: "setActorLocal", args: { soundpadEnabled } })}
         />
+        <Toggle
+          checked={actor.soundpad.autoAddReceived}
+          label="Add files from the director to Soundpad automatically"
+          description={actor.soundpad.info?.trial ? "The Soundpad trial can't add sounds: add them by hand" : "So the director can play them right after sending"}
+          onchange={(autoAddReceived) => app.call({ call: "setActorLocal", args: { autoAddReceived } })}
+        />
       </section>
 
       {#if timing}
@@ -299,9 +305,8 @@
       "offers offers"
       "hero stage"
       "sp osc"
-      "sp timing"
-      "files files";
-    grid-template-rows: auto auto minmax(20rem, 1fr) auto auto auto;
+      "files timing";
+    grid-template-rows: auto auto minmax(20rem, 1fr) auto auto;
     gap: var(--gap);
     min-height: 100%;
     padding: var(--gap);
@@ -641,7 +646,7 @@
   @container (max-width: 56rem) {
     .view {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-areas: "banner" "offers" "hero" "stage" "sp" "timing" "osc" "files";
+      grid-template-areas: "banner" "offers" "hero" "stage" "sp" "files" "timing" "osc";
       grid-template-rows: auto auto auto 20rem auto auto auto auto;
     }
 

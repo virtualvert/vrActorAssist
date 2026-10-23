@@ -278,6 +278,23 @@
     return { n, R: sizeOf(n) };
   });
 
+  // The card goes above the node, or below its name when there's no room above (the top row of
+  // directors), and stays inside the canvas, which clips. Measured, so it doesn't jump.
+  let tipW = $state(0);
+  let tipH = $state(0);
+  const tipAt = $derived.by(() => {
+    if (!tip) return null;
+    const pad = remPx * 0.5;
+    const x = tip.n.x ?? 0;
+    const y = tip.n.y ?? 0;
+    const above = y - tip.R - remPx * 0.8 - tipH;
+    const below = y + tip.R + remPx * 2.9;
+    const top = above >= pad || below + tipH > height - pad ? Math.max(pad, above) : below;
+    const half = tipW / 2;
+    const left = Math.max(pad + half, Math.min(x, width - pad - half));
+    return { left, top };
+  });
+
   const minHeight = $derived.by(() => {
     const actors = data.peers.filter((p) => p.role === "actor").length + data.pending.length;
     const cameras = data.peers.some((p) => p.role === "camera");
@@ -422,8 +439,13 @@
       </g>
     </svg>
 
-    {#if tip}
-      <div class="tip role-{tip.n.spec.kind}" style="left: {tip.n.x}px; top: {(tip.n.y ?? 0) - tip.R - remPx * 0.8}px">
+    {#if tip && tipAt}
+      <div
+        class="tip role-{tip.n.spec.kind}"
+        style="left: {tipAt.left}px; top: {tipAt.top}px"
+        bind:offsetWidth={tipW}
+        bind:offsetHeight={tipH}
+      >
         <strong>{tip.n.spec.label}{tip.n.spec.self ? " (you)" : ""}</strong>
         <span class="kind">{kindLabel(tip.n.spec.kind)}</span>
         <span>{tip.n.spec.sub}</span>
@@ -728,7 +750,9 @@
   .tip {
     position: absolute;
     z-index: 2;
-    transform: translate(-50%, -100%);
+    /* `translate`, not `transform`: rise-in animates transform, which used to drop the centring
+       for its 160 ms, so the card showed beside the node and then jumped */
+    translate: -50% 0;
     display: flex;
     flex-direction: column;
     gap: 0.15rem;

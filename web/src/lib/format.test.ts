@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ago, decibels, duration, fileSize, initials, latencyLevel, mediaLength, mediaTime, peerSubtitle, percent } from "./format";
+import { ago, clipLength, decibels, duration, fileSize, initials, latencyLevel, mediaLength, mediaTime, peerSubtitle, percent } from "./format";
 import { clampScale } from "./protocol";
 
 describe("latencyLevel", () => {
@@ -27,6 +27,14 @@ describe("text helpers", () => {
     expect(ago(0, 30_000)).toBe("30s ago");
     expect(initials("Cam A")).toBe("CA");
     expect(initials("quincey")).toBe("QU");
+  });
+
+  test("clipLength keeps tenths, so short effects don't read 0:00", () => {
+    expect(clipLength(300)).toBe("0:00.3");
+    expect(clipLength(4_249)).toBe("0:04.2");
+    expect(clipLength(59_960)).toBe("1:00.0");
+    expect(clipLength(3_725_400)).toBe("1:02:05.4");
+    expect(clipLength(-5)).toBe("0:00.0");
   });
 
   test("mediaLength rounds like Soundpad's list", () => {

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { FolderOpen, Send, Square } from "@lucide/svelte";
+  import { FolderOpen, Send, Square, X } from "@lucide/svelte";
   import Button from "../components/Button.svelte";
   import Drawer from "../components/Drawer.svelte";
   import { assignments, baseName, groupFiles, parseCharacterName } from "../files/character";
-  import { fileSize, percent } from "../format";
+  import { clipLength, fileSize, percent } from "../format";
   import type { FolderListing, Peer, SendBatch, SendFileState } from "../protocol";
   import { wontAddReceived, wontAddText } from "../soundpad";
   import { app } from "../state.svelte";
@@ -22,14 +22,20 @@
   let perFile = $state<Record<string, string>>({});
   let busy = $state(false);
   let error = $state("");
+  /** Path → length in ms (audio and video; null for other files), filled in after a folder opens. */
+  let lengths = $state<Record<string, number | null>>({});
+  let lengthsFor = 0;
 
   const data = $derived(app.state!);
   const actors = $derived(data.peers.filter((p) => p.role === "actor" && !p.self));
   const batches = $derived(data.director?.files.batches ?? []);
   const active = $derived(batches.filter((b) => b.state === "waiting" || b.state === "sending"));
+  const finished = $derived(batches.length - active.length);
   const connected = $derived(data.connection.status === "connected" && !data.connection.legacy);
 
   const paths = $derived(listing?.files.map((f) => f.path) ?? []);
+  const allIncluded = $derived(paths.length > 0 && paths.every((p) => include[p]));
+  const someIncluded = $derived(paths.some((p) => include[p]));
   const groups = $derived(groupFiles(paths));
   const sizeOf = $derived(new Map(listing?.files.map((f) => [f.path, f.size]) ?? []));
   /** Character → actor id, from the remembered names of actors who can receive files. */
@@ -127,10 +133,33 @@
       include = Object.fromEntries(opened.files.map((f) => [f.path, true]));
       perFile = {};
       persist();
+      void loadLengths(opened);
     } catch (err) {
       error = message(err);
     }
     busy = false;
+  }
+
+  /** The Length column: asked for in batches after the list shows; it's a nicety, so errors just leave it blank. */
+  async function loadLengths(opened: FolderListing) {
+    const token = ++lengthsFor;
+    lengths = {};
+    const folders = app.folders;
+    if (!folders) return;
+    const all = opened.files.map((f) => f.path);
+    for (let i = 0; i < all.length; i += 500) {
+      try {
+        const found = await folders.durations(opened.folder, all.slice(i, i + 500));
+        if (token !== lengthsFor) return;
+        lengths = { ...lengths, ...found };
+      } catch {
+        return;
+      }
+    }
+  }
+
+  function includeAll(on: boolean) {
+    include = Object.fromEntries(paths.map((p) => [p, on]));
   }
 
   function setCast(character: string, actorId: string) {
@@ -182,11 +211,19 @@
   <div class="panel">
     {#if batches.length}
       <section class="transfers" aria-label="Transfers">
-        <h3 class="eyebrow">Transfers</h3>
+        <div class="transfers-head">
+          <h3 class="eyebrow">Transfers</h3>
+          {#if finished}
+            <Button size="s" variant="ghost" onclick={() => app.call({ call: "clearBatches", args: { id: "all" } })}>
+              <X size="0.95em" /> Clear finished
+            </Button>
+          {/if}
+        </div>
         <ul>
           {#each [...batches].reverse() as b (b.id)}
             {@const running = b.state === "waiting" || b.state === "sending"}
-            <li class="batch {b.state}" class:partial={b.state === "done" && b.failed > 0}>
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+            <li class="batch {b.state}" class:partial={b.state === "done" && b.failed > 0} tabindex="0" aria-describedby="details-{b.id}">
               <div class="batch-head">
                 <strong>{b.actorName}</strong>
                 <span class="faint mono">{b.done} of {b.files} · {fileSize(b.sentBytes)} / {fileSize(b.bytes)}</span>
@@ -194,7 +231,29 @@
                   <Button size="s" variant="subtle" onclick={() => app.call({ call: "cancelBatch", args: { id: b.id } })}>
                     <Square size="0.9em" /> Cancel
                   </Button>
+                {:else}
+                  <Button
+                    size="s"
+                    icon
+                    variant="ghost"
+                    aria-label="Remove the transfer to {b.actorName} from the list"
+                    title="Remove from the list"
+                    onclick={() => app.call({ call: "clearBatches", args: { id: b.id } })}
+                  >
+                    <X size="1em" />
+                  </Button>
                 {/if}
+              </div>
+              <div class="details" id="details-{b.id}" role="tooltip">
+                <strong>{b.files} {b.files === 1 ? "file" : "files"} to {b.actorName}</strong>
+                <ul>
+                  {#each b.results as r, i (i)}
+                    <li>
+                      <span class="name">{r.name}</span>
+                      <span class="r-{r.state}">{STATE_TEXT[r.state]}{r.detail && r.detail !== "Declined" ? `: ${r.detail}` : ""}</span>
+                    </li>
+                  {/each}
+                </ul>
               </div>
               <div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={percent(b.sentBytes, b.bytes)}>
                 <span style:width="{percent(b.sentBytes, b.bytes)}%"></span>
@@ -272,9 +331,21 @@
           <table>
             <thead>
               <tr>
-                <th class="check"><span class="sr-only">Include</span></th>
+                <th class="check">
+                  <input
+                    type="checkbox"
+                    checked={allIncluded}
+                    {@attach (box: HTMLInputElement) => {
+                      box.indeterminate = someIncluded && !allIncluded;
+                    }}
+                    onchange={(e) => includeAll(e.currentTarget.checked)}
+                    aria-label={allIncluded ? "Deselect all files" : "Select all files"}
+                    title={allIncluded ? "Deselect all" : "Select all"}
+                  />
+                </th>
                 <th>File</th>
                 <th>Goes to</th>
+                <th class="num len">Length</th>
                 <th class="num size">Size</th>
               </tr>
             </thead>
@@ -282,6 +353,8 @@
               {#each paths as path (path)}
                 {@const to = targetOf(path)}
                 {@const slash = path.lastIndexOf("/")}
+                {@const character = parseCharacterName(baseName(path))}
+                {@const length = lengths[path]}
                 <tr class:off={!include[path] || !to || to === "-"}>
                   <td class="check"><input type="checkbox" bind:checked={include[path]} aria-label="Send {path}" /></td>
                   <td class="file">
@@ -289,13 +362,15 @@
                   </td>
                   <td class="to">
                     <select class="input" value={perFile[path] ?? ""} onchange={(e) => (perFile[path] = e.currentTarget.value)} aria-label="Who gets {path}">
-                      <option value="">{parseCharacterName(baseName(path)) !== null ? `By character${to && to !== "-" ? ` (${actors.find((p) => p.id === to)?.name ?? "?"})` : " (nobody)"}` : "Nobody"}</option>
+                      <!-- Without a character, "" already means nobody: one "Don't send", not "Nobody" as well -->
+                      <option value="">{character !== null ? `By character${to && to !== "-" ? ` (${actors.find((p) => p.id === to)?.name ?? "?"})` : " (nobody)"}` : "Don't send"}</option>
                       {#each actors as p (p.id)}
                         <option value={p.id} disabled={!canReceive(p)}>{p.name}{canReceive(p) ? "" : ` (${whyNot(p)})`}</option>
                       {/each}
-                      <option value="-">Don't send</option>
+                      {#if character !== null}<option value="-">Don't send</option>{/if}
                     </select>
                   </td>
+                  <td class="num mono len">{length != null ? clipLength(length) : ""}</td>
                   <td class="num mono size">{fileSize(sizeOf.get(path) ?? 0)}</td>
                 </tr>
               {/each}
@@ -392,7 +467,15 @@
     margin-top: 0.5rem;
   }
 
+  .transfers-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+  }
+
   .batch {
+    position: relative;
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
@@ -400,6 +483,58 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--surface-2);
+  }
+
+  .batch:hover,
+  .batch:focus-visible {
+    border-color: var(--border-strong);
+  }
+
+  /* Who got which file: on hover or keyboard focus, over the transfers below */
+  .details {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    z-index: 3;
+    display: none;
+    gap: 0.45rem;
+    width: min(100%, 34rem);
+    max-height: 18rem;
+    overflow: hidden;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-glass);
+    backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-pop);
+    font-size: 0.8125rem;
+    pointer-events: none;
+  }
+
+  .batch:hover > .details,
+  .batch:focus-within > .details {
+    display: grid;
+  }
+
+  .details li {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .details .name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .details li > span:last-child {
+    flex: none;
+    max-width: 50%;
+    text-align: right;
+  }
+
+  .r-ok {
+    color: var(--ok);
   }
 
   .batch-head {
@@ -568,6 +703,7 @@
   }
 
   tr.off td.file,
+  tr.off td.len,
   tr.off td.size {
     opacity: 0.45;
   }
@@ -590,7 +726,8 @@
   }
 
   @container (max-width: 34rem) {
-    .size {
+    .size,
+    .len {
       display: none;
     }
 

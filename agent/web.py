@@ -167,6 +167,20 @@ def create_app(agent: "Agent", security: Security, static_dir: Path) -> FastAPI:
         except FolderError as exc:
             return refused(exc)
 
+    @app.post("/api/folders/durations")
+    async def folders_durations(request: Request):
+        if (response := denied(request)) is not None:
+            return response
+        body = await json_body(request)
+        paths = body.get("paths")
+        if not isinstance(paths, list):
+            return JSONResponse({"error": "paths must be a list"}, status_code=400)
+        try:
+            found = await asyncio.to_thread(folders.durations, str(body.get("folder", "")), [str(p) for p in paths])
+        except FolderError as exc:
+            return refused(exc)
+        return {"durations": found}
+
     @app.post("/api/folders/read")
     async def folders_read(request: Request):
         if (response := denied(request)) is not None:

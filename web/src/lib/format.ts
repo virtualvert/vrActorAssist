@@ -67,6 +67,12 @@ export function mediaLength(ms: number): string {
   return mediaTime(Math.round(Math.max(0, ms) / 1000) * 1000);
 }
 
+/** A file's length to a tenth of a second (0:04.2, 0:00.3), for short lines and effects. */
+export function clipLength(ms: number): string {
+  const tenths = Math.round(Math.max(0, ms) / 100);
+  return `${mediaTime(Math.floor(tenths / 10) * 1000)}.${tenths % 10}`;
+}
+
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return "?";

@@ -570,6 +570,13 @@ class Sender:
                 except (asyncio.CancelledError, Exception):
                     pass
 
+    def clear(self, batch_id: str) -> None:
+        """Forget finished batches (one, or "all"); running ones stay until they end."""
+        for batch in list(self.batches.values()):
+            if (batch_id == "all" or batch.id == batch_id) and batch.state in ("done", "cancelled", "failed"):
+                self.batches.pop(batch.id, None)
+        self.agent.changed()
+
     def reset(self, reason: str) -> None:
         for batch in self.batches.values():
             if batch.task is not None and not batch.task.done():

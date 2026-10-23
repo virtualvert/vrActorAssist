@@ -531,6 +531,10 @@ class Agent:
         self._require_director()
         await self.files.sender.cancel(str(args.get("id", "")))
 
+    async def _call_clearBatches(self, args: dict) -> None:
+        self._require_director()
+        self.files.sender.clear(str(args.get("id", "")))
+
     async def _call_answerFile(self, args: dict) -> None:
         await self.files.receiver.answer(
             str(args.get("transferId", "")),

@@ -139,6 +139,10 @@ const agentFolders: FolderAccess = {
   async read(folder, path) {
     return (await postJson("/api/folders/read", { folder, path })).arrayBuffer();
   },
+  async durations(folder, paths) {
+    const res = await postJson("/api/folders/durations", { folder, paths });
+    return ((await res.json()) as { durations: Record<string, number | null> }).durations;
+  },
   async write(folder, path, data) {
     const query = new URLSearchParams({ folder, path });
     const res = await post(`/api/folders/write?${query}`, new Blob([data]), "application/octet-stream");

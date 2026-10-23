@@ -209,3 +209,30 @@ def test_open_read_write_round_trip(client, project):
 def test_unknown_folder_is_refused(client, project):
     res = client.post("/api/folders/read", json={"folder": str(project), "path": "sfx/door.flac"}, headers={"Origin": ORIGIN})
     assert res.status_code == 400 and res.json()["error"] == "Open the folder first"
+
+
+def test_durations_endpoint_returns_only_numbers_for_media_in_an_opened_folder(client, project):
+    import wave
+
+    with wave.open(str(project / "Scene 4 - Mira.WAV"), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(8000)
+        w.writeframes(b"\0\0" * 12000)  # 1.5 s
+    (project / "clip.mp4").write_bytes(b"not really a video")
+    headers = {"Origin": ORIGIN}
+    paths = ["Scene 4 - Mira.WAV", "clip.mp4", "notes.txt", "link.wav", "../outside/secret.wav", "gone.wav"]
+
+    refused = client.post("/api/folders/durations", json={"folder": str(project), "paths": paths}, headers=headers)
+    assert refused.status_code == 400 and refused.json()["error"] == "Open the folder first"
+    assert client.post("/api/folders/durations", json={"folder": str(project), "paths": paths}).status_code == 403
+
+    listing = client.post("/api/folders/open", json={"folder": str(project), "kind": "all"}, headers=headers).json()
+    res = client.post("/api/folders/durations", json={"folder": listing["folder"], "paths": paths}, headers=headers)
+    assert res.status_code == 200
+    assert res.json()["durations"] == {
+        "Scene 4 - Mira.WAV": 1500, "clip.mp4": None, "notes.txt": None,
+        "link.wav": None, "../outside/secret.wav": None, "gone.wav": None,
+    }
+    bad = client.post("/api/folders/durations", json={"folder": listing["folder"], "paths": "x"}, headers=headers)
+    assert bad.status_code == 400

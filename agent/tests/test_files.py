@@ -491,6 +491,16 @@ def test_files_end_to_end(relay, tmp_path, monkeypatch):  # noqa: F811
             assert not (tmp_path / "inbox-Coda" / big.name).exists()
             assert not list((tmp_path / "inbox-Coda").glob(".*.part"))
 
+            # Clearing finished transfers from the list: one, then the rest
+            await wait_for(lambda: all(b["state"] in ("done", "cancelled", "failed")
+                                       for b in director.snapshot()["director"]["files"]["batches"]))
+            finished = [b["id"] for b in director.snapshot()["director"]["files"]["batches"]]
+            assert len(finished) == 3
+            await director.handle_call("clearBatches", {"id": finished[0]})
+            assert [b["id"] for b in director.snapshot()["director"]["files"]["batches"]] == finished[1:]
+            await director.handle_call("clearBatches", {"id": "all"})
+            assert director.snapshot()["director"]["files"]["batches"] == []
+
             # Files outside the opened folder, hidden ones and duplicate names are refused
             with pytest.raises(Exception, match="inside the folder"):
                 await director.handle_call("sendFiles", {"folder": str(src), "items": [{"path": "../x", "actorId": ids["Coda"]}]})
@@ -655,3 +665,17 @@ def test_batch_log_says_why_files_did_not_go(tmp_path):
         assert ("warning", "Files to Coda: 0 sent, 2 not (a.wav: Declined; b.wav: Coda disconnected)") in agent.logs
 
     asyncio.run(scenario())
+
+
+def test_clearing_keeps_running_batches():
+    from types import SimpleNamespace
+
+    from agent.files import Batch, Sender
+
+    sender = Sender(SimpleNamespace(changed=lambda: None))
+    for i, state in enumerate(("done", "sending", "cancelled", "waiting", "failed")):
+        sender.batches[f"b{i}"] = Batch(id=f"b{i}", actor_id="s1", actor_name="Coda", files=[], state=state)
+    sender.clear("b1")  # running: stays
+    assert list(sender.batches) == ["b0", "b1", "b2", "b3", "b4"]
+    sender.clear("all")
+    assert list(sender.batches) == ["b1", "b3"]

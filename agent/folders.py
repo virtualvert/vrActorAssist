@@ -3,6 +3,7 @@
 The page measures and converts the audio itself; the agent only moves bytes, within limits:
 - it reads only files inside folders the person opened in this run of the app: audio files for
   Normalize folder, any non-hidden file (up to 1 GiB) for sending;
+- for Send files' Length column it reads only audio and video headers and returns numbers;
 - it writes only `.wav` files under `<folder>/normalized/`, atomically;
 - symlinks and `..` can't lead outside those folders.
 """
@@ -16,9 +17,13 @@ import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
+from .media import MEDIA_EXTENSIONS, duration_ms
+
 AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".oga", ".opus", ".m4a", ".aac"}
 OUTPUT_DIR = "normalized"
 MAX_FILES = 5000
+# Paths per durations request (the page asks in batches)
+MAX_DURATIONS = 500
 MAX_READ_BYTES = 300 * 1024 * 1024
 MAX_WRITE_BYTES = 1024 * 1024 * 1024
 MAX_SEND_BYTES = 1024 * 1024 * 1024
@@ -93,6 +98,21 @@ class Folders:
             Path(temp).unlink(missing_ok=True)
             raise
         return target
+
+    def durations(self, folder: str, rels: list[str]) -> dict[str, int | None]:
+        """Lengths (ms) of audio and video files in an opened folder, from their headers only
+        (media.py); None for other files and ones that can't be read."""
+        root = self._root(folder)
+        out: dict[str, int | None] = {}
+        for rel in rels[:MAX_DURATIONS]:
+            try:
+                path = inside(root, rel)
+            except FolderError:
+                out[rel] = None
+                continue
+            ok = path.suffix.lower() in MEDIA_EXTENSIONS and not path.is_symlink() and path.is_file()
+            out[rel] = duration_ms(path) if ok else None
+        return out
 
     def _root(self, folder: str) -> Path:
         root = resolve_root(folder)

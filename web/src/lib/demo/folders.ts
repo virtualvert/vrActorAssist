@@ -54,6 +54,7 @@ export class DemoFolders implements FolderAccess {
       // Send files lists everything, the normalized copies and other documents included
       files.push(
         { path: "EP3 script.pdf", size: 182_311 },
+        { path: "EP3 trailer.mp4", size: 3_845_120 },
         ...[...this.written].map(([path, size]) => ({ path: `normalized/${path}`, size })),
       );
       files.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: "base" }));
@@ -72,6 +73,16 @@ export class DemoFolders implements FolderAccess {
     }
     await wait(60);
     return bytes.slice(0); // decoding detaches the buffer, so hand out a copy
+  }
+
+  async durations(_folder: string, paths: string[]): Promise<Record<string, number | null>> {
+    await wait(150);
+    const length = (path: string): number | null => {
+      if (path === "EP3 trailer.mp4") return 12_400;
+      const file = FILES.find((f) => f.path === path || `normalized/${f.path.replace(/\.[^.]+$/, ".wav")}` === path);
+      return file ? Math.round(file.seconds * 1000) : null;
+    };
+    return Object.fromEntries(paths.map((p) => [p, length(p)]));
   }
 
   async write(folder: string, path: string, data: Uint8Array<ArrayBuffer>): Promise<string> {

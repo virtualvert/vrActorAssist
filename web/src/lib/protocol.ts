@@ -389,6 +389,8 @@ export type Call =
   | { call: "sendFiles"; args: { folder: string; items: { path: string; actorId: string }[] } }
   /** A batch id, or "all". */
   | { call: "cancelBatch"; args: { id: string } }
+  /** Remove finished batches from the list: a batch id, or "all" (running ones stay). */
+  | { call: "clearBatches"; args: { id: string } }
   | { call: "camera"; args: { action: "roll" | "cut" } }
   | { call: "openBrowser" }
   /** Show the log folder (`logDir`) in Explorer / the file manager. */
