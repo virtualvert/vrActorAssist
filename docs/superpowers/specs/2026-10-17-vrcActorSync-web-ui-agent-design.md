@@ -629,6 +629,7 @@ The default is set per actor in config. The director can override it on each pla
   - After that the position advances in steps about 140 ms apart, so the UI interpolates between reads.
   - It reads 0 or the old value while `SEEKING`.
   - After a stop, `GetPlaybackPositionInMs()` and `GetPlaybackDurationInMs()` keep the last sound's values (once 3127 ms of a 3096 ms sound), so `STOPPED` means "no position".
+- **Adding received files** (as built, 2026-10-23): `soundpad.state` also carries `auto_add_received` (the actor's setting "Add received files to Soundpad") and `trial` (the Soundpad trial can't add sounds), so a director sees in Send files and the actor's Soundpad panel that playing sent files there will fail. Builds before this don't send them: the director treats that as unknown.
 - **List changes:** poll `GetSoundFileCount()` every 5 s; push `soundpad.list` when the count changes.
 - **Director UI:** a mini transport per actor with status, title, progress bar and volume.
 - **No audio level on the pipe:** the Remote Control API has no playback level (`GetRecordingPeak()` belongs to Soundpad's recorder, Appendix A). `PLAYING` plus an advancing position means the file is progressing, not that sound reaches anyone. The actor's agent therefore measures the output level itself and reports it as `soundpad.level` (§9.6).

@@ -7,7 +7,7 @@
   import Segmented from "../components/Segmented.svelte";
   import { mediaLength, mediaTime } from "../format";
   import type { Lines, SoundRef } from "../protocol";
-  import { LINE_HELP, LINE_OPTIONS, positionNow, searchSounds, soundpadReach, steadyPosition } from "../soundpad";
+  import { LINE_HELP, LINE_OPTIONS, positionNow, searchSounds, soundpadReach, steadyPosition, wontAddReceived, wontAddText } from "../soundpad";
   import { app } from "../state.svelte";
   import { armedText, armReason, DEFAULT_START_LATENCY_MS, isArmed } from "../timing";
 
@@ -24,6 +24,7 @@
   const list = $derived(peer ? (app.sounds[peer.id] ?? null) : null);
   const playing = $derived(!!sp && sp.status !== null && sp.status !== "STOPPED");
   const armed = $derived(peer ? data.director?.armed[peer.id] : undefined);
+  const wontAdd = $derived(wontAddReceived(sp));
   const canCalibrate = $derived(!!peer && reach === "full" && peer.caps.includes("soundpad.calibrate") && !data.connection.legacy);
 
   let query = $state("");
@@ -321,7 +322,11 @@
               </li>
             {/each}
           </ul>
-          <span class="faint small">Their app adds a received file to Soundpad if it isn't there yet (full version).</span>
+          {#if wontAdd}
+            <p class="message note">{wontAddText(peer.name, wontAdd)}</p>
+          {:else}
+            <span class="faint small">Their app adds a received file to Soundpad if it isn't there yet (full version).</span>
+          {/if}
         </section>
       {/if}
     {/if}

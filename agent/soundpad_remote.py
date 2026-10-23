@@ -346,6 +346,9 @@ class SoundpadRemote:
             "volume": s.get("volume"),
             "muted": s.get("muted"),
             "detail": s.get("detail", ""),
+            # None from apps that don't say (older builds)
+            "autoAddReceived": s.get("auto_add_received"),
+            "trial": s.get("trial"),
             "at": at,
             "startLatencyMs": self.latencies.get(session_id),
         }

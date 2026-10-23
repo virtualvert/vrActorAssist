@@ -282,6 +282,27 @@ describe("DemoSession", () => {
     expect(events.some((e) => e.type === "log" && e.entry.level === "warning" && e.entry.text.startsWith("Juno"))).toBe(true);
   });
 
+  test("an actor that doesn't add received files says so; playing a sent file there fails with their setting named", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(1000, s);
+    const peers = lastState().peers;
+    const coda = peers.find((p) => p.name === "Coda")!;
+    const infinity = peers.find((p) => p.name === "Infinity")!;
+    expect(coda.soundpad).toMatchObject({ autoAddReceived: true, trial: false });
+    expect(infinity.soundpad).toMatchObject({ autoAddReceived: false, trial: false });
+    expect(peers.find((p) => p.name === "Juno")!.soundpad).toMatchObject({ autoAddReceived: true, trial: null });
+
+    const sha256 = "ab".repeat(32);
+    s.handle({ call: "play", args: { ids: [infinity.id], sound: { sha256 }, label: "Scene 1 - Diego.wav" } });
+    expect(lastState().peers.find((p) => p.id === infinity.id)!.activity).toBe("idle");
+    const warning = events.find((e) => e.type === "log" && e.entry.level === "warning" && e.entry.text.startsWith("Infinity"));
+    expect(warning?.type === "log" && warning.entry.text).toBe(
+      "Infinity: play — Scene 1 - Diego.wav isn't in Soundpad, and this actor's app has 'Add received files to Soundpad' turned off",
+    );
+    s.handle({ call: "play", args: { ids: [coda.id], sound: { sha256 }, label: "Scene 1 - Diego.wav" } });
+    expect(lastState().peers.find((p) => p.id === coda.id)!.activity).toBe("playing");
+  });
+
   test("GO plays every targeted actor's selected sound; STOP stops it", () => {
     const s = make(new MemoryStorage(), "director");
     clock.advance(1000, s);

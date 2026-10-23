@@ -201,7 +201,9 @@ def test_paths_received_files_and_auto_add(windows_cli, tmp_path):
         runtime._config.soundpad.auto_add_received = False
         other = tmp_path / "other.wav"
         other.write_bytes(b"x")
-        assert (await runtime.play_sound({"path": str(other)}))[0] == "not_in_soundpad"
+        status, error = await runtime.play_sound({"path": str(other)})
+        assert status == "not_in_soundpad"
+        assert error == "other.wav isn't in Soundpad, and this actor's app has 'Add received files to Soundpad' turned off"
         await runtime.close()
 
     asyncio.run(scenario())
@@ -215,8 +217,10 @@ def test_trial_cant_add(windows_cli, tmp_path):
     async def scenario():
         runtime = await ready(fake)
         status, error = await runtime.play_sound({"path": str(path)})
-        assert status == "trial_limit" and "by hand" in error
+        assert status == "trial_limit" and "x.wav isn't in Soundpad" in error and "Soundpad trial" in error and "by hand" in error
         assert not any(c.startswith("DoAddSound") for c in fake.commands)
+        state = runtime.state_for_directors()
+        assert (state["auto_add_received"], state["trial"]) == (True, True)
         await runtime.close()
 
     asyncio.run(scenario())
@@ -250,7 +254,9 @@ def test_without_the_pipe(windows_cli):
         runtime._pipe.reconnect_now()
         assert await runtime.play_sound({"index": 2}) == ("soundpad_offline", "Soundpad isn't running")
         assert windows_cli == ["*play:2"]
-        assert runtime.state_for_directors()["detail"].startswith("Soundpad isn't running")
+        closed = runtime.state_for_directors()
+        assert closed["detail"].startswith("Soundpad isn't running")
+        assert closed["auto_add_received"] is True and "trial" not in closed
         status, error = await runtime.play_sound({"key": "0" * 16})
         assert status == "soundpad_offline"
         assert (await runtime.control("volume", 50))[0] == "soundpad_offline"
@@ -327,8 +333,11 @@ def test_received_files_are_added_once(windows_cli, tmp_path):
     path = tmp_path / "Scene 1 - Coda.wav"
     path.write_bytes(b"x")
 
+    logs = []
+
     async def scenario():
-        runtime = await ready(fake)
+        runtime = await ready(fake, _log=lambda level, text: logs.append(text))
+        assert runtime.state_for_directors()["auto_add_received"] is True
         runtime.on_file_received(str(path))
         await asyncio.sleep(0.2)
         runtime.on_file_received(str(path))  # an updated file: same path, already listed
@@ -338,6 +347,10 @@ def test_received_files_are_added_once(windows_cli, tmp_path):
         runtime.on_file_received(str(tmp_path / "another.wav"))
         await asyncio.sleep(0.1)
         assert sum(c.startswith("DoAddSound") for c in fake.commands) == 1
+        assert logs[-1] == "Saved another.wav, not added to Soundpad: 'Add received files to Soundpad' is off"
+        # directors are told, so they see it before sending or playing
+        state = runtime.state_for_directors()
+        assert (state["auto_add_received"], state["trial"]) == (False, False)
         await runtime.close()
 
     asyncio.run(scenario())
@@ -416,6 +429,13 @@ def test_director_controls_an_actors_soundpad(relay, tmp_path, monkeypatch, wind
             peer = coda_peer()
             assert {"soundpad.list", "soundpad.lines", "files"} <= set(peer["caps"])
             ids = [peer["id"]]
+            assert (peer["soundpad"]["autoAddReceived"], peer["soundpad"]["trial"]) == (True, False)
+
+            # The actor turns off adding received files: the director sees it without playing anything
+            await coda.handle_call("setActorLocal", {"autoAddReceived": False})
+            await wait_for(lambda: coda_peer()["soundpad"]["autoAddReceived"] is False)
+            await coda.handle_call("setActorLocal", {"autoAddReceived": True})
+            await wait_for(lambda: coda_peer()["soundpad"]["autoAddReceived"] is True)
 
             # The list: titles and keys, never paths
             await director.handle_call("requestSounds", {"id": peer["id"]})

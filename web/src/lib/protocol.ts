@@ -74,6 +74,10 @@ export interface PeerSoundpad {
   volume: number | null;
   muted: boolean | null;
   detail: string;
+  /** The actor's own setting "Add received files to Soundpad"; null: their app doesn't say (older builds). */
+  autoAddReceived: boolean | null;
+  /** Their Soundpad is the trial, which can't add sounds; null: unknown. */
+  trial: boolean | null;
   /** When the agent received this report (ms since epoch). */
   at: number;
   /** From the last calibration this director asked for (ms); null until then. */

@@ -468,9 +468,11 @@ class ActorRuntime:
         if not os.path.isfile(path):
             raise PlayError("not_found", f"{name} isn't on this actor's PC")
         if not self._config.soundpad.auto_add_received:
-            raise PlayError("not_in_soundpad", f"{name} isn't in Soundpad; add it there, or turn on adding received files")
+            raise PlayError("not_in_soundpad", f"{name} isn't in Soundpad, and this actor's app has "
+                                               f"'Add received files to Soundpad' turned off")
         if pipe.info and pipe.info.trial:
-            raise PlayError("trial_limit", f"The Soundpad trial can't add sounds; add {name} to Soundpad by hand")
+            raise PlayError("trial_limit", f"{name} isn't in Soundpad, and this actor has the Soundpad trial, "
+                                           f"which can't add sounds: they have to add it by hand")
         index = await pipe.add_sound(path)
         await self._refresh_cache(pipe)
         self._log("info", f"Added {name} to Soundpad (sound {index})")
@@ -547,14 +549,18 @@ class ActorRuntime:
         return self.cache.sounds, categories
 
     def state_for_directors(self) -> dict:
-        """soundpad.state (spec §8.1.6)."""
+        """soundpad.state (spec §8.1.6). It says whether received files get added to Soundpad, so a
+        director knows before sending them that playing them would fail."""
         sp = self._config.soundpad
         if not sp.enabled:
             return {"available": False, "detail": "Soundpad is off on this computer"}
         if not self._pipe_live():
-            return {"available": False, "detail": self.soundpad_state()["detail"]}
+            return {"available": False, "detail": self.soundpad_state()["detail"], "auto_add_received": sp.auto_add_received}
         playback = self._playback
-        state: dict[str, Any] = {"available": True, "status": playback.status if playback else None}
+        state: dict[str, Any] = {"available": True, "status": playback.status if playback else None,
+                                 "auto_add_received": sp.auto_add_received}
+        if self._pipe.info.trial is not None:
+            state["trial"] = self._pipe.info.trial
         if self.volume_level is not None and 0 <= self.volume_level <= 100:
             state["volume"] = self.volume_level
         if self.is_muted is not None:
@@ -572,7 +578,12 @@ class ActorRuntime:
     def on_file_received(self, path: str) -> None:
         """Add a received file to Soundpad (full version, when turned on), unless it's there already."""
         sp = self._config.soundpad
-        if not (sp.enabled and sp.auto_add_received and self._config.role == "actor" and self._pipe_live()):
+        if not (sp.enabled and self._config.role == "actor"):
+            return
+        if not sp.auto_add_received:
+            self._log("info", f"Saved {Path(path).name}, not added to Soundpad: 'Add received files to Soundpad' is off")
+            return
+        if not self._pipe_live():
             return
         if self._pipe.info and self._pipe.info.trial:
             self._log("info", f"Soundpad trial: add {Path(path).name} to Soundpad by hand to play it")

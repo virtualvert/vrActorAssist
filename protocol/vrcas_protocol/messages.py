@@ -324,6 +324,10 @@ class SoundpadState(Payload):
     volume: int | None = Field(default=None, ge=0, le=100)
     muted: bool | None = None
     detail: str = Field(default="", max_length=500)
+    # The actor's own setting "Add received files to Soundpad"; None: an app that doesn't say
+    auto_add_received: bool | None = None
+    # Soundpad is the trial, which can't add sounds; None: unknown (Soundpad not connected)
+    trial: bool | None = None
 
 
 class SoundpadCalibrate(Payload):

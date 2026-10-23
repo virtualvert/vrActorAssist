@@ -58,7 +58,7 @@ SAMPLES = {
                       "categories": [{"index": 2, "name": "EP3"}]},
     "soundpad.state": {"available": True, "status": "PLAYING", "position_ms": 1400, "duration_ms": 47000,
                        "title": "Scene 4 - Diego", "index": 1, "key": "0123456789abcdef", "lines": "both", "volume": 80,
-                       "muted": False},
+                       "muted": False, "auto_add_received": False, "trial": False},
     "osc.param": {"parameter": "RecIcon", "value": True},
     "file.batch.start": {"batch_id": "b1", "files": 2, "bytes": 300_000},
     "file.offer": {"transfer_id": "0f" * 16, "batch_id": "b1", "name": "Scene 4 - Diego.mp3", "size": 300_000,
