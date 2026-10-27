@@ -7,14 +7,10 @@ import math
 from contextlib import ExitStack
 
 import pytest
-from fastapi.testclient import TestClient
 
 import server_ws
 import soundpad
-from server.app import create_app
-from server.settings import Settings
-
-SECRET = "test-secret"
+from relay_helpers import SECRET, relay_client
 
 MANIFEST = {
     "latest_version": "0.3.3",
@@ -31,16 +27,9 @@ MANIFEST = {
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def relay(tmp_path):
+def relay(tmp_path, stack):
     """A TestClient on a fresh relay app with all files in tmp_path and no status loop."""
-    (tmp_path / "approved_actors.json").write_text(json.dumps({
-        "mid-alice": {"name": "Alice"},
-        "mid-bob": {"name": "Bob"},
-    }))
-    app = create_app(Settings(secret=SECRET, data_dir=tmp_path, status_interval_s=None, echo_log=False))
-    # Entering the client shares one event loop between all websockets
-    with TestClient(app) as client:
-        yield client
+    return relay_client(stack, tmp_path, {"mid-alice": {"name": "Alice"}, "mid-bob": {"name": "Bob"}})[0]
 
 
 def relay_state(client):

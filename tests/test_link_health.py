@@ -4,32 +4,19 @@
 import asyncio
 import json
 import time
-from contextlib import ExitStack
 
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
 from uvicorn.protocols.websockets.websockets_sansio_impl import WebSocketsSansIOProtocol
 from websockets.asyncio.client import connect
 
 from legacy_client import free_port
-from relay_helpers import SECRET, FakeClock, connect_legacy, connect_v2, make_relay
+from relay_helpers import SECRET, FakeClock, connect_legacy, connect_v2, make_relay, relay_client
 from server.keepalive import protocol_class
 from server.relay import close_text, span
 from server.settings import Throttle
 
 APPROVED = {"m-coda": {"name": "Coda"}}
-
-
-@pytest.fixture
-def stack():
-    with ExitStack() as s:
-        yield s
-
-
-def relay_client(stack, tmp_path, approved=None, **kwargs):
-    app = make_relay(tmp_path, approved, **kwargs)
-    return stack.enter_context(TestClient(app)), app.state.relay
 
 
 def log_of(tmp_path) -> str:

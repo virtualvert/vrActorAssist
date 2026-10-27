@@ -16,8 +16,7 @@ from agent.soundpad_pipe import SoundpadPipe, Sound
 from agent.sounds import LIST_PAGE, normal_path, pages, sound_key
 from server.settings import Settings
 
-from .test_relay_v2 import relay  # noqa: F401  (fixture)
-from .test_soundpad_pipe import FakeSoundpad, actor_config, windows_cli  # noqa: F401  (fixture)
+from .test_soundpad_pipe import FakeSoundpad, actor_config
 
 
 class FullSoundpad(FakeSoundpad):
@@ -66,13 +65,13 @@ class FullSoundpad(FakeSoundpad):
         return super().answer(command)
 
 
-async def ready(fake, cfg=None, **attrs):
+async def ready(fake, cfg=None, *, state="ready", **attrs):
     runtime = ActorRuntime(cfg or actor_config(), pipe_factory=lambda: SoundpadPipe(fake.connect))
     for name, value in attrs.items():
         setattr(runtime, name, value)
     await runtime.refresh()
     await asyncio.sleep(0.05)
-    assert runtime.soundpad_state()["state"] == "ready"
+    assert runtime.soundpad_state()["state"] == state
     return runtime
 
 
@@ -244,7 +243,7 @@ def test_without_the_pipe(windows_cli):
     fake.refuse = PermissionError(5, "Access is denied")
 
     async def scenario():
-        runtime = await ready_or_fallback(fake)
+        runtime = await ready(fake, state="fallback")
         # what the command line can do still works
         assert await runtime.play_sound({"index": 2}) == ("ok", None)
         assert windows_cli == ["*play:2"]
@@ -265,13 +264,6 @@ def test_without_the_pipe(windows_cli):
         state = runtime.state_for_directors()
         assert state == {"available": False, "detail": "Soundpad is off on this computer"}
         await runtime.close()
-
-    async def ready_or_fallback(fake):
-        runtime = ActorRuntime(actor_config(), pipe_factory=lambda: SoundpadPipe(fake.connect))
-        await runtime.refresh()
-        await asyncio.sleep(0.05)
-        assert runtime.soundpad_state()["state"] == "fallback"
-        return runtime
 
     asyncio.run(scenario())
 
@@ -401,8 +393,8 @@ def test_a_cue_never_starts_soundpad(windows_cli, monkeypatch):
 # ---- director ↔ actor through the relay -------------------------------------------------------------
 
 
-def test_director_controls_an_actors_soundpad(relay, tmp_path, monkeypatch, windows_cli):  # noqa: F811
-    from .test_relay_legacy import SECRET, make_agent, wait_for
+def test_director_controls_an_actors_soundpad(relay, tmp_path, monkeypatch, windows_cli):
+    from .helpers import SECRET, make_agent, wait_for
 
     monkeypatch.setattr(actor_runtime, "LEVELS_EVERY_S", 0.2)
     monkeypatch.setattr(actor_runtime, "POLL_IDLE_S", 0.1)
@@ -489,7 +481,7 @@ def test_repeated_controls_are_dropped(tmp_path, monkeypatch):
     first one goes out until it stops for REPEAT_S."""
     from agent import core
 
-    from .test_relay_legacy import make_agent
+    from .helpers import make_agent
 
     agent = make_agent(tmp_path, monkeypatch, "Mira", "director", "m-mira", "127.0.0.1:9", "s")
     handled = []

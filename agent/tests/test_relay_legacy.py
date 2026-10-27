@@ -1,20 +1,13 @@
 """End-to-end against the real v0.3 relay (the released server_ws.py) running in-process."""
 
 import asyncio
-import importlib.util
-import socket
-import time
-from functools import cache
-from pathlib import Path
 
 import pytest
-import uvicorn
 
-from agent.config import ConfigStore
-from agent.core import Agent, CallError
+from agent.core import CallError
 from agent.relay_legacy import ws_url
 
-SECRET = "test-secret"
+from .helpers import SECRET, legacy_harness, make_agent, serve, wait_for
 
 
 def test_ws_url_normalisation():
@@ -34,51 +27,15 @@ def test_ws_url_normalisation():
         ws_url("  ")
 
 
-@cache
-def legacy_harness():
-    """tests/legacy_client.py (frozen v0.3.3 relay, scripted v0.3 client), loaded by path."""
-    path = Path(__file__).resolve().parents[2] / "tests" / "legacy_client.py"
-    spec = importlib.util.spec_from_file_location("vrcas_legacy_harness", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 @pytest.fixture
 def relay(tmp_path):
     """The released v0.3.3 relay (frozen copy in tests/legacy_relay/): it has no /v2/ws."""
     return legacy_harness().load_v033_relay(tmp_path / "relay", SECRET).app
 
 
-def make_agent(tmp_path, monkeypatch, name, role, machine_id, url, secret=""):
-    monkeypatch.setenv("VRCAS_MACHINE_ID", machine_id)
-    store = ConfigStore(tmp_path / name)
-    cfg = store.config
-    cfg.role, cfg.name, cfg.server_url, cfg.secret = role, name, url, secret
-    return Agent(store)
-
-
-async def wait_for(predicate, timeout=5.0):
-    end = time.monotonic() + timeout
-    while time.monotonic() < end:
-        if predicate():
-            return
-        await asyncio.sleep(0.05)
-    raise AssertionError("condition not met in time")
-
-
-def test_director_and_actor_flow(relay, tmp_path, monkeypatch):
-    async def scenario():
-        port = free_port()
-        server = uvicorn.Server(uvicorn.Config(relay, host="127.0.0.1", port=port, log_level="warning"))
-        task = asyncio.create_task(server.serve())
-        await wait_for(lambda: server.started)
+@pytest.mark.anyio
+async def test_director_and_actor_flow(relay, tmp_path, monkeypatch):
+    async with serve(relay) as port:
         url = f"127.0.0.1:{port}"
 
         director = make_agent(tmp_path, monkeypatch, "Mira", "director", "machine-director", url, SECRET)
@@ -144,18 +101,11 @@ def test_director_and_actor_flow(relay, tmp_path, monkeypatch):
         finally:
             await actor.shutdown()
             await director.shutdown()
-            server.should_exit = True
-            await task
-
-    asyncio.run(scenario())
 
 
-def test_wrong_secret_stops_retrying(relay, tmp_path, monkeypatch):
-    async def scenario():
-        port = free_port()
-        server = uvicorn.Server(uvicorn.Config(relay, host="127.0.0.1", port=port, log_level="warning"))
-        task = asyncio.create_task(server.serve())
-        await wait_for(lambda: server.started)
+@pytest.mark.anyio
+async def test_wrong_secret_stops_retrying(relay, tmp_path, monkeypatch):
+    async with serve(relay) as port:
         director = make_agent(tmp_path, monkeypatch, "Mira", "director", "m1", f"127.0.0.1:{port}", "wrong")
         try:
             await director.start()
@@ -165,10 +115,6 @@ def test_wrong_secret_stops_retrying(relay, tmp_path, monkeypatch):
             assert director.relay.status == "error"  # no reconnect loop
         finally:
             await director.shutdown()
-            server.should_exit = True
-            await task
-
-    asyncio.run(scenario())
 
 
 def test_log_folder(tmp_path, monkeypatch):

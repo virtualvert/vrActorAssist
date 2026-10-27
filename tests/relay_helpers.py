@@ -62,6 +62,12 @@ def make_relay(tmp_path: Path, approved: dict | None = None, manifest: dict | No
     return create_app(Settings(**options), clock=clock)
 
 
+def relay_client(stack: ExitStack, tmp_path: Path, approved: dict | None = None, **kwargs: Any):
+    """An in-process relay on a TestClient (closed with the stack). Returns (client, relay state)."""
+    app = make_relay(tmp_path, approved, **kwargs)
+    return stack.enter_context(TestClient(app)), app.state.relay
+
+
 class V2:
     """A /v2/ws client on a TestClient connection."""
 

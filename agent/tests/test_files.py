@@ -14,6 +14,7 @@ from agent import files as files_mod
 from agent.config import Config, ConfigStore
 from agent.files import (
     MAX_IN_FLIGHT,
+    Batch,
     FileRefused,
     Receiver,
     Sender,
@@ -23,8 +24,7 @@ from agent.files import (
 )
 from vrcas_protocol import pack_chunk, unpack_chunk
 
-from .test_relay_legacy import SECRET, make_agent, wait_for
-from .test_relay_v2 import relay  # noqa: F401  (fixture)
+from .helpers import SECRET, join_scripted_actor, legacy_client, make_agent, read_until, wait_for
 
 CHUNK = 16 * 1024
 
@@ -114,79 +114,73 @@ async def deliver(rx, content, tid="0f" * 16, sha256=None):
     await rx.on_message({"type": "file.end", "from": "s_dir", "data": end}, "Mira")
 
 
-def test_receive_with_prompt(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path)
-        rx = Receiver(agent)
-        content = os.urandom(CHUNK * 2 + 100)
-        (tmp_path / "inbox").mkdir()
-        (tmp_path / "inbox" / "Scene 4 - Diego.mp3").write_bytes(b"old")
-        await rx.on_message(offer_env(content, character="Diego"), "Mira")
-        view = rx.view()["incoming"][0]
-        assert view["state"] == "asking" and view["replaces"] and view["character"] == "Diego" and view["from"] == "Mira"
-        assert agent.files.types() == []
+@pytest.mark.anyio
+async def test_receive_with_prompt(tmp_path):
+    agent = fake_agent(tmp_path)
+    rx = Receiver(agent)
+    content = os.urandom(CHUNK * 2 + 100)
+    (tmp_path / "inbox").mkdir()
+    (tmp_path / "inbox" / "Scene 4 - Diego.mp3").write_bytes(b"old")
+    await rx.on_message(offer_env(content, character="Diego"), "Mira")
+    view = rx.view()["incoming"][0]
+    assert view["state"] == "asking" and view["replaces"] and view["character"] == "Diego" and view["from"] == "Mira"
+    assert agent.files.types() == []
 
-        # Chunks before the answer are dropped
-        await rx.on_chunk(frames(content)[0])
-        assert not list((tmp_path / "inbox").glob(".*.part"))
+    # Chunks before the answer are dropped
+    await rx.on_chunk(frames(content)[0])
+    assert not list((tmp_path / "inbox").glob(".*.part"))
 
-        await rx.answer("0f" * 16, accept=True)
-        assert agent.files.types() == ["file.accept"]
-        await deliver(rx, content)
-        assert (tmp_path / "inbox" / "Scene 4 - Diego.mp3").read_bytes() == content
-        assert agent.added == [str(tmp_path / "inbox" / "Scene 4 - Diego.mp3")]
-        assert agent.files.types() == ["file.accept"] + ["file.progress"] * 3 + ["file.ok"]
-        assert agent.files.last("file.progress")["received"] == 3
-        assert agent.files.last("file.ok")["saved_as"] == "inbox/Scene 4 - Diego.mp3"
-        assert not list((tmp_path / "inbox").glob(".*"))
-        assert rx.view()["incoming"] == [] and rx.view()["recent"][0]["ok"]
-        record = load_received(tmp_path / "data" / "received.json")
-        assert record[0]["sha256"] == hashlib.sha256(content).hexdigest()
-        assert record[0]["path"] == str(tmp_path / "inbox" / "Scene 4 - Diego.mp3")
-        # every reply goes back to the director's session
-        assert {json.dumps(to) for _, _, to in agent.files.sent} == {json.dumps({"ids": ["s_dir"]})}
-
-    asyncio.run(scenario())
+    await rx.answer("0f" * 16, accept=True)
+    assert agent.files.types() == ["file.accept"]
+    await deliver(rx, content)
+    assert (tmp_path / "inbox" / "Scene 4 - Diego.mp3").read_bytes() == content
+    assert agent.added == [str(tmp_path / "inbox" / "Scene 4 - Diego.mp3")]
+    assert agent.files.types() == ["file.accept"] + ["file.progress"] * 3 + ["file.ok"]
+    assert agent.files.last("file.progress")["received"] == 3
+    assert agent.files.last("file.ok")["saved_as"] == "inbox/Scene 4 - Diego.mp3"
+    assert not list((tmp_path / "inbox").glob(".*"))
+    assert rx.view()["incoming"] == [] and rx.view()["recent"][0]["ok"]
+    record = load_received(tmp_path / "data" / "received.json")
+    assert record[0]["sha256"] == hashlib.sha256(content).hexdigest()
+    assert record[0]["path"] == str(tmp_path / "inbox" / "Scene 4 - Diego.mp3")
+    # every reply goes back to the director's session
+    assert {json.dumps(to) for _, _, to in agent.files.sent} == {json.dumps({"ids": ["s_dir"]})}
 
 
-def test_decline_and_auto_accept(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path)
-        rx = Receiver(agent)
-        await rx.on_message(offer_env(b"abc"), "Mira")
-        await rx.answer("0f" * 16, accept=False)
-        assert agent.files.last("file.deny")["reason"] == "Declined"
-        assert rx.view()["incoming"] == []
+@pytest.mark.anyio
+async def test_decline_and_auto_accept(tmp_path):
+    agent = fake_agent(tmp_path)
+    rx = Receiver(agent)
+    await rx.on_message(offer_env(b"abc"), "Mira")
+    await rx.answer("0f" * 16, accept=False)
+    assert agent.files.last("file.deny")["reason"] == "Declined"
+    assert rx.view()["incoming"] == []
 
-        # "Accept files automatically from now on" answers this one and turns auto-accept on
-        await rx.on_message(offer_env(b"abc", tid="1f" * 16), "Mira")
-        await rx.answer("1f" * 16, accept=True, always=True)
-        assert agent.config.files.auto_accept
-        await rx.on_message(offer_env(b"xyz", tid="2f" * 16, name="b.wav"), "Mira")
-        assert agent.files.types()[-1] == "file.accept"
-        await deliver(rx, b"xyz", tid="2f" * 16)
-        assert (tmp_path / "inbox" / "b.wav").read_bytes() == b"xyz"
-
-    asyncio.run(scenario())
+    # "Accept files automatically from now on" answers this one and turns auto-accept on
+    await rx.on_message(offer_env(b"abc", tid="1f" * 16), "Mira")
+    await rx.answer("1f" * 16, accept=True, always=True)
+    assert agent.config.files.auto_accept
+    await rx.on_message(offer_env(b"xyz", tid="2f" * 16, name="b.wav"), "Mira")
+    assert agent.files.types()[-1] == "file.accept"
+    await deliver(rx, b"xyz", tid="2f" * 16)
+    assert (tmp_path / "inbox" / "b.wav").read_bytes() == b"xyz"
 
 
-def test_accept_the_rest_of_the_batch(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path)
-        rx = Receiver(agent)
-        await rx.on_message({"type": "file.batch.start", "from": "s_dir", "data": {"batch_id": "b1", "files": 3, "bytes": 9}}, "Mira")
-        await rx.on_message(offer_env(b"one", tid="1f" * 16, name="1.wav", batch_id="b1"), "Mira")
-        view = rx.view()["incoming"][0]
-        assert (view["index"], view["count"]) == (1, 3)
-        await rx.answer("1f" * 16, accept=True, rest=True)
-        await rx.on_message(offer_env(b"two", tid="2f" * 16, name="2.wav", batch_id="b1"), "Mira")
-        assert agent.files.types() == ["file.accept", "file.accept"]
-        assert not agent.config.files.auto_accept
-        # another batch asks again
-        await rx.on_message(offer_env(b"three", tid="3f" * 16, name="3.wav", batch_id="b2"), "Mira")
-        assert agent.files.types() == ["file.accept", "file.accept"]
-
-    asyncio.run(scenario())
+@pytest.mark.anyio
+async def test_accept_the_rest_of_the_batch(tmp_path):
+    agent = fake_agent(tmp_path)
+    rx = Receiver(agent)
+    await rx.on_message({"type": "file.batch.start", "from": "s_dir", "data": {"batch_id": "b1", "files": 3, "bytes": 9}}, "Mira")
+    await rx.on_message(offer_env(b"one", tid="1f" * 16, name="1.wav", batch_id="b1"), "Mira")
+    view = rx.view()["incoming"][0]
+    assert (view["index"], view["count"]) == (1, 3)
+    await rx.answer("1f" * 16, accept=True, rest=True)
+    await rx.on_message(offer_env(b"two", tid="2f" * 16, name="2.wav", batch_id="b1"), "Mira")
+    assert agent.files.types() == ["file.accept", "file.accept"]
+    assert not agent.config.files.auto_accept
+    # another batch asks again
+    await rx.on_message(offer_env(b"three", tid="3f" * 16, name="3.wav", batch_id="b2"), "Mira")
+    assert agent.files.types() == ["file.accept", "file.accept"]
 
 
 @pytest.mark.parametrize("offer, reason", [
@@ -195,109 +189,99 @@ def test_accept_the_rest_of_the_batch(tmp_path):
     ({"size": 10**12}, "Bad offer"),
     ({"sha256": None}, "Bad offer"),
 ])
-def test_bad_offers_are_declined(tmp_path, offer, reason):
-    async def scenario():
-        agent = fake_agent(tmp_path)
-        rx = Receiver(agent)
-        env = offer_env(b"abc")
-        env["data"].update(offer)
-        await rx.on_message(env, "Mira")
-        assert agent.files.types() == ["file.deny"]
-        assert reason in agent.files.last("file.deny")["reason"]
-        assert rx.view()["incoming"] == []
-
-    asyncio.run(scenario())
+@pytest.mark.anyio
+async def test_bad_offers_are_declined(tmp_path, offer, reason):
+    agent = fake_agent(tmp_path)
+    rx = Receiver(agent)
+    env = offer_env(b"abc")
+    env["data"].update(offer)
+    await rx.on_message(env, "Mira")
+    assert agent.files.types() == ["file.deny"]
+    assert reason in agent.files.last("file.deny")["reason"]
+    assert rx.view()["incoming"] == []
 
 
-def test_not_enough_disk_space(tmp_path, monkeypatch):
-    async def scenario():
-        agent = fake_agent(tmp_path)
-        rx = Receiver(agent)
-        monkeypatch.setattr(files_mod.shutil, "disk_usage", lambda p: SimpleNamespace(free=10))
-        await rx.on_message(offer_env(b"abc"), "Mira")
-        assert "disk space" in agent.files.last("file.deny")["reason"]
-
-    asyncio.run(scenario())
+@pytest.mark.anyio
+async def test_not_enough_disk_space(tmp_path, monkeypatch):
+    agent = fake_agent(tmp_path)
+    rx = Receiver(agent)
+    monkeypatch.setattr(files_mod.shutil, "disk_usage", lambda p: SimpleNamespace(free=10))
+    await rx.on_message(offer_env(b"abc"), "Mira")
+    assert "disk space" in agent.files.last("file.deny")["reason"]
 
 
-def test_bad_data_leaves_nothing_behind(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path, auto_accept=True)
-        rx = Receiver(agent)
-        content = os.urandom(CHUNK + 10)
-        inbox = tmp_path / "inbox"
+@pytest.mark.anyio
+async def test_bad_data_leaves_nothing_behind(tmp_path):
+    agent = fake_agent(tmp_path, auto_accept=True)
+    rx = Receiver(agent)
+    content = os.urandom(CHUNK + 10)
+    inbox = tmp_path / "inbox"
 
-        # wrong hash at the end
-        await rx.on_message(offer_env(content, tid="1f" * 16), "Mira")
-        await deliver(rx, content, tid="1f" * 16, sha256="00" * 32)
-        assert agent.files.last("file.err")["error"] == "Checksum mismatch"
+    # wrong hash at the end
+    await rx.on_message(offer_env(content, tid="1f" * 16), "Mira")
+    await deliver(rx, content, tid="1f" * 16, sha256="00" * 32)
+    assert agent.files.last("file.err")["error"] == "Checksum mismatch"
 
-        # a chunk of the wrong size
-        await rx.on_message(offer_env(content, tid="2f" * 16), "Mira")
-        await rx.on_chunk(pack_chunk("2f" * 16, 1, b"short"))
-        assert "doesn't fit" in agent.files.last("file.err")["error"]
+    # a chunk of the wrong size
+    await rx.on_message(offer_env(content, tid="2f" * 16), "Mira")
+    await rx.on_chunk(pack_chunk("2f" * 16, 1, b"short"))
+    assert "doesn't fit" in agent.files.last("file.err")["error"]
 
-        # file.end before every chunk arrived
-        await rx.on_message(offer_env(content, tid="3f" * 16), "Mira")
-        await rx.on_chunk(frames(content, "3f" * 16)[0])
-        await rx.on_message({"type": "file.end", "from": "s_dir", "data": {"transfer_id": "3f" * 16, "sha256": "ab" * 32}}, "Mira")
-        assert "1 of 2 chunks" in agent.files.last("file.err")["error"]
+    # file.end before every chunk arrived
+    await rx.on_message(offer_env(content, tid="3f" * 16), "Mira")
+    await rx.on_chunk(frames(content, "3f" * 16)[0])
+    await rx.on_message({"type": "file.end", "from": "s_dir", "data": {"transfer_id": "3f" * 16, "sha256": "ab" * 32}}, "Mira")
+    assert "1 of 2 chunks" in agent.files.last("file.err")["error"]
 
-        assert list(inbox.iterdir()) == []
-        assert rx.incoming == {}
-
-    asyncio.run(scenario())
+    assert list(inbox.iterdir()) == []
+    assert rx.incoming == {}
 
 
-def test_duplicate_chunks_and_md5_only(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path, auto_accept=True)
-        rx = Receiver(agent)
-        content = os.urandom(CHUNK + 10)
-        env = offer_env(content, sha256=None, md5=hashlib.md5(content).hexdigest())
-        await rx.on_message(env, "Mira")
-        first = frames(content)[0]
-        await rx.on_chunk(first)
-        await rx.on_chunk(first)
-        assert agent.files.last("file.progress")["received"] == 1
-        await rx.on_chunk(frames(content)[1])
-        await rx.on_message({"type": "file.end", "from": "s_dir", "data": {"transfer_id": "0f" * 16, "md5": hashlib.md5(content).hexdigest()}}, "Mira")
-        assert agent.files.types()[-1] == "file.ok"
-        assert (tmp_path / "inbox" / "Scene 4 - Diego.mp3").read_bytes() == content
-
-    asyncio.run(scenario())
+@pytest.mark.anyio
+async def test_duplicate_chunks_and_md5_only(tmp_path):
+    agent = fake_agent(tmp_path, auto_accept=True)
+    rx = Receiver(agent)
+    content = os.urandom(CHUNK + 10)
+    env = offer_env(content, sha256=None, md5=hashlib.md5(content).hexdigest())
+    await rx.on_message(env, "Mira")
+    first = frames(content)[0]
+    await rx.on_chunk(first)
+    await rx.on_chunk(first)
+    assert agent.files.last("file.progress")["received"] == 1
+    await rx.on_chunk(frames(content)[1])
+    await rx.on_message({"type": "file.end", "from": "s_dir", "data": {"transfer_id": "0f" * 16, "md5": hashlib.md5(content).hexdigest()}}, "Mira")
+    assert agent.files.types()[-1] == "file.ok"
+    assert (tmp_path / "inbox" / "Scene 4 - Diego.mp3").read_bytes() == content
 
 
-def test_cancel_and_relay_loss_delete_partial_files(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path, auto_accept=True)
-        rx = Receiver(agent)
-        content = os.urandom(CHUNK * 3)
-        inbox = tmp_path / "inbox"
-        await rx.on_message({"type": "file.batch.start", "from": "s_dir", "data": {"batch_id": "b1", "files": 2, "bytes": 1}}, "Mira")
-        await rx.on_message(offer_env(content, batch_id="b1"), "Mira")
-        await rx.on_chunk(frames(content)[0])
-        assert len(list(inbox.glob(".*.part"))) == 1
-        await rx.on_message({"type": "file.batch.cancel", "from": "s_dir", "data": {"batch_id": "b1", "reason": "x"}}, "Mira")
-        assert list(inbox.iterdir()) == [] and rx.incoming == {}
-        assert rx.view()["recent"][0]["detail"] == "cancelled by the director"
+@pytest.mark.anyio
+async def test_cancel_and_relay_loss_delete_partial_files(tmp_path):
+    agent = fake_agent(tmp_path, auto_accept=True)
+    rx = Receiver(agent)
+    content = os.urandom(CHUNK * 3)
+    inbox = tmp_path / "inbox"
+    await rx.on_message({"type": "file.batch.start", "from": "s_dir", "data": {"batch_id": "b1", "files": 2, "bytes": 1}}, "Mira")
+    await rx.on_message(offer_env(content, batch_id="b1"), "Mira")
+    await rx.on_chunk(frames(content)[0])
+    assert len(list(inbox.glob(".*.part"))) == 1
+    await rx.on_message({"type": "file.batch.cancel", "from": "s_dir", "data": {"batch_id": "b1", "reason": "x"}}, "Mira")
+    assert list(inbox.iterdir()) == [] and rx.incoming == {}
+    assert rx.view()["recent"][0]["detail"] == "cancelled by the director"
 
-        # chunks after the cancel are ignored
-        await rx.on_chunk(frames(content)[1])
-        assert list(inbox.iterdir()) == []
+    # chunks after the cancel are ignored
+    await rx.on_chunk(frames(content)[1])
+    assert list(inbox.iterdir()) == []
 
-        # the relay goes away mid-file
-        await rx.on_message(offer_env(content, tid="1f" * 16), "Mira")
-        await rx.on_chunk(frames(content, "1f" * 16)[0])
-        rx.reset("Lost the relay connection")
-        assert list(inbox.iterdir()) == [] and rx.incoming == {}
+    # the relay goes away mid-file
+    await rx.on_message(offer_env(content, tid="1f" * 16), "Mira")
+    await rx.on_chunk(frames(content, "1f" * 16)[0])
+    rx.reset("Lost the relay connection")
+    assert list(inbox.iterdir()) == [] and rx.incoming == {}
 
-        # the relay reports that the director left
-        await rx.on_message(offer_env(content, tid="2f" * 16), "Mira")
-        await rx.on_message({"type": "file.err", "from": "server", "data": {"transfer_id": "2f" * 16, "error": "Mira disconnected"}}, "Mira")
-        assert list(inbox.iterdir()) == [] and rx.incoming == {}
-
-    asyncio.run(scenario())
+    # the relay reports that the director left
+    await rx.on_message(offer_env(content, tid="2f" * 16), "Mira")
+    await rx.on_message({"type": "file.err", "from": "server", "data": {"transfer_id": "2f" * 16, "error": "Mira disconnected"}}, "Mira")
+    assert list(inbox.iterdir()) == [] and rx.incoming == {}
 
 
 # ---- sending (no relay) --------------------------------------------------------------------------
@@ -326,67 +310,63 @@ async def offered(agent, count=1, timeout=5.0):
     await settle()
 
 
-def test_sender_window_and_result(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path, role="director")
-        tx = Sender(agent)
-        path = make_file(tmp_path, "Scene 4 - Diego.mp3", 12 * 256 * 1024 + 5)
-        batch = tx.start("s_coda", "Coda", [path])
-        await offered(agent)
-        sent = agent.files
-        assert sent.types() == ["file.batch.start", "file.offer"]
-        offer = sent.last("file.offer")
-        assert offer["character"] == "Diego" and offer["size"] == path.stat().st_size
-        assert offer["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
-        assert offer["md5"] == hashlib.md5(path.read_bytes()).hexdigest()
-        tid = offer["transfer_id"]
-        assert batch.view()["current"]["waiting"]
+@pytest.mark.anyio
+async def test_sender_window_and_result(tmp_path):
+    agent = fake_agent(tmp_path, role="director")
+    tx = Sender(agent)
+    path = make_file(tmp_path, "Scene 4 - Diego.mp3", 12 * 256 * 1024 + 5)
+    batch = tx.start("s_coda", "Coda", [path])
+    await offered(agent)
+    sent = agent.files
+    assert sent.types() == ["file.batch.start", "file.offer"]
+    offer = sent.last("file.offer")
+    assert offer["character"] == "Diego" and offer["size"] == path.stat().st_size
+    assert offer["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert offer["md5"] == hashlib.md5(path.read_bytes()).hexdigest()
+    tid = offer["transfer_id"]
+    assert batch.view()["current"]["waiting"]
 
-        tx.on_message({"type": "file.accept", "data": {"transfer_id": tid}})
-        await settle()
-        assert len(sent.frames) == MAX_IN_FLIGHT  # waits for progress
-        tx.on_message({"type": "file.progress", "data": {"transfer_id": tid, "received": 4}})
-        await settle()
-        assert len(sent.frames) == 12
-        tx.on_message({"type": "file.progress", "data": {"transfer_id": tid, "received": 13}})
-        await settle()
-        assert len(sent.frames) == 13 and sent.types()[-1] == "file.end"
-        assert b"".join(unpack_chunk(f).payload for f in sent.frames) == path.read_bytes()
-        assert [unpack_chunk(f).index for f in sent.frames] == list(range(13))
+    tx.on_message({"type": "file.accept", "data": {"transfer_id": tid}})
+    await settle()
+    assert len(sent.frames) == MAX_IN_FLIGHT  # waits for progress
+    tx.on_message({"type": "file.progress", "data": {"transfer_id": tid, "received": 4}})
+    await settle()
+    assert len(sent.frames) == 12
+    tx.on_message({"type": "file.progress", "data": {"transfer_id": tid, "received": 13}})
+    await settle()
+    assert len(sent.frames) == 13 and sent.types()[-1] == "file.end"
+    assert b"".join(unpack_chunk(f).payload for f in sent.frames) == path.read_bytes()
+    assert [unpack_chunk(f).index for f in sent.frames] == list(range(13))
 
-        tx.on_message({"type": "file.ok", "data": {"transfer_id": tid, "saved_as": "x"}})
-        await settle()
-        assert sent.types()[-1] == "file.batch.end" and sent.last("file.batch.end") == {"batch_id": batch.id, "ok": 1, "failed": 0}
-        view = batch.view()
-        assert view["state"] == "done" and view["ok"] == 1 and view["sentBytes"] == view["bytes"]
-        assert {json.dumps(to) for _, _, to in sent.sent} == {json.dumps({"ids": ["s_coda"]})}
-
-    asyncio.run(scenario())
+    tx.on_message({"type": "file.ok", "data": {"transfer_id": tid, "saved_as": "x"}})
+    await settle()
+    assert sent.types()[-1] == "file.batch.end" and sent.last("file.batch.end") == {"batch_id": batch.id, "ok": 1, "failed": 0}
+    view = batch.view()
+    assert view["state"] == "done" and view["ok"] == 1 and view["sentBytes"] == view["bytes"]
+    assert {json.dumps(to) for _, _, to in sent.sent} == {json.dumps({"ids": ["s_coda"]})}
 
 
-def test_sender_decline_err_and_cancel(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path, role="director")
-        tx = Sender(agent)
-        paths = [make_file(tmp_path, f"{i}.wav", 300_000) for i in range(3)]
-        batch = tx.start("s_coda", "Coda", paths)
-        await offered(agent)
-        tx.on_message({"type": "file.deny", "data": {"transfer_id": agent.files.last("file.offer")["transfer_id"], "reason": "Declined"}})
-        await offered(agent, 2)
-        second = agent.files.last("file.offer")
-        assert second["name"] == "1.wav"
-        tx.on_message({"type": "file.accept", "data": {"transfer_id": second["transfer_id"]}})
-        await settle()
-        tx.on_message({"type": "file.err", "data": {"transfer_id": second["transfer_id"], "error": "Writing failed"}})
-        await offered(agent, 3)
-        assert agent.files.last("file.offer")["name"] == "2.wav"
-        await tx.cancel(batch.id)
-        assert agent.files.types()[-1] == "file.batch.cancel"
-        view = batch.view()
-        assert view["state"] == "cancelled" and view["ok"] == 0 and view["failed"] == 3
-        assert [r["state"] for r in view["results"]] == ["declined", "failed", "cancelled"]
-
-    asyncio.run(scenario())
+@pytest.mark.anyio
+async def test_sender_decline_err_and_cancel(tmp_path):
+    agent = fake_agent(tmp_path, role="director")
+    tx = Sender(agent)
+    paths = [make_file(tmp_path, f"{i}.wav", 300_000) for i in range(3)]
+    batch = tx.start("s_coda", "Coda", paths)
+    await offered(agent)
+    tx.on_message({"type": "file.deny", "data": {"transfer_id": agent.files.last("file.offer")["transfer_id"], "reason": "Declined"}})
+    await offered(agent, 2)
+    second = agent.files.last("file.offer")
+    assert second["name"] == "1.wav"
+    tx.on_message({"type": "file.accept", "data": {"transfer_id": second["transfer_id"]}})
+    await settle()
+    tx.on_message({"type": "file.err", "data": {"transfer_id": second["transfer_id"], "error": "Writing failed"}})
+    await offered(agent, 3)
+    assert agent.files.last("file.offer")["name"] == "2.wav"
+    await tx.cancel(batch.id)
+    assert agent.files.types()[-1] == "file.batch.cancel"
+    view = batch.view()
+    assert view["state"] == "cancelled" and view["ok"] == 0 and view["failed"] == 3
+    assert [r["state"] for r in view["results"]] == ["declined", "failed", "cancelled"]
 
 
 def test_sender_stall(tmp_path, monkeypatch):
@@ -408,7 +388,7 @@ def test_sender_stall(tmp_path, monkeypatch):
 # ---- through the relay -------------------------------------------------------------------------
 
 
-def test_files_end_to_end(relay, tmp_path, monkeypatch):  # noqa: F811
+def test_files_end_to_end(relay, tmp_path, monkeypatch):
     running, state = relay
     url = f"127.0.0.1:{running.port}"
     src = tmp_path / "project"
@@ -525,38 +505,34 @@ def test_v03_import_of_file_settings(tmp_path):
     assert again.config.files.receive_dir == "C:/cues"
 
 
-def test_sender_relay_error_ends_the_file(tmp_path):
+@pytest.mark.anyio
+async def test_sender_relay_error_ends_the_file(tmp_path):
     """A relay before M1b answers an offer to a v0.3 actor with only an `error`."""
 
-    async def scenario():
-        agent = fake_agent(tmp_path, role="director")
-        ids = iter(f"m{i}" for i in range(100))
+    agent = fake_agent(tmp_path, role="director")
+    ids = iter(f"m{i}" for i in range(100))
 
-        async def send(msg_type, data, to):
-            agent.files.sent.append((msg_type, data, to))
-            return next(ids)
+    async def send(msg_type, data, to):
+        agent.files.sent.append((msg_type, data, to))
+        return next(ids)
 
-        agent.files.send = send
-        tx = Sender(agent)
-        batch = tx.start("s_lex", "Lex", [make_file(tmp_path, "a.wav", 10)])
-        await offered(agent)
-        offer_msg_id = "m1"  # batch.start was m0
-        assert not tx.on_error("someone-else", "x")
-        assert tx.on_error(offer_msg_id, "Lex uses a v0.3 client, which can't receive files from vrcActorSync 0.4 yet")
-        await settle()
-        view = batch.view()
-        assert view["state"] == "done" and view["failed"] == 1
-        assert "v0.3 client" in view["results"][0]["detail"]
-
-    asyncio.run(scenario())
+    agent.files.send = send
+    tx = Sender(agent)
+    batch = tx.start("s_lex", "Lex", [make_file(tmp_path, "a.wav", 10)])
+    await offered(agent)
+    offer_msg_id = "m1"  # batch.start was m0
+    assert not tx.on_error("someone-else", "x")
+    assert tx.on_error(offer_msg_id, "Lex uses a v0.3 client, which can't receive files from vrcActorSync 0.4 yet")
+    await settle()
+    view = batch.view()
+    assert view["state"] == "done" and view["failed"] == 1
+    assert "v0.3 client" in view["results"][0]["detail"]
 
 
 # ---- v0.3 clients through the relay's bridge (Phase 2 M1b) ------------------------------------------
 
 
-def test_v2_director_to_scripted_v03_actor(relay, tmp_path, monkeypatch):  # noqa: F811
-    from .test_relay_v2 import legacy_client, read_until
-
+def test_v2_director_to_scripted_v03_actor(relay, tmp_path, monkeypatch):
     running, state = relay
     url = f"127.0.0.1:{running.port}"
     src = tmp_path / "project"
@@ -570,12 +546,7 @@ def test_v2_director_to_scripted_v03_actor(relay, tmp_path, monkeypatch):  # noq
         try:
             await director.start()
             await wait_for(lambda: director.relay.status == "connected")
-            lex = legacy_client(running.url, "lex", "Lex")
-            lex.send("REGISTER|Lex|m-lex|actor||0.3.3|windows-x64")
-            await read_until(lex, "DENIED|")
-            await wait_for(lambda: director.snapshot()["pending"])
-            await director.handle_call("approve", {"id": director.snapshot()["pending"][0]["id"]})
-            await read_until(lex, "USERS|")
+            lex = await join_scripted_actor(running, director)
             await wait_for(lambda: any(p["name"] == "Lex" for p in director.snapshot()["peers"]))
             peer = next(p for p in director.snapshot()["peers"] if p["name"] == "Lex")
             assert peer["caps"] == ["legacy"]
@@ -604,9 +575,7 @@ def test_v2_director_to_scripted_v03_actor(relay, tmp_path, monkeypatch):  # noq
     asyncio.run(scenario())
 
 
-def test_scripted_v03_director_to_v2_actor(relay, tmp_path, monkeypatch):  # noqa: F811
-    from .test_relay_v2 import legacy_client, read_until
-
+def test_scripted_v03_director_to_v2_actor(relay, tmp_path, monkeypatch):
     running, state = relay
     url = f"127.0.0.1:{running.port}"
     data = os.urandom(150_000)
@@ -648,30 +617,26 @@ def test_scripted_v03_director_to_v2_actor(relay, tmp_path, monkeypatch):  # noq
                 old.close()
             await coda.shutdown()
 
-
-def test_batch_log_says_why_files_did_not_go(tmp_path):
-    async def scenario():
-        agent = fake_agent(tmp_path, role="director")
-        tx = Sender(agent)
-        tx.start("s_coda", "Coda", [make_file(tmp_path, "a.wav", 10), make_file(tmp_path, "b.wav", 10)])
-        await offered(agent)
-        tx.on_message({"type": "file.deny", "data": {"transfer_id": agent.files.last("file.offer")["transfer_id"], "reason": "Declined"}})
-        await offered(agent, 2)
-        tid = agent.files.last("file.offer")["transfer_id"]
-        tx.on_message({"type": "file.accept", "data": {"transfer_id": tid}})
-        await settle()
-        tx.on_message({"type": "file.err", "data": {"transfer_id": tid, "error": "Coda disconnected"}})
-        await settle()
-        assert ("warning", "Files to Coda: 0 sent, 2 not (a.wav: Declined; b.wav: Coda disconnected)") in agent.logs
-
     asyncio.run(scenario())
 
 
+@pytest.mark.anyio
+async def test_batch_log_says_why_files_did_not_go(tmp_path):
+    agent = fake_agent(tmp_path, role="director")
+    tx = Sender(agent)
+    tx.start("s_coda", "Coda", [make_file(tmp_path, "a.wav", 10), make_file(tmp_path, "b.wav", 10)])
+    await offered(agent)
+    tx.on_message({"type": "file.deny", "data": {"transfer_id": agent.files.last("file.offer")["transfer_id"], "reason": "Declined"}})
+    await offered(agent, 2)
+    tid = agent.files.last("file.offer")["transfer_id"]
+    tx.on_message({"type": "file.accept", "data": {"transfer_id": tid}})
+    await settle()
+    tx.on_message({"type": "file.err", "data": {"transfer_id": tid, "error": "Coda disconnected"}})
+    await settle()
+    assert ("warning", "Files to Coda: 0 sent, 2 not (a.wav: Declined; b.wav: Coda disconnected)") in agent.logs
+
+
 def test_clearing_keeps_running_batches():
-    from types import SimpleNamespace
-
-    from agent.files import Batch, Sender
-
     sender = Sender(SimpleNamespace(changed=lambda: None))
     for i, state in enumerate(("done", "sending", "cancelled", "waiting", "failed")):
         sender.batches[f"b{i}"] = Batch(id=f"b{i}", actor_id="s1", actor_name="Coda", files=[], state=state)

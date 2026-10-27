@@ -10,9 +10,7 @@ import pytest
 from agent.core import CallError
 from agent.scheduler import DEFAULT_START_LATENCY_MS
 
-from .test_relay_legacy import SECRET, make_agent, wait_for
-from .test_relay_v2 import legacy_client, read_until, relay  # noqa: F401  (relay is a fixture)
-from .test_soundpad_pipe import windows_cli  # noqa: F401  (fixture)
+from .helpers import SECRET, join_scripted_actor, logged, make_agent, read_until, wait_for
 
 M2_CAPS = ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add", "osc", "files"]
 KEY = "0123456789abcdef"
@@ -47,10 +45,6 @@ def fired(agent, what="*go"):
     return out
 
 
-def logged(agent, text):
-    return any(text in e["text"] for e in agent.hub._logs)
-
-
 async def start_session(director, *actors):
     """Director online, every actor approved, every clock synced."""
     await director.start()
@@ -68,7 +62,7 @@ def peer_id(director, name):
     return next(p["id"] for p in director.snapshot()["peers"] if p["name"] == name)
 
 
-def test_delay_moves_one_actor_150_ms(relay, tmp_path, monkeypatch):  # noqa: F811
+def test_delay_moves_one_actor_150_ms(relay, tmp_path, monkeypatch):
     """Two actors, one at +150 ms: their fire times are 150 ± 20 ms apart (spec §19)."""
     running, _ = relay
     url = f"127.0.0.1:{running.port}"
@@ -108,7 +102,7 @@ def test_delay_moves_one_actor_150_ms(relay, tmp_path, monkeypatch):  # noqa: F8
     asyncio.run(scenario())
 
 
-def test_play_in_3s_and_stop_at_1s_cancel_everywhere(relay, tmp_path, monkeypatch):  # noqa: F811
+def test_play_in_3s_and_stop_at_1s_cancel_everywhere(relay, tmp_path, monkeypatch):
     running, _ = relay
     url = f"127.0.0.1:{running.port}"
 
@@ -118,12 +112,7 @@ def test_play_in_3s_and_stop_at_1s_cancel_everywhere(relay, tmp_path, monkeypatc
         lex = None
         try:
             await start_session(director, nova)
-            lex = legacy_client(running.url, "lex", "Lex")
-            lex.send("REGISTER|Lex|m-lex|actor||0.3.3|windows-x64")
-            await read_until(lex, "DENIED|")
-            await wait_for(lambda: director.snapshot()["pending"])
-            await director.handle_call("approve", {"id": director.snapshot()["pending"][0]["id"]})
-            await read_until(lex, "USERS|")
+            lex = await join_scripted_actor(running, director)
             await wait_for(lambda: len(director.snapshot()["targets"]) == 2)
 
             # The countdown shows on the director and on the actor, from one server time
@@ -157,7 +146,7 @@ def test_play_in_3s_and_stop_at_1s_cancel_everywhere(relay, tmp_path, monkeypatc
     asyncio.run(scenario())
 
 
-def test_armed_sounds_go_with_one_at(relay, tmp_path, monkeypatch):  # noqa: F811
+def test_armed_sounds_go_with_one_at(relay, tmp_path, monkeypatch):
     """GO with two armed actors, one unarmed and a v0.3 actor armed by number; then a disarm."""
     running, _ = relay
     url = f"127.0.0.1:{running.port}"
@@ -171,12 +160,7 @@ def test_armed_sounds_go_with_one_at(relay, tmp_path, monkeypatch):  # noqa: F81
         got = {a: record(a) for a in (nova, vega, coda)}
         try:
             await start_session(director, nova, vega, coda)
-            lex = legacy_client(running.url, "lex", "Lex")
-            lex.send("REGISTER|Lex|m-lex|actor||0.3.3|windows-x64")
-            await read_until(lex, "DENIED|")
-            await wait_for(lambda: director.snapshot()["pending"])
-            await director.handle_call("approve", {"id": director.snapshot()["pending"][0]["id"]})
-            await read_until(lex, "USERS|")
+            lex = await join_scripted_actor(running, director)
             await wait_for(lambda: len(director.snapshot()["targets"]) == 4)
             ids = {n: peer_id(director, n) for n in ("Nova", "Vega", "Coda", "Lex")}
 
@@ -218,7 +202,7 @@ def test_armed_sounds_go_with_one_at(relay, tmp_path, monkeypatch):  # noqa: F81
     asyncio.run(scenario())
 
 
-def test_older_builds_are_held_by_the_director(relay, tmp_path, monkeypatch):  # noqa: F811
+def test_older_builds_are_held_by_the_director(relay, tmp_path, monkeypatch):
     """A v0.4 actor without `schedule` would play an `at` cue at once: it gets the cue without `at`,
     sent when it's due (its delay included)."""
     running, _ = relay
@@ -252,7 +236,7 @@ def test_older_builds_are_held_by_the_director(relay, tmp_path, monkeypatch):  #
     asyncio.run(scenario())
 
 
-def test_late_and_far_cues(relay, tmp_path, monkeypatch):  # noqa: F811
+def test_late_and_far_cues(relay, tmp_path, monkeypatch):
     running, _ = relay
     url = f"127.0.0.1:{running.port}"
 
@@ -292,7 +276,7 @@ def test_lead_zero_sends_go_at_once(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
-def test_calibrate_from_the_director_and_on_the_actor(relay, tmp_path, monkeypatch, windows_cli):  # noqa: F811
+def test_calibrate_from_the_director_and_on_the_actor(relay, tmp_path, monkeypatch, windows_cli):
     """soundpad.calibrate: a speakers-only test play, measured, stopped after 1.5 s, saved in the
     actor's config, answered with start_latency_ms (the fake Soundpad's audio starts after 60 ms)."""
     from agent import actor_runtime

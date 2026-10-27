@@ -1,30 +1,9 @@
-from pathlib import Path
-
 import pytest
-from fastapi.testclient import TestClient
 
 from agent.config import ConfigStore
-from agent.core import Agent
-from agent.web import COOKIE, Security, create_app
+from agent.web import COOKIE
 
-PORT = 47999
-HOST = f"127.0.0.1:{PORT}"
-ORIGIN = f"http://{HOST}"
-
-
-@pytest.fixture
-def env(tmp_path):
-    security = Security(PORT)
-    agent = Agent(ConfigStore(tmp_path))
-    app = create_app(agent, security, Path(tmp_path) / "no-web-build")
-    with TestClient(app, base_url=f"http://{HOST}") as client:
-        yield client, security, agent
-
-
-def login(client, security):
-    res = client.post("/api/session", json={"token": security.new_open_token()}, headers={"Origin": ORIGIN})
-    assert res.status_code == 200
-    return res
+from .helpers import HOST, ORIGIN, login
 
 
 def test_foreign_host_is_rejected(env):

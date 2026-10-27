@@ -11,7 +11,7 @@ from websockets.http11 import Response
 from agent.relay import error_text, span
 from agent.relay_legacy import connect_kwargs
 
-from .test_relay_legacy import SECRET, legacy_harness, make_agent, wait_for
+from .helpers import SECRET, legacy_harness, make_agent, wait_for
 
 
 def test_error_text():

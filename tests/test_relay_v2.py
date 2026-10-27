@@ -1,30 +1,16 @@
 # The v2 relay on /v2/ws: handshake, session ids, approvals, routing, presence, clock sync.
 
 import json
-from contextlib import ExitStack
-
 import pytest
-from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from relay_helpers import FakeClock, connect_v2, make_relay
+from relay_helpers import FakeClock, connect_v2, relay_client
 
 MANIFEST = {
     "latest_version": "0.4.1",
     "release_notes": "notes",
     "assets": {"actor-windows-x64": {"url": "https://example.invalid/app.exe", "sha256": "ab"}},
 }
-
-
-@pytest.fixture
-def stack():
-    with ExitStack() as s:
-        yield s
-
-
-def relay_client(stack, tmp_path, approved=None, **kwargs):
-    app = make_relay(tmp_path, approved, **kwargs)
-    return stack.enter_context(TestClient(app)), app.state.relay
 
 
 def ids(roster, role=None):
@@ -149,10 +135,9 @@ def test_approve_flow_and_persistence(tmp_path, stack):
 def test_known_machine_reconnects_with_same_session_id(tmp_path, stack):
     client, _ = relay_client(stack, tmp_path, {"m-a": {"name": "Coda (approved)"}})
     first = connect_v2(client, stack, "actor", "Coda", "m-a", expect="welcome")
-    first_id = first.seen[-1]["data"]["session_id"]
     second = connect_v2(client, stack, "actor", "Coda", "m-a", expect="welcome")
     welcome = next(e for e in second.seen if e["type"] == "welcome")["data"]
-    assert welcome["session_id"] == first_id
+    assert welcome["session_id"] == first.session_id
     assert welcome["name"] == "Coda (approved)"  # the approved name wins, as on v0.3
     # The older connection is told and closed
     assert first.until("denied")["data"]["reason"] == "Reconnected from another location"
@@ -202,7 +187,7 @@ def test_forget(tmp_path, stack):
     d = connect_v2(client, stack, "director", "Mira", "m-dir")
     a = connect_v2(client, stack, "actor", "Coda", "m-a", expect="welcome")
     d.until(lambda e: e["type"] == "presence.roster" and len(e["data"]["sessions"]) == 2)
-    d.send("approval.forget", {"id": a.seen[0]["data"]["session_id"]})
+    d.send("approval.forget", {"id": a.session_id})
     assert a.until("approval.forgotten")
     with pytest.raises(WebSocketDisconnect) as closed:
         a.recv()
@@ -215,10 +200,11 @@ def test_forget(tmp_path, stack):
     assert again.recv()["type"] == "approval.pending"
 
 
-def test_forget_unknown(tmp_path, stack):
+@pytest.mark.parametrize("target", [{"id": "s_nobody"}, {"machine_id": "m-nobody"}])
+def test_forget_unknown(tmp_path, stack, target):
     client, _ = relay_client(stack, tmp_path)
     d = connect_v2(client, stack, "director", "Mira", "m-dir")
-    d.send("approval.forget", {"id": "s_nobody"})
+    d.send("approval.forget", target)
     assert d.until("error")["data"]["code"] == "unknown_target"
 
 
@@ -260,13 +246,6 @@ def test_forget_offline_machine(tmp_path, stack):
     assert [p["machine_id"] for p in d.until(lambda e: e["type"] == "presence.roster" and e["data"]["pending"])["data"]["pending"]] == ["m-c"]
 
 
-def test_forget_offline_machine_unknown(tmp_path, stack):
-    client, _ = relay_client(stack, tmp_path)
-    d = connect_v2(client, stack, "director", "Mira", "m-dir")
-    d.send("approval.forget", {"machine_id": "m-nobody"})
-    assert d.until("error")["data"]["code"] == "unknown_target"
-
-
 # ---- routing --------------------------------------------------------------------------------------------
 
 
@@ -279,8 +258,6 @@ def cast(client, stack):
     a1 = connect_v2(client, stack, "actor", "Coda", "m-a1", expect="welcome")
     a2 = connect_v2(client, stack, "actor", "Ari", "m-a2", expect="welcome")
     cam = connect_v2(client, stack, "camera", "Cam", "m-c", expect="welcome")
-    for c in (a1, a2, cam):
-        c.session_id = next(e for e in c.seen if e["type"] == "welcome")["data"]["session_id"]
     everyone = (d, asst, a1, a2, cam)
     for c in everyone:
         c.until(lambda e: e["type"] == "presence.roster" and len(e["data"]["sessions"]) == 5)

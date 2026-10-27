@@ -150,10 +150,20 @@ class FakeTransport:
         self.closed = True
 
 
-def make_pipe(fake: FakeSoundpad, **kwargs) -> SoundpadPipe:
-    pipe = SoundpadPipe(fake.connect, **kwargs)
-    pipe.start()
-    return pipe
+@pytest.fixture
+def make_pipe():
+    """make_pipe(fake, **kwargs): a started SoundpadPipe, closed at teardown."""
+    pipes = []
+
+    def make(fake: FakeSoundpad, **kwargs) -> SoundpadPipe:
+        pipe = SoundpadPipe(fake.connect, **kwargs)
+        pipe.start()
+        pipes.append(pipe)
+        return pipe
+
+    yield make
+    for pipe in pipes:
+        pipe.close()
 
 
 def actor_config() -> Config:
@@ -207,54 +217,46 @@ def test_parse_cue():
 # ---- client --------------------------------------------------------------------
 
 
-def test_handshake_and_requests_are_spaced():
+def test_handshake_and_requests_are_spaced(make_pipe):
     fake = FakeSoundpad()
     pipe = make_pipe(fake)
-    try:
-        for _ in range(10):
-            assert pipe.call("IsAlive()").text == "R-200"
-        assert pipe.connected
-        assert pipe.info.version == "4.0.35" and pipe.info.rc_version == "1.1.2"
-        assert pipe.info.trial is False and pipe.info.rc_supported
-        assert fake.commands[:4] == ["IsAlive()", "GetVersion()", "GetRemoteControlVersion()", "IsTrial()"]
-        gaps = [b - a for a, b in zip(fake.sent_times, fake.sent_times[1:])]
-        assert min(gaps) >= 0.0019
-    finally:
-        pipe.close()
+    for _ in range(10):
+        assert pipe.call("IsAlive()").text == "R-200"
+    assert pipe.connected
+    assert pipe.info.version == "4.0.35" and pipe.info.rc_version == "1.1.2"
+    assert pipe.info.trial is False and pipe.info.rc_supported
+    assert fake.commands[:4] == ["IsAlive()", "GetVersion()", "GetRemoteControlVersion()", "IsTrial()"]
+    gaps = [b - a for a, b in zip(fake.sent_times, fake.sent_times[1:])]
+    assert min(gaps) >= 0.0019
 
 
-def test_requests_from_many_threads_run_one_at_a_time():
+def test_requests_from_many_threads_run_one_at_a_time(make_pipe):
     fake = FakeSoundpad()
     pipe = make_pipe(fake, min_gap=0)
-    try:
-        async def burst():
-            return await asyncio.gather(*(pipe.acall("GetVolume()") for _ in range(20)))
 
-        replies = asyncio.run(burst())
-        assert {r.text for r in replies} == {"32"}
-        assert fake.commands.count("GetVolume()") == 20
-    finally:
-        pipe.close()
+    async def burst():
+        return await asyncio.gather(*(pipe.acall("GetVolume()") for _ in range(20)))
+
+    replies = asyncio.run(burst())
+    assert {r.text for r in replies} == {"32"}
+    assert fake.commands.count("GetVolume()") == 20
 
 
-def test_timeout_drops_the_pipe_and_reconnects_once_right_away():
+def test_timeout_drops_the_pipe_and_reconnects_once_right_away(make_pipe):
     fake = FakeSoundpad()
     pipe = make_pipe(fake)
-    try:
-        pipe.call("IsAlive()")
-        fake.hang.add("GetVolume()")
-        with pytest.raises(SoundpadTimeout):
-            pipe.call("GetVolume()")
-        assert not pipe.connected and fake.transports[0].closed
-        assert "isn't responding" in pipe.last_error
-        fake.hang.clear()
-        assert pipe.call("GetVolume()").text == "32"
-        assert fake.connects == 2
-    finally:
-        pipe.close()
+    pipe.call("IsAlive()")
+    fake.hang.add("GetVolume()")
+    with pytest.raises(SoundpadTimeout):
+        pipe.call("GetVolume()")
+    assert not pipe.connected and fake.transports[0].closed
+    assert "isn't responding" in pipe.last_error
+    fake.hang.clear()
+    assert pipe.call("GetVolume()").text == "32"
+    assert fake.connects == 2
 
 
-def test_soundpad_closed_is_looked_for_again_at_a_steady_pace(monkeypatch):
+def test_soundpad_closed_is_looked_for_again_at_a_steady_pace(monkeypatch, make_pipe):
     """No pipe at all costs nothing to try, so it's tried every MISSING_RETRY_S, not with a
     growing backoff (a just-started Soundpad waited 10 s in the M2 re-check)."""
     from agent import soundpad_pipe
@@ -263,54 +265,45 @@ def test_soundpad_closed_is_looked_for_again_at_a_steady_pace(monkeypatch):
     fake = FakeSoundpad()
     fake.running = False
     pipe = make_pipe(fake, backoff_start=0.2, backoff_max=5.0)
-    try:
-        for _ in range(4):  # however long it was closed
-            with pytest.raises(SoundpadUnavailable, match="isn't running"):
-                pipe.call("IsAlive()")
-            time.sleep(0.25)
-        assert pipe.missing
-        # Inside the retry window nothing is tried
-        with pytest.raises(SoundpadUnavailable):
+    for _ in range(4):  # however long it was closed
+        with pytest.raises(SoundpadUnavailable, match="isn't running"):
             pipe.call("IsAlive()")
-        fake.running = True
-        with pytest.raises(SoundpadUnavailable):
-            pipe.call("IsAlive()")
-        assert fake.connects == 0
         time.sleep(0.25)
-        assert pipe.call("IsAlive()").text == "R-200"
-        assert fake.connects == 1 and not pipe.missing
-    finally:
-        pipe.close()
+    assert pipe.missing
+    # Inside the retry window nothing is tried
+    with pytest.raises(SoundpadUnavailable):
+        pipe.call("IsAlive()")
+    fake.running = True
+    with pytest.raises(SoundpadUnavailable):
+        pipe.call("IsAlive()")
+    assert fake.connects == 0
+    time.sleep(0.25)
+    assert pipe.call("IsAlive()").text == "R-200"
+    assert fake.connects == 1 and not pipe.missing
 
 
-def test_backoff_when_the_pipe_is_there_but_wont_open():
+def test_backoff_when_the_pipe_is_there_but_wont_open(make_pipe):
     fake = FakeSoundpad()
     fake.refuse = PermissionError(5, "Access is denied")
     pipe = make_pipe(fake, backoff_start=0.2, backoff_max=1.0)
-    try:
-        with pytest.raises(SoundpadUnavailable, match="couldn't be opened"):
-            pipe.call("IsAlive()")
-        assert not pipe.missing
-        fake.refuse = None
-        time.sleep(0.25)
-        assert pipe.call("IsAlive()").text == "R-200"  # first retry after backoff_start
-    finally:
-        pipe.close()
+    with pytest.raises(SoundpadUnavailable, match="couldn't be opened"):
+        pipe.call("IsAlive()")
+    assert not pipe.missing
+    fake.refuse = None
+    time.sleep(0.25)
+    assert pipe.call("IsAlive()").text == "R-200"  # first retry after backoff_start
 
 
-def test_stale_handle_after_a_soundpad_restart_reconnects_and_resends():
+def test_stale_handle_after_a_soundpad_restart_reconnects_and_resends(make_pipe):
     fake = FakeSoundpad()
     pipe = make_pipe(fake)
-    try:
-        pipe.call("IsAlive()")
-        fake.transports[0].closed = True  # Soundpad restarted; our handle is dead
-        assert pipe.call("GetVolume()").text == "32"
-        assert fake.connects == 2
-    finally:
-        pipe.close()
+    pipe.call("IsAlive()")
+    fake.transports[0].closed = True  # Soundpad restarted; our handle is dead
+    assert pipe.call("GetVolume()").text == "32"
+    assert fake.connects == 2
 
 
-def test_typed_helpers():
+def test_typed_helpers(make_pipe):
     fake = FakeSoundpad()
     pipe = make_pipe(fake, min_gap=0)
 
@@ -335,13 +328,10 @@ def test_typed_helpers():
         assert await pipe.add_sound("C:\\EP3\\EP3 Scene 4 - Diego.mp3") == 4
         assert fake.sounds[-1] == "EP3 Scene 4 - Diego"
 
-    try:
-        asyncio.run(scenario())
-    finally:
-        pipe.close()
+    asyncio.run(scenario())
 
 
-def test_trial_refuses_to_add():
+def test_trial_refuses_to_add(make_pipe):
     fake = FakeSoundpad(trial=True)
     pipe = make_pipe(fake)
 
@@ -350,23 +340,10 @@ def test_trial_refuses_to_add():
         with pytest.raises(SoundpadError, match="trial"):
             await pipe.add_sound("C:\\x.mp3")
 
-    try:
-        asyncio.run(scenario())
-    finally:
-        pipe.close()
+    asyncio.run(scenario())
 
 
 # ---- actor runtime -------------------------------------------------------------
-
-
-@pytest.fixture
-def windows_cli(monkeypatch):
-    """Pretend to be on Windows with Soundpad.exe found, and record -rc calls."""
-    calls = []
-    monkeypatch.setattr(soundpad, "is_windows", lambda: True)
-    monkeypatch.setattr(soundpad, "get_soundpad_path", lambda: r"C:\Program Files\Soundpad\Soundpad.exe")
-    monkeypatch.setattr(actor_runtime, "command_line", lambda command: calls.append(command) or (True, None))
-    return calls
 
 
 def test_cues_go_through_the_pipe(windows_cli):

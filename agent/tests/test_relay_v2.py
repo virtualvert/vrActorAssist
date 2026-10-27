@@ -10,7 +10,7 @@ import pytest
 from agent.relay_legacy import ws_url
 from agent.relay_v2 import cue_command, v2_url
 
-from .test_relay_legacy import SECRET, legacy_harness, make_agent, wait_for
+from .helpers import SECRET, legacy_client, legacy_harness, logged, make_agent, read_until, wait_for
 
 
 def test_v2_url():
@@ -32,34 +32,8 @@ def test_cue_command(msg_type, data, command):
     assert cue_command(msg_type, data) == command
 
 
-@pytest.fixture
-def relay(tmp_path):
-    """The new relay in its own thread (so the scripted v0.3 clients may block)."""
-    from server.app import create_app
-    from server.settings import Settings
-
-    harness = legacy_harness()
-    app = create_app(Settings(secret=SECRET, data_dir=tmp_path / "relay", status_interval_s=None, echo_log=False))
-    (tmp_path / "relay").mkdir()
-    with harness.RelayThread(app) as running:
-        yield running, app.state.relay
-
-
-def legacy_client(url, label, name):
-    return legacy_harness().LegacyClient(url, label, name)
-
-
-async def read_until(client, prefix, timeout=5.0):
-    """A scripted v0.3 client's frames up to one starting with prefix (read off the event loop)."""
-    return await asyncio.to_thread(client.read_until, lambda f: f.startswith(prefix), timeout)
-
-
 def peer(agent, name):
     return next((p for p in agent.snapshot()["peers"] if p["name"] == name), None)
-
-
-def logged(agent, text):
-    return any(text in e["text"] for e in agent.hub._logs)
 
 
 def test_mixed_session(relay, tmp_path, monkeypatch):

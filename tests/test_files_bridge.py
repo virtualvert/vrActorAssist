@@ -17,12 +17,6 @@ K64 = 65536
 
 
 @pytest.fixture
-def stack():
-    with ExitStack() as s:
-        yield s
-
-
-@pytest.fixture
 def client(tmp_path, stack):
     return stack.enter_context(TestClient(make_relay(tmp_path, APPROVED)))
 
@@ -32,9 +26,7 @@ def relay_of(client):
 
 
 def v2(client, stack, role, name, machine_id, caps=("files",)):
-    c = connect_v2(client, stack, role, name, machine_id, capabilities=list(caps), expect="welcome")
-    c.session_id = next(e for e in c.seen if e["type"] == "welcome")["data"]["session_id"]
-    return c
+    return connect_v2(client, stack, role, name, machine_id, capabilities=list(caps), expect="welcome")
 
 
 def of_type(envs, msg_type):

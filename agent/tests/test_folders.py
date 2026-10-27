@@ -1,19 +1,13 @@
 import asyncio
 import sys
-from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from agent import folders as folders_mod
-from agent.config import ConfigStore
-from agent.core import Agent
 from agent.folders import FolderError, Folders, list_audio, pick_folder
-from agent.web import COOKIE, Security, create_app
+from agent.web import COOKIE
 
-PORT = 47998
-HOST = f"127.0.0.1:{PORT}"
-ORIGIN = f"http://{HOST}"
+from .helpers import ORIGIN, login
 
 
 @pytest.fixture
@@ -168,14 +162,10 @@ def test_no_picker_asks_for_a_typed_path(monkeypatch):
 
 
 @pytest.fixture
-def client(tmp_path):
-    security = Security(PORT)
-    agent = Agent(ConfigStore(tmp_path / "config"))
-    app = create_app(agent, security, Path(tmp_path) / "no-web-build")
-    with TestClient(app, base_url=f"http://{HOST}") as c:
-        res = c.post("/api/session", json={"token": security.new_open_token()}, headers={"Origin": ORIGIN})
-        assert res.status_code == 200
-        yield c
+def client(env):
+    client, security, _ = env
+    login(client, security)
+    return client
 
 
 def test_endpoints_need_origin_and_session(client, project):

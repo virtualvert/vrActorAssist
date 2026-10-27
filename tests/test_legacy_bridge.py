@@ -1,7 +1,6 @@
 # Mixed sessions (spec §11.3): v0.3 clients on /ws and v2 clients on /v2/ws in one session.
 
 import json
-from contextlib import ExitStack
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,20 +17,12 @@ APPROVED = {
 
 
 @pytest.fixture
-def stack():
-    with ExitStack() as s:
-        yield s
-
-
-@pytest.fixture
 def client(tmp_path, stack):
     return stack.enter_context(TestClient(make_relay(tmp_path, APPROVED)))
 
 
 def v2_actor(client, stack, name="Ari", machine_id="m-ari"):
-    a = connect_v2(client, stack, "actor", name, machine_id, expect="welcome")
-    a.session_id = a.seen[-1]["data"]["session_id"]
-    return a
+    return connect_v2(client, stack, "actor", name, machine_id, expect="welcome")
 
 
 def roster_of(c):
@@ -212,22 +203,11 @@ def test_v2_director_to_v03_actor(client, stack, msg_type, data, legacy):
     assert legacy in got
 
 
-@pytest.mark.parametrize("data", [
-    {"sound": {"path": "C:\\a.mp3"}},
-    {"sound": {"key": "0123456789abcdef"}},
-    {"sound": {"selected": True}, "lines": "speakers"},
-    {"sound": {"index": 1}, "volume": 50},
-])
-def test_v2_actions_v03_cant_do(client, stack, data):
-    v2_dir = connect_v2(client, stack, "director", "Bo", "m-bo")
-    coda = connect_legacy(client, stack, "actor", "Coda", "m-coda")
-    msg = v2_dir.send("soundpad.play", data, to={"ids": [coda_id(client)]})
-    err = v2_dir.until("error")
-    assert err["reply_to"] == msg and err["data"]["code"] == "unsupported" and err["data"]["ids"] == [coda_id(client)]
-    assert not any(m.startswith("PRIV") for m in coda.sync())
-
-
 @pytest.mark.parametrize("msg_type, data", [
+    ("soundpad.play", {"sound": {"path": "C:\\a.mp3"}}),
+    ("soundpad.play", {"sound": {"key": "0123456789abcdef"}}),
+    ("soundpad.play", {"sound": {"selected": True}, "lines": "speakers"}),
+    ("soundpad.play", {"sound": {"index": 1}, "volume": 50}),
     ("soundpad.pause", {"paused": True}),
     ("soundpad.seek", {"ms": 1000}),
     ("soundpad.jump", {"ms": -500}),
@@ -235,7 +215,7 @@ def test_v2_actions_v03_cant_do(client, stack, data):
     ("soundpad.mute", {"muted": True}),
     ("soundpad.list.request", {}),
 ])
-def test_soundpad_controls_v03_cant_do(client, stack, msg_type, data):
+def test_v2_actions_v03_cant_do(client, stack, msg_type, data):
     v2_dir = connect_v2(client, stack, "director", "Bo", "m-bo")
     coda = connect_legacy(client, stack, "actor", "Coda", "m-coda")
     msg = v2_dir.send(msg_type, data, to={"ids": [coda_id(client)]})
