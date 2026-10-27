@@ -18,12 +18,3 @@ class Clock:
         if delay > 0:
             await asyncio.sleep(delay)
 
-
-def pong(t0: int, t1: int, t2: int) -> dict:
-    """time.pong data: the client's t0, our receive time t1 and send time t2. The client takes
-    offset = ((t1 − t0) + (t2 − t3)) / 2 and rtt = (t3 − t0) − (t2 − t1)."""
-    return {"t0": t0, "t1": t1, "t2": t2}
-
-
-def rtt_ms(t0: int, t1: int, t2: int, t3: int) -> int:
-    return max(0, (t3 - t0) - (t2 - t1))

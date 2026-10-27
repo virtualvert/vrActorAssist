@@ -472,16 +472,10 @@ class LegacyBridge:
                 if d.legacy:
                     await d.send_text(format_message("MSG", sender="SERVER", text=f"⚠ Warning: {session.name} has connected as another director"))
 
-    async def v2_pending(self) -> None:
-        await self.send_pending_list()
-
     async def v2_left(self, session: Session) -> None:
         if session.role == "actor":
             await self.send_user_list()
             await self.broadcast(format_message("MSG", sender="SERVER", text=f"{session.name} left"))
-
-    async def renamed(self) -> None:
-        await self.send_user_list()
 
     # ---- v2 → v0.3 delivery, with scheduling emulation -------------------------------------------
 

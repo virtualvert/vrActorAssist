@@ -33,7 +33,6 @@ from vrcas_protocol.messages import (
 from . import SERVER_VERSION, permissions
 from .permissions import DIRECTION
 from .sessions import Session
-from .timesync import pong, rtt_ms
 from .transfers import TYPES as FILE_TYPES, Refused
 from .updates import compare_versions_v2
 
@@ -169,7 +168,7 @@ class Router:
             relay.registry.assign_id(session)
             await self._send(session, "approval.pending", {})
             if entry is None:
-                await relay.bridge.v2_pending()
+                await relay.bridge.send_pending_list()
             await self.roster_changed()
         return True
 
@@ -322,14 +321,16 @@ class Router:
         except (KeyError, TypeError, ValueError):
             await self._error(session, "invalid", "time.ping needs t0", env)
             return
-        await self._send(session, "time.pong", pong(t0, received_ms, self.relay.clock.now_ms()), reply_to=env.id)
+        await self._send(session, "time.pong",
+                         {"t0": t0, "t1": received_ms, "t2": self.relay.clock.now_ms()}, reply_to=env.id)
 
     def _time_pong(self, session: Session, env: Envelope, payload: TimePong) -> None:
         """The answer to our own time.ping: its round trip is this session's latency."""
         if session.ping_id is None or env.reply_to != session.ping_id:
             return
         session.ping_id = None
-        rtt = rtt_ms(payload.t0, payload.t1, payload.t2, self.relay.clock.now_ms())
+        # NTP round trip: (t3 - t0) - (t2 - t1)
+        rtt = max(0, (self.relay.clock.now_ms() - payload.t0) - (payload.t2 - payload.t1))
         self.relay.record_pong(session, rtt)
 
     async def _forget(self, session: Session, env: Envelope, payload: ApprovalForget) -> None:
@@ -364,7 +365,7 @@ class Router:
         relay.approvals.update(target.machine_id, **fields)
         self.log(f"Settings for '{target.name}' by '{session.name}': {fields}")
         if renamed and target.role == "actor":
-            await relay.bridge.renamed()
+            await relay.bridge.send_user_list()
         await self.roster_changed()
 
     # ---- presence -----------------------------------------------------------------------------------

@@ -6,7 +6,7 @@ import os
 import time
 from typing import Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 PROTOCOL_VERSION = 2
 Role = Literal["director", "assistant", "actor", "camera"]
@@ -76,8 +76,3 @@ def parse(raw: str | bytes | dict) -> Envelope:
         return Envelope.model_validate(raw)
     return Envelope.model_validate_json(raw)
 
-
-__all__ = [
-    "PROTOCOL_VERSION", "ROLES", "Envelope", "IdsTarget", "Role", "RoleTarget", "Target", "ValidationError",
-    "make", "new_id", "now_ms", "parse",
-]

@@ -15,9 +15,6 @@ import asyncio
 import time
 from dataclasses import dataclass
 
-from shared import APP_VERSION as LEGACY_VERSION
-
-from . import SERVER_VERSION
 from .keepalive import TIMED_OUT
 from .legacy_bridge import LegacyBridge
 from .router import Router
@@ -26,8 +23,6 @@ from .settings import Log, Settings, Throttle
 from .timesync import Clock
 from .transfers import Transfers
 from .updates import find_update, load_manifest
-
-__all__ = ["LEGACY_VERSION", "SERVER_VERSION", "PendingEntry", "Relay", "close_text", "span"]
 
 # What a close code means (RFC 6455 §7.4.1, and router.py's own 44xx codes)
 CLOSE_NAMES = {

@@ -54,7 +54,6 @@ class ToLegacy:
     """A v2 director's file on its way to a v0.3 actor."""
 
     md5_offer: str | None
-    sha256_offer: str | None
     started: bool = False
     next_index: int = 0
     md5: Any = field(default_factory=hashlib.md5)
@@ -67,7 +66,6 @@ class LegacyBatch:
 
     director: Session
     actor: Session
-    files: int
     # A batch of one is sent without BATCH_START / BATCH_END, like a v0.3 single send (D12)
     framed: bool
 
@@ -82,10 +80,6 @@ class FileBridge:
         # v2 director → v0.3 actor: (actor, file name) → transfer, and the batches
         self.to_legacy: dict[tuple[Session, str], Transfer] = {}
         self.batches_to_legacy: dict[str, LegacyBatch] = {}
-
-    @property
-    def log(self):
-        return self.relay.log
 
     @staticmethod
     def can_receive(session: Session) -> bool:
@@ -134,24 +128,20 @@ class FileBridge:
             try:
                 payload = base64.b64decode(msg_data.get("data", ""), validate=True)
             except (binascii.Error, ValueError):
-                await self._end_from_legacy(transfer, f"Chunk {msg_data.get('chunk_num')} isn't valid base64")
+                await self.relay.files.fail(transfer, f"Chunk {msg_data.get('chunk_num')} isn't valid base64")
                 return True
             try:
                 await self.relay.files.chunk(director, pack_chunk(transfer.id, int(msg_data.get("chunk_num", 0)), payload))
             except Refused as exc:
-                await self._end_from_legacy(transfer, str(exc))
+                await self.relay.files.fail(transfer, str(exc))
             return True
         # FILEEND
         checksum = str(msg_data.get("checksum", "")).lower()
         if not _MD5.match(checksum):
-            await self._end_from_legacy(transfer, "Bad checksum at the end of the file")
+            await self.relay.files.fail(transfer, "Bad checksum at the end of the file")
             return True
         await self._to_v2(director, transfer.recipient, "file.end", {"transfer_id": transfer.id, "md5": checksum})
         return True
-
-    async def _end_from_legacy(self, transfer: Transfer, error: str) -> None:
-        """A bridged file from a v0.3 director went wrong: both sides hear about it."""
-        await self.relay.files.fail(transfer, error)
 
     async def legacy_batch(self, director: Session, actor: Session, msg_type: str, msg_data: dict) -> None:
         """BATCH_START / BATCH_END / BATCH_CANCEL from a v0.3 director to a v2 actor."""
@@ -220,7 +210,7 @@ class FileBridge:
         data = env.data
         if env.type == "file.batch.start":
             files = int(data.get("files", 0))
-            batch = LegacyBatch(director=sender, actor=recipient, files=files, framed=files != 1)
+            batch = LegacyBatch(director=sender, actor=recipient, framed=files != 1)
             self.batches_to_legacy[str(data.get("batch_id"))] = batch
             if batch.framed:
                 await recipient.send_text(format_message("BATCH_START", target=recipient.name, file_count=files,
@@ -230,7 +220,7 @@ class FileBridge:
             transfer = self.relay.files.by_id.get(str(data.get("transfer_id", "")))
             if transfer is None:
                 return True
-            transfer.leg = ToLegacy(md5_offer=data.get("md5"), sha256_offer=data.get("sha256"))
+            transfer.leg = ToLegacy(md5_offer=data.get("md5"))
             self.to_legacy[(recipient, transfer.name)] = transfer
             await recipient.send_text(format_message("FILEREQ", sender=clean(sender.name), target=recipient.name,
                                                      filename=transfer.name, size=transfer.size,

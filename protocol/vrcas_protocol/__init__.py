@@ -19,7 +19,6 @@ from .envelope import (
     Role,
     RoleTarget,
     Target,
-    ValidationError,
     make,
     new_id,
     now_ms,
@@ -31,5 +30,5 @@ __all__ = [
     "CHUNK_SIZE", "KIND_FILE_CHUNK", "MAX_FILE_BYTES", "MAX_IN_FLIGHT", "Chunk", "chunk_count", "pack_chunk",
     "unpack_chunk",
     "MODELS", "PROTOCOL_VERSION", "ROLES", "Envelope", "IdsTarget", "Role", "RoleTarget", "Target",
-    "ValidationError", "make", "new_id", "now_ms", "parse", "validate",
+    "make", "new_id", "now_ms", "parse", "validate",
 ]

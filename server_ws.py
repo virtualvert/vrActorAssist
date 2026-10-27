@@ -13,7 +13,7 @@ from server import SERVER_VERSION
 from server.app import create_app
 from server.keepalive import WS_PING_INTERVAL_S, WS_PING_TIMEOUT_S, protocol_class
 from server.settings import DEFAULT_DATA_DIR, DEFAULT_PORT, DEFAULT_SECRET, Settings
-from server.updates import compare_versions, find_update, load_manifest, parse_version  # noqa: F401 (moved; kept importable)
+from server.updates import find_update  # noqa: F401 (tests use server_ws.find_update)
 from shared import APP_VERSION
 
 # Get secret from env or arg

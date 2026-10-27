@@ -11,9 +11,8 @@ Files to and from v0.3 clients use the same entries; file_bridge.py translates f
 
 from __future__ import annotations
 
-import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from vrcas_protocol import Envelope, IdsTarget, KIND_FILE_CHUNK, chunk_count, make, unpack_chunk
@@ -42,8 +41,6 @@ class Transfer:
     sender: Session
     recipient: Session
     accepted: bool = False
-    forwarded: int = 0
-    started: float = field(default_factory=time.monotonic)
     # file_bridge.ToLegacy for a file on its way to a v0.3 client
     leg: Any = None
 
@@ -180,7 +177,6 @@ class Transfers:
         elif not await transfer.recipient.send_bytes(frame):
             await self.fail(transfer, f"{transfer.recipient.name} disconnected")
             return
-        transfer.forwarded += 1
 
     # ---- ending transfers --------------------------------------------------------------------------
 
