@@ -17,9 +17,8 @@ import sys
 import tempfile
 from pathlib import Path, PurePosixPath
 
-from .media import MEDIA_EXTENSIONS, duration_ms
+from .media import AUDIO_EXTENSIONS, MEDIA_EXTENSIONS, duration_ms
 
-AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".oga", ".opus", ".m4a", ".aac"}
 OUTPUT_DIR = "normalized"
 MAX_FILES = 5000
 # Paths per durations request (the page asks in batches)
@@ -154,8 +153,9 @@ def inside(root: Path, rel: str, must_exist: bool = True) -> Path:
     return path
 
 
-def list_audio(root: Path) -> list[dict]:
-    """Audio files under root (relative, forward slashes), skipping hidden files, links and our output."""
+def _walk_files(root: Path, audio_only: bool) -> list[dict]:
+    """Files under root (relative, forward slashes, with size), skipping hidden files and folders and links;
+    audio_only: just AUDIO_EXTENSIONS, and not our output folder."""
     found: list[dict] = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         here = Path(dirpath)
@@ -163,12 +163,12 @@ def list_audio(root: Path) -> list[dict]:
             d
             for d in dirnames
             if not d.startswith(".")
-            and not (here == root and d.casefold() == OUTPUT_DIR)
+            and not (audio_only and here == root and d.casefold() == OUTPUT_DIR)
             and not (here / d).is_symlink()
         ]
         for name in filenames:
             path = here / name
-            if name.startswith(".") or path.suffix.lower() not in AUDIO_EXTENSIONS or path.is_symlink():
+            if name.startswith(".") or (audio_only and path.suffix.lower() not in AUDIO_EXTENSIONS) or path.is_symlink():
                 continue
             try:
                 size = path.stat().st_size
@@ -179,27 +179,16 @@ def list_audio(root: Path) -> list[dict]:
                 break
     found.sort(key=lambda f: f["path"].casefold())
     return found
+
+
+def list_audio(root: Path) -> list[dict]:
+    """Audio files under root (relative, forward slashes), skipping hidden files, links and our output."""
+    return _walk_files(root, True)
 
 
 def list_all(root: Path) -> list[dict]:
     """Every regular file under root, skipping hidden files and folders and links."""
-    found: list[dict] = []
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        here = Path(dirpath)
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") and not (here / d).is_symlink()]
-        for name in filenames:
-            path = here / name
-            if name.startswith(".") or path.is_symlink():
-                continue
-            try:
-                size = path.stat().st_size
-            except OSError:
-                continue
-            found.append({"path": path.relative_to(root).as_posix(), "size": size})
-            if len(found) > MAX_FILES:
-                break
-    found.sort(key=lambda f: f["path"].casefold())
-    return found
+    return _walk_files(root, False)
 
 
 async def pick_folder() -> str | None:

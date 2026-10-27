@@ -38,9 +38,6 @@ def find_soundpad_exe():
         # Steam default location
         r"C:\Program Files (x86)\Steam\steamapps\common\Soundpad\Soundpad.exe",
         r"C:\Program Files\Steam\steamapps\common\Soundpad\Soundpad.exe",
-        
-        # Steam in Program Files
-        r"C:\Program Files\Steam\steamapps\common\Soundpad\Soundpad.exe",
     ]
     
     for path in common_paths:

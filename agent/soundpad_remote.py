@@ -30,8 +30,6 @@ if TYPE_CHECKING:
 TICK_S = 0.25
 MIN_GAP_S = 0.5
 HEARTBEAT_S = 10.0
-ACTIONS = ("soundpad.play", "soundpad.stop", "soundpad.pause", "soundpad.seek", "soundpad.jump", "soundpad.volume",
-           "soundpad.mute", "soundpad.list.request", "soundpad.calibrate")
 LINES_TEXT = {"both": "both lines", "speakers": "speakers only", "mic": "mic only"}
 
 

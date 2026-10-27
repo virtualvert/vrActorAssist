@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from vrcas_protocol import CHUNK_SIZE, MAX_FILE_BYTES, MAX_IN_FLIGHT, Chunk, chunk_count, pack_chunk, unpack_chunk
+from vrcas_protocol import CHUNK_SIZE, MAX_IN_FLIGHT, Chunk, chunk_count, pack_chunk, unpack_chunk
 from vrcas_protocol import validate
 
 if TYPE_CHECKING:
@@ -128,7 +128,6 @@ class Incoming:
     state: str = "asking"  # asking → receiving
     received: set[int] = field(default_factory=set)
     handle: Any = None
-    asked_at: float = field(default_factory=time.time)
 
     @property
     def target(self) -> Path:
@@ -474,7 +473,6 @@ class Outgoing:
     md5: str = ""
     state: str = "queued"  # queued → offered → sending → ok | declined | failed | cancelled
     acked: int = 0
-    sent: int = 0
     detail: str = ""
     decision: asyncio.Future | None = None
     # The id of the file.offer message, which a relay error names in reply_to
@@ -698,7 +696,6 @@ class Sender:
                     break
                 payload = await asyncio.to_thread(handle.read, item.chunk_size)
                 await files.send_frame(pack_chunk(item.transfer_id, index, payload))
-                item.sent = index + 1
         except _Stalled:
             self._finish(item, "err", f"{batch.actor_name} stopped answering")
             await files.send("file.batch.cancel", {"batch_id": batch.id, "reason": "Stalled"}, to)
@@ -767,8 +764,3 @@ class Files:
     def reset(self, reason: str) -> None:
         self.receiver.reset(reason)
         self.sender.reset(reason)
-
-    def sizes_ok(self, paths: list[Path]) -> None:
-        for path in paths:
-            if path.stat().st_size > MAX_FILE_BYTES:
-                raise FileRefused(f"{path.name} is larger than {MAX_FILE_BYTES // 2**30} GB")

@@ -11,7 +11,6 @@ import asyncio
 import os
 import statistics
 import subprocess
-import sys
 import time
 from collections import deque
 from pathlib import Path
@@ -19,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Callable
 
 import soundpad
 
+from .config import LATENCY_SAMPLES
 from .scheduler import DEFAULT_START_LATENCY_MS
 from .sounds import SoundCache, normal_path, sound_key
 from .soundpad_pipe import (
@@ -44,7 +44,6 @@ POLL_IDLE_S = 1.0
 # How long after a play command to watch for the start, and how many position steps to use
 MEASURE_FOR_S = 3.0
 MEASURE_STEPS = 3
-LATENCY_SAMPLES = 5
 # Volume, mute and the sound count are read this often (they change rarely)
 LEVELS_EVERY_S = 5.0
 # How long to wait for PLAYING before seeking to a start position
@@ -61,6 +60,23 @@ class PlayError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
+
+
+_FAILURES = (PlayError, SoundpadUnavailable, SoundpadTimeout, SoundpadError)
+
+
+def failure_status(exc: Exception, r404: bool = True) -> tuple[str, str]:
+    """(soundpad.ack status, error) for a failed play, calibrate or control. `r404`: Soundpad's R-404
+    means the sound number isn't there (control reports it as a plain error)."""
+    if isinstance(exc, PlayError):
+        return exc.code, str(exc)
+    if isinstance(exc, SoundpadUnavailable):
+        return "soundpad_offline", str(exc)
+    if isinstance(exc, SoundpadTimeout):
+        return "timeout", str(exc)
+    if r404 and isinstance(exc, SoundpadError) and "R-404" in str(exc):
+        return "not_in_soundpad", "That sound number isn't in this actor's Soundpad"
+    return "error", str(exc)
 
 
 def osc_address(parameter: str) -> str:
@@ -384,16 +400,8 @@ class ActorRuntime:
             if start_ms:
                 await self._seek_after_start(pipe, int(start_ms))
             return "ok", None
-        except PlayError as exc:
-            return exc.code, str(exc)
-        except SoundpadUnavailable as exc:
-            return "soundpad_offline", str(exc)
-        except SoundpadTimeout as exc:
-            return "timeout", str(exc)
-        except SoundpadError as exc:
-            if "R-404" in str(exc):
-                return "not_in_soundpad", "That sound number isn't in this actor's Soundpad"
-            return "error", str(exc)
+        except _FAILURES as exc:
+            return failure_status(exc)
         finally:
             self._changed()
 
@@ -414,16 +422,8 @@ class ActorRuntime:
             self._started(pipe, reply.sent_at, index, self.cache.by_index(index), "speakers")
             self._calibration = self.current
             return "ok", None
-        except PlayError as exc:
-            return exc.code, str(exc)
-        except SoundpadUnavailable as exc:
-            return "soundpad_offline", str(exc)
-        except SoundpadTimeout as exc:
-            return "timeout", str(exc)
-        except SoundpadError as exc:
-            if "R-404" in str(exc):
-                return "not_in_soundpad", "That sound number isn't in this actor's Soundpad"
-            return "error", str(exc)
+        except _FAILURES as exc:
+            return failure_status(exc)
         finally:
             self._changed()
 
@@ -527,14 +527,8 @@ class ActorRuntime:
                 raise PlayError("invalid", f"Unknown action {action}")
             self._wake_poll.set()
             return "ok", None
-        except PlayError as exc:
-            return exc.code, str(exc)
-        except SoundpadUnavailable as exc:
-            return "soundpad_offline", str(exc)
-        except SoundpadTimeout as exc:
-            return "timeout", str(exc)
-        except (SoundpadError, ValueError) as exc:
-            return "error", str(exc)
+        except (*_FAILURES, ValueError) as exc:
+            return failure_status(exc, r404=False)
         finally:
             self._changed()
 
@@ -756,7 +750,3 @@ class ActorRuntime:
         except OSError as exc:
             return False, f"OSC send failed: {exc}"
         return True, f"{address} ← {value}"
-
-
-def platform_note() -> str:
-    return "Windows" if sys.platform == "win32" else sys.platform
