@@ -35,6 +35,9 @@ export interface Size {
   height: number;
 }
 
+/** Fields of the relay and pending-actor nodes: nothing happening, nothing to click. */
+const INERT = { activity: "idle", self: false, targeted: false, selectable: false } as const;
+
 const ROLE_ORDER: Role[] = ["director", "camera", "actor"];
 
 /** Turn app state into the list of nodes to draw (server first). */
@@ -51,10 +54,7 @@ export function graphSpecs(state: AppState): GraphNodeSpec[] {
       sub: serverSub,
       level: serverStatus === "up" ? "good" : "lost",
       status: serverStatus,
-      activity: "idle",
-      self: false,
-      targeted: false,
-      selectable: false,
+      ...INERT,
     },
   ];
 
@@ -86,10 +86,7 @@ export function graphSpecs(state: AppState): GraphNodeSpec[] {
         sub: "Wants to join",
         level: "unknown",
         status: "pending",
-        activity: "idle",
-        self: false,
-        targeted: false,
-        selectable: false,
+        ...INERT,
       });
     }
   }
@@ -112,6 +109,15 @@ export interface Metrics {
   rem: number;
 }
 
+/** The numbers the actor rows and the camera columns share (px). */
+function rowBand(w: number, m: Metrics, hasCameras: boolean) {
+  const sideX = m.radius + m.rem * 3.2;
+  const minGap = m.radius * 2 + m.rem * 4.2;
+  // Rows leave the side columns to the camera operators when there's room for both.
+  const rowLeft = hasCameras && w >= minGap * 5 ? sideX * 2 + m.rem : sideX * 0.6;
+  return { sideX, minGap, rowWidth: Math.max(w - rowLeft * 2, 0) };
+}
+
 /**
  * Stage layout: directors along the top (the director's chair), actors along the bottom
  * (the stage), camera operators on the left and right, the relay in the middle.
@@ -125,15 +131,10 @@ export function anchorsFor(specs: GraphNodeSpec[], size: Size, m: Metrics): Map<
   const groups: Record<NodeKind, GraphNodeSpec[]> = { server: [], director: [], actor: [], camera: [] };
   for (const s of specs) groups[s.kind].push(s);
 
-  const sideX = m.radius + m.rem * 3.2;
+  const { sideX, minGap, rowWidth } = rowBand(w, m, groups.camera.length > 0);
   const topY = m.radius + m.rem * 2.2;
   const bottomY = h - m.radius - m.rem * 2.9;
-  const minGap = m.radius * 2 + m.rem * 4.2;
   const rowGap = m.radius * 2 + m.rem * 3;
-  // Rows leave the side columns to the camera operators when there's room for both.
-  const roomy = w >= minGap * 5;
-  const rowLeft = groups.camera.length && roomy ? sideX * 2 + m.rem : sideX * 0.6;
-  const rowWidth = Math.max(w - rowLeft * 2, 0);
 
   // Spread a row centred on cx, never wider than the usable width.
   const spreadRow = (count: number): number[] => {
@@ -155,7 +156,7 @@ export function anchorsFor(specs: GraphNodeSpec[], size: Size, m: Metrics): Map<
 
   // Actors fill rows from the front (bottom) backwards, as many per row as fit.
   const actors = centerSelf(groups.actor);
-  const perRow = actorsPerRow(w, m, rowWidth);
+  const perRow = actorsPerRow(rowWidth, minGap);
   const rows = Math.max(1, Math.ceil(actors.length / perRow));
   // The canvas grows to fit the rows (minGraphHeight); if it can't, squeeze them below the relay.
   const band = bottomY - (cy + m.radius * 2.5);
@@ -179,18 +180,14 @@ export function anchorsFor(specs: GraphNodeSpec[], size: Size, m: Metrics): Map<
   return out;
 }
 
-function actorsPerRow(width: number, m: Metrics, rowWidth?: number): number {
-  const minGap = m.radius * 2 + m.rem * 4.2;
-  const usable = rowWidth ?? width - (m.radius + m.rem * 3.2) * 1.2;
-  return Math.max(1, Math.floor(usable / minGap) + 1);
+function actorsPerRow(rowWidth: number, minGap: number): number {
+  return Math.max(1, Math.floor(rowWidth / minGap) + 1);
 }
 
 /** How many actor rows the stage layout uses at this width (the canvas grows to fit them). */
 export function actorRows(actorCount: number, width: number, m: Metrics, hasCameras: boolean): number {
-  const sideX = m.radius + m.rem * 3.2;
-  const minGap = m.radius * 2 + m.rem * 4.2;
-  const rowLeft = hasCameras && width >= minGap * 5 ? sideX * 2 + m.rem : sideX * 0.6;
-  return Math.max(1, Math.ceil(actorCount / actorsPerRow(width, m, Math.max(width - rowLeft * 2, 0))));
+  const { rowWidth, minGap } = rowBand(width, m, hasCameras);
+  return Math.max(1, Math.ceil(actorCount / actorsPerRow(rowWidth, minGap)));
 }
 
 /** Smallest graph height that keeps the three bands (directors, relay, actors) apart. */

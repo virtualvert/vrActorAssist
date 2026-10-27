@@ -216,14 +216,16 @@
     raf = packets.length ? requestAnimationFrame(step) : 0;
   }
 
+  const pt = (n: SimNode): Point => ({ x: n.x ?? 0, y: n.y ?? 0 });
+
   function packetPos(p: Packet, ts: number): Point | null {
     const t = (ts - p.start) / p.dur;
     if (t < 0 || t > 1) return null;
     const server = nodes.get(SERVER_ID);
     const other = nodes.get(p.from === SERVER_ID ? p.to : p.from);
     if (!server || !other) return null;
-    const a = { x: server.x ?? 0, y: server.y ?? 0 };
-    const b = { x: other.x ?? 0, y: other.y ?? 0 };
+    const a = pt(server);
+    const b = pt(other);
     const e = easeInOut(t);
     return bezierPoint(a, curveControl(a, b), b, p.from === SERVER_ID ? e : 1 - e);
   }
@@ -240,7 +242,7 @@
   function linkD(n: SimNode, _frame: number): string {
     const server = nodes.get(SERVER_ID);
     if (!server) return "";
-    return linkPath({ x: server.x ?? 0, y: server.y ?? 0 }, { x: n.x ?? 0, y: n.y ?? 0 });
+    return linkPath(pt(server), pt(n));
   }
 
   function iconFor(kind: NodeKind): Component {

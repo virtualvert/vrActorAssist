@@ -44,21 +44,21 @@ export function ago(ts: number, now: number): string {
   return `${Math.round(m / 60)}h ago`;
 }
 
+/** Whole seconds in `ms` (never negative), split into hours, minutes and seconds. */
+function hms(ms: number): [number, number, number] {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return [Math.floor(total / 3600), Math.floor((total % 3600) / 60), total % 60];
+}
+
 /** 00:01:23 for recording timers. */
 export function duration(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
+  return hms(ms).map((n) => String(n).padStart(2, "0")).join(":");
 }
 
 /** 1:23 (or 1:02:03) for a position in a sound, like a media player. */
 export function mediaTime(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = String(total % 60).padStart(2, "0");
+  const [h, m, sec] = hms(ms);
+  const s = String(sec).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
 }
 

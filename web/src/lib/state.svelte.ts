@@ -1,6 +1,5 @@
 import type { AgentEvent, AppState, Call, LogEntry, LogLevel, Prefs, SoundList, Traffic } from "./protocol";
-import type { LinkState, Transport } from "./transport";
-import type { FolderAccess } from "./transport/types";
+import type { FolderAccess, LinkState, Transport } from "./transport/types";
 import { applyPrefs } from "./prefs";
 
 const MAX_LOGS = 300;
@@ -118,8 +117,6 @@ class AppStore {
         this.sounds = { ...this.sounds, [list.peerId]: list };
         break;
       }
-      case "result":
-        break;
     }
   }
 }

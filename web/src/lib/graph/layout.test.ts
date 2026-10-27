@@ -1,32 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import type { AppState, Peer } from "../protocol";
+import type { Peer } from "../protocol";
+import { appState as baseState, peer } from "../testing";
 import { anchorsFor, bezierPoint, centerSelf, curveControl, graphSpecs, minGraphHeight, SERVER_ID } from "./layout";
-
-function peer(id: string, role: Peer["role"], extra: Partial<Peer> = {}): Peer {
-  return { id, name: id, role, status: "online", latencyMs: 40, activity: "idle", self: false, caps: [], soundpad: null, delayMs: null, lastLateMs: null, ...extra };
-}
-
-function baseState(extra: Partial<AppState> = {}): AppState {
-  return {
-    appVersion: "test",
-    demo: true,
-    logDir: null,
-    role: "director",
-    prefs: { theme: "dark", scale: 1, vrMode: false, reduceMotion: false },
-    profile: { name: "Dir", serverUrl: "ws://x", hasSecret: true },
-    connection: { status: "connected", detail: "", host: "relay", serverVersion: "0.4.0", legacy: false },
-    peers: [],
-    pending: [],
-    offline: [],
-    targets: [],
-    countdown: null,
-    clock: { synced: false, offsetMs: null, rttMs: null },
-    actor: null,
-    camera: null,
-    director: null,
-    ...extra,
-  };
-}
 
 describe("graphSpecs", () => {
   test("server first, then peers sorted director → camera → actor", () => {

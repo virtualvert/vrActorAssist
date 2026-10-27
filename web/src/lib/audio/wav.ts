@@ -44,41 +44,6 @@ export function encodeWav16(pcm: Pcm, gainDb = 0, random: () => number = Math.ra
   return new Uint8Array(buffer);
 }
 
-/** Reads the 16-bit PCM files encodeWav16 writes (and other plain PCM WAVs). */
-export function readWav16(bytes: Uint8Array): Pcm {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (text(view, 0, 4) !== "RIFF" || text(view, 8, 4) !== "WAVE") throw new Error("Not a WAV file");
-  let offset = 12;
-  let count = 0;
-  let rate = 0;
-  while (offset + 8 <= view.byteLength) {
-    const id = text(view, offset, 4);
-    const size = view.getUint32(offset + 4, true);
-    const body = offset + 8;
-    if (id === "fmt ") {
-      if (view.getUint16(body, true) !== 1 || view.getUint16(body + 14, true) !== 16) throw new Error("Only 16-bit PCM WAV");
-      count = view.getUint16(body + 2, true);
-      rate = view.getUint32(body + 4, true);
-    } else if (id === "data") {
-      if (!count) throw new Error("WAV data before its format chunk");
-      const frames = Math.floor(size / (2 * count));
-      const channels = Array.from({ length: count }, () => new Float32Array(frames));
-      for (let i = 0; i < frames; i++) {
-        for (let c = 0; c < count; c++) channels[c][i] = view.getInt16(body + (i * count + c) * 2, true) / 32768;
-      }
-      return { rate, channels };
-    }
-    offset = body + size + (size % 2);
-  }
-  throw new Error("WAV file has no data");
-}
-
 function ascii(view: DataView, offset: number, value: string): void {
   for (let i = 0; i < value.length; i++) view.setUint8(offset + i, value.charCodeAt(i));
-}
-
-function text(view: DataView, offset: number, length: number): string {
-  let out = "";
-  for (let i = 0; i < length && offset + i < view.byteLength; i++) out += String.fromCharCode(view.getUint8(offset + i));
-  return out;
 }

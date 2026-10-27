@@ -123,6 +123,9 @@ export function demoSounds(name: string): SoundEntry[] {
   return titles.map((title, i) => ({ index: i + 1, key: demoKey(`${name}/${title}`), title, durationMs: 3000 + ((i * 1700) % 9000) }));
 }
 
+/** What a Soundpad reports once nothing plays; only ever spread into a patch. */
+const STOPPED = { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, index: null, key: null, lines: null } as const;
+
 function stoppedPlayback(): SoundpadPlayback {
   return { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, lines: null };
 }
@@ -166,7 +169,7 @@ export class DemoSession {
     this.#storage = storage;
     this.#emit = emit;
     const saved = storage.load() ?? {};
-    const role = forcedRole !== undefined && forcedRole !== null ? forcedRole : (saved.role ?? null);
+    const role = forcedRole ?? saved.role ?? null;
     this.state = {
       appVersion: "0.4.0-preview.1",
       demo: true,
@@ -218,7 +221,7 @@ export class DemoSession {
         break;
       case "setProfile":
         if (call.args.name !== undefined) {
-          this.state.profile.name = call.args.name.trim() || this.#defaultName();
+          this.state.profile.name = call.args.name.trim() || (this.state.role ? DEFAULT_NAMES[this.state.role] : "");
           const self = this.state.peers.find((p) => p.self);
           if (self) self.name = this.state.profile.name;
         }
@@ -283,7 +286,7 @@ export class DemoSession {
         }
         break;
       case "setDelay": {
-        const p = this.state.peers.find((q) => q.id === call.args.id && q.role === "actor");
+        const p = this.#actor(call.args.id);
         if (p) {
           p.delayMs = call.args.ms;
           this.#log("info", `${p.name}'s delay: ${delayText(call.args.ms)}`);
@@ -481,7 +484,7 @@ export class DemoSession {
   #go(): void {
     if (this.state.connection.status !== "connected") return;
     const now = this.#clock.now();
-    const targets = this.#onlineActors().filter((p) => this.state.targets.includes(p.id));
+    const targets = this.#targetedActors();
     if (!targets.length) {
       this.#log("warning", "GO skipped — no actors targeted");
       return;
@@ -490,11 +493,9 @@ export class DemoSession {
     const parts: string[] = [];
     for (const p of targets) {
       const sound = armed[p.id];
-      const entry = sound ? demoSounds(p.name).find((s) => ("key" in sound.sound && s.key === sound.sound.key) || ("index" in sound.sound && s.index === sound.sound.index)) : undefined;
+      const entry = this.#lookup(p, sound?.sound);
       const length = entry?.durationMs ?? SELECTED_SOUND_MS;
-      this.#playingUntil.set(p.id, now + (sound ? length : 4000 + Math.round(this.#clock.random() * 4000)));
-      p.activity = "playing";
-      this.#spPlay(p, { title: sound ? (entry?.title ?? sound.label) : null, index: entry?.index ?? null, key: entry?.key ?? null, lines: sound?.lines ?? "both", durationMs: length });
+      this.#startOn(p, { title: sound ? (entry?.title ?? sound.label) : null, entry, lines: sound?.lines ?? "both", durationMs: length }, sound ? length : 4000 + Math.round(this.#clock.random() * 4000));
       // Scheduled starts report how late they ran; the demo's are on time
       p.lastLateMs = Math.round(this.#clock.random() * 6);
       parts.push(sound ? `${p.name} (${armedText(sound)})` : p.name);
@@ -509,7 +510,7 @@ export class DemoSession {
 
   #arm(id: string, sound: SoundRef, label: string, lines: Lines | null): void {
     const director = this.state.director;
-    const p = this.state.peers.find((q) => q.id === id && q.role === "actor");
+    const p = this.#actor(id);
     if (!director || !p) return;
     const reason = armReason(p, sound, lines, false);
     if (reason) {
@@ -534,7 +535,7 @@ export class DemoSession {
       });
       return;
     }
-    const p = this.state.peers.find((q) => q.id === id && q.role === "actor");
+    const p = this.#actor(id);
     if (!p) return;
     if (!p.caps.includes("soundpad.calibrate")) {
       this.#toast("error", `${p.name}'s app is too old to calibrate`);
@@ -557,10 +558,10 @@ export class DemoSession {
     if (this.state.connection.status !== "connected") return;
     const wasCounting = this.state.countdown !== null;
     this.state.countdown = null;
-    const targets = this.#onlineActors().filter((p) => this.state.targets.includes(p.id));
+    const targets = this.#targetedActors();
     for (const p of this.state.peers) {
       if (!p.self) p.activity = "idle";
-      if (p.soundpad?.available && targets.includes(p)) this.#spSet(p, { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, index: null, key: null, lines: null });
+      if (p.soundpad?.available && targets.includes(p)) this.#spSet(p, STOPPED);
     }
     this.#playingUntil.clear();
     this.#traffic("self", targets.map((p) => p.id), "stop");
@@ -636,7 +637,7 @@ export class DemoSession {
     if (this.state.connection.status !== "connected") return;
     const played: Peer[] = [];
     for (const id of ids) {
-      const p = this.state.peers.find((q) => q.id === id && q.role === "actor");
+      const p = this.#actor(id);
       if (!p) continue;
       const legacy = p.caps.includes("legacy");
       const simple = ("index" in sound || "selected" in sound) && (lines ?? "both") === "both" && volume === undefined;
@@ -652,18 +653,10 @@ export class DemoSession {
         this.#log("warning", `${p.name}: play — ${label ?? "That file"} isn't in Soundpad, and this actor's app has 'Add received files to Soundpad' turned off`);
         continue;
       }
-      const list = demoSounds(p.name);
-      const entry = "key" in sound ? list.find((s) => s.key === sound.key) : "index" in sound ? list.find((s) => s.index === sound.index) : undefined;
+      const entry = this.#lookup(p, sound);
+      const length = entry?.durationMs ?? SELECTED_SOUND_MS;
       if (volume !== undefined) this.#spSet(p, { volume });
-      this.#spPlay(p, {
-        title: entry?.title ?? ("sha256" in sound ? (label ?? "Sent file") : null),
-        index: entry?.index ?? null,
-        key: entry?.key ?? null,
-        lines: lines ?? "both",
-        durationMs: entry?.durationMs ?? SELECTED_SOUND_MS,
-      });
-      p.activity = "playing";
-      this.#playingUntil.set(p.id, this.#clock.now() + (entry?.durationMs ?? SELECTED_SOUND_MS));
+      this.#startOn(p, { title: entry?.title ?? ("sha256" in sound ? (label ?? "Sent file") : null), entry, lines: lines ?? "both", durationMs: length }, length);
       played.push(p);
     }
     if (played.length) {
@@ -684,7 +677,7 @@ export class DemoSession {
         this.#spStart.set(id, now - sp.positionMs);
         this.#spSet(p, { status: "PLAYING" });
       } else if (action === "stop") {
-        this.#spSet(p, { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, index: null, key: null, lines: null });
+        this.#spSet(p, STOPPED);
         p.activity = "idle";
       } else if (action === "volume" && value !== undefined) this.#spSet(p, { volume: value });
       else if (action === "mute" || action === "unmute") this.#spSet(p, { muted: action === "mute" });
@@ -703,7 +696,7 @@ export class DemoSession {
       const sp = p.soundpad;
       if (!sp?.available || sp.status !== "PLAYING") continue;
       const position = now - (this.#spStart.get(p.id) ?? now);
-      if (position >= sp.durationMs) this.#spSet(p, { status: "STOPPED", positionMs: 0, durationMs: 0, title: null, index: null, key: null, lines: null });
+      if (position >= sp.durationMs) this.#spSet(p, STOPPED);
       else this.#spSet(p, { positionMs: Math.floor(position / 140) * 140 });
     }
   }
@@ -833,7 +826,7 @@ export class DemoSession {
 
   #incomingFiles(): void {
     const files = this.state.actor?.files;
-    const director = this.state.peers.find((p) => p.role === "director" && !p.self);
+    const director = this.#director();
     if (!files || !director || this.state.connection.status !== "connected") return;
     const self = this.state.profile.name || "Rowan";
     const names = [`Scene 4 - ${self}.wav`, `Scene 5 - ${self}.wav`];
@@ -895,7 +888,7 @@ export class DemoSession {
 
   /** The director's Play in 3s, as an actor sees it: a countdown on server time, then GO. */
   #incomingCountdown(): void {
-    const director = this.state.peers.find((p) => p.role === "director" && !p.self);
+    const director = this.#director();
     if (!director || this.state.connection.status !== "connected") return;
     const latency = this.state.actor?.timing.autoCompensate ? (this.state.actor.timing.startLatencyMs ?? DEFAULT_START_LATENCY_MS) : 0;
     const fireIn = COUNTDOWN_MS + (this.state.actor?.timing.delayMs ?? 0) - latency;
@@ -910,7 +903,7 @@ export class DemoSession {
   }
 
   #incomingCue(): void {
-    const director = this.state.peers.find((p) => p.role === "director" && !p.self);
+    const director = this.#director();
     if (!director) return;
     const now = this.#clock.now();
     const self = this.state.peers.find((p) => p.self);
@@ -1026,6 +1019,33 @@ export class DemoSession {
     this.#changed = true;
   }
 
+  #actor(id: string | undefined): Peer | undefined {
+    return this.state.peers.find((q) => q.id === id && q.role === "actor");
+  }
+
+  #director(): Peer | undefined {
+    return this.state.peers.find((p) => p.role === "director" && !p.self);
+  }
+
+  #targetedActors(): Peer[] {
+    return this.#onlineActors().filter((p) => this.state.targets.includes(p.id));
+  }
+
+  /** The actor's pretend sound for a reference: by key, else by number. */
+  #lookup(actor: Peer, sound: SoundRef | undefined): SoundEntry | undefined {
+    if (!sound) return undefined;
+    const list = demoSounds(actor.name);
+    return "key" in sound ? list.find((s) => s.key === sound.key) : "index" in sound ? list.find((s) => s.index === sound.index) : undefined;
+  }
+
+  /** Starts a sound on one actor's Soundpad and marks them playing until `untilMs` from now. */
+  #startOn(p: Peer, what: { title: string | null; entry: SoundEntry | undefined; lines: Lines; durationMs: number }, untilMs: number): void {
+    const { entry } = what;
+    this.#playingUntil.set(p.id, this.#clock.now() + untilMs);
+    p.activity = "playing";
+    this.#spPlay(p, { title: what.title, index: entry?.index ?? null, key: entry?.key ?? null, lines: what.lines, durationMs: what.durationMs });
+  }
+
   #onlineActors(): Peer[] {
     return this.state.peers.filter((p) => p.role === "actor" && p.status === "online");
   }
@@ -1114,10 +1134,6 @@ export class DemoSession {
       role === "camera"
         ? ({ obs: { connected: true, detail: "OBS 31 · demo" }, recording: false, recordingSince: null } satisfies CameraLocal)
         : null;
-  }
-
-  #defaultName(): string {
-    return this.state.role ? DEFAULT_NAMES[this.state.role] : "";
   }
 
   #later(ms: number, fn: () => void): void {

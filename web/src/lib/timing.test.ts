@@ -1,25 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { Peer } from "./protocol";
+import { peer } from "./testing";
 import { armedText, armReason, clockText, delayText, isArmed, leadWarnings, parseDelay } from "./timing";
 
 const CURRENT = ["soundpad", "soundpad.list", "soundpad.calibrate", "schedule"];
 
-function actor(id: string, extra: Partial<Peer> = {}): Peer {
-  return {
-    id,
-    name: id,
-    role: "actor",
-    status: "online",
-    latencyMs: 40,
-    activity: "idle",
-    self: false,
-    caps: CURRENT,
-    soundpad: null,
-    delayMs: 0,
-    lastLateMs: null,
-    ...extra,
-  };
-}
+const actor = (id: string, extra: Partial<Peer> = {}): Peer => peer(id, "actor", { caps: CURRENT, delayMs: 0, ...extra });
 
 describe("delayText and parseDelay", () => {
   test("signs and units", () => {

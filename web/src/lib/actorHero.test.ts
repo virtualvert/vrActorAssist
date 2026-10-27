@@ -1,23 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { actorHero } from "./actorHero";
 import type { ActorLocal, AppState } from "./protocol";
+import { appState, peer } from "./testing";
 
 const NOW = 1_800_000_000_000;
 
 function state(actor: Partial<ActorLocal> = {}, extra: Partial<AppState> = {}): AppState {
-  return {
-    appVersion: "test",
-    demo: true,
-    logDir: null,
+  return appState({
     role: "actor",
-    prefs: { theme: "dark", scale: 1, vrMode: false, reduceMotion: false },
     profile: { name: "Vega", serverUrl: "ws://x", hasSecret: false },
-    connection: { status: "connected", detail: "", host: "relay", serverVersion: "0.4.0", legacy: false },
-    peers: [{ id: "self", name: "Vega", role: "actor", status: "online", latencyMs: null, activity: "idle", self: true, caps: [], soundpad: null, delayMs: null, lastLateMs: null }],
-    pending: [],
-    offline: [],
-    targets: [],
-    countdown: null,
+    peers: [peer("self", "actor", { name: "Vega", latencyMs: null, self: true })],
     clock: { synced: true, offsetMs: 9000, rttMs: 50 },
     actor: {
       soundpad: { enabled: false, state: "disabled", detail: "", info: null, playback: null, volume: null, muted: null, defaultLines: "both", autoAddReceived: true, autoLaunch: false, path: "" },
@@ -27,10 +19,8 @@ function state(actor: Partial<ActorLocal> = {}, extra: Partial<AppState> = {}): 
       timing: { startLatencyMs: 60, measured: false, samples: 0, autoCompensate: true, delayMs: 0 },
       ...actor,
     },
-    camera: null,
-    director: null,
     ...extra,
-  };
+  });
 }
 
 describe("actorHero", () => {

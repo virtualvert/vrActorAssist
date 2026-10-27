@@ -23,10 +23,4 @@ export function applyPrefs(prefs: Prefs): void {
   }
 }
 
-/** The theme actually on screen, resolving "system". */
-export function effectiveTheme(prefs: Prefs): "dark" | "light" {
-  if (prefs.theme !== "system") return prefs.theme;
-  return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
-
 export const SCALE_STEP = 0.1;

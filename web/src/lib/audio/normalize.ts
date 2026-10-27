@@ -13,8 +13,6 @@ export const DEFAULT_SETTINGS: NormalizeSettings = { targetLufs: -16, ceilingDbt
 export const TARGET_RANGE: [number, number] = [-36, -6];
 export const CEILING_RANGE: [number, number] = [-12, 0];
 
-/** Files the agent lists and the page tries to decode. */
-export const AUDIO_EXTENSIONS = ["wav", "flac", "mp3", "ogg", "oga", "opus", "m4a", "aac"];
 /** When two files differ only by extension, the first format here wins (lossless first). */
 const PREFERENCE = ["wav", "flac", "ogg", "oga", "opus", "m4a", "aac", "mp3"];
 

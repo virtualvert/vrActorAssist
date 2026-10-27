@@ -1,4 +1,4 @@
-// Contract between the web UI and whatever drives it: the local agent (agent/state.py builds
+// Contract between the web UI and whatever drives it: the local agent (agent/core.py snapshot() builds
 // the same shapes) or the in-browser demo session. Keep both sides in sync when editing.
 
 export type Role = "director" | "actor" | "camera";
@@ -398,7 +398,7 @@ export type Call =
 
 /**
  * Folder access for Normalize folder (spec §8.4.2) and Send files (§8.4). The agent serves it
- * under /api/folders/ (pick, open, read, write; agent/web.py + agent/folders.py) rather than as
+ * under /api/folders/ (pick, open, read, durations, write; agent/web.py + agent/folders.py) rather than as
  * calls, because it moves file bytes. The demo transport simulates a folder.
  */
 export interface FolderFile {
