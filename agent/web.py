@@ -40,7 +40,6 @@ bun --cwd=web run build</pre><p>then restart the app.</p></div></body>"""
 
 class Security:
     def __init__(self, port: int, dev: bool = False):
-        self.port = port
         self.hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
         self.origins = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
         if dev:
@@ -102,6 +101,13 @@ def create_app(agent: "Agent", security: Security, static_dir: Path) -> FastAPI:
 
     app = FastAPI(title=f"{APP_NAME} agent", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
+    async def json_body(request: Request) -> dict:
+        try:
+            body = await request.json()
+        except ValueError:
+            return {}
+        return body if isinstance(body, dict) else {}
+
     @app.get("/api/ping")
     async def ping():
         return {"app": APP_NAME, "version": APP_VERSION}
@@ -110,10 +116,7 @@ def create_app(agent: "Agent", security: Security, static_dir: Path) -> FastAPI:
     async def session(request: Request):
         if not security.origin_ok(request.headers.get("origin")):
             return JSONResponse({"error": "forbidden origin"}, status_code=403)
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            body = {}
+        body = await json_body(request)
         session_id = security.exchange(str(body.get("token", "")))
         if session_id is None:
             return JSONResponse({"error": "invalid or used token"}, status_code=401)
@@ -136,13 +139,6 @@ def create_app(agent: "Agent", security: Security, static_dir: Path) -> FastAPI:
         if not security.session_ok(request.cookies.get(COOKIE)):
             return JSONResponse({"error": "no session"}, status_code=401)
         return None
-
-    async def json_body(request: Request) -> dict:
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, ValueError):
-            return {}
-        return body if isinstance(body, dict) else {}
 
     def refused(exc: FolderError) -> JSONResponse:
         return JSONResponse({"error": str(exc)}, status_code=400)
@@ -219,7 +215,7 @@ def create_app(agent: "Agent", security: Security, static_dir: Path) -> FastAPI:
             while True:
                 try:
                     message = json.loads(await ws.receive_text())
-                except (json.JSONDecodeError, ValueError):
+                except ValueError:
                     continue
                 call_id = message.get("id")
                 try:

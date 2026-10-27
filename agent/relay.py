@@ -27,7 +27,6 @@ if TYPE_CHECKING:
 
 BACKOFF_START_S = 1.0
 BACKOFF_MAX_S = 30.0
-COUNTDOWN_S = 3.0
 COUNTDOWN_MS = 3000
 
 
@@ -169,8 +168,6 @@ class Relay:
             try:
                 fatal = await self._attempt(legacy_url)
                 backoff, failures = BACKOFF_START_S, 0
-            except asyncio.CancelledError:
-                raise
             except ConnectionClosed as exc:  # we were connected; the connection ended
                 backoff, failures = BACKOFF_START_S, 0
                 self._log_drop(exc, backoff)
@@ -232,7 +229,7 @@ class Relay:
 
     async def _countdown(self) -> None:
         try:
-            await asyncio.sleep(COUNTDOWN_S)
+            await asyncio.sleep(COUNTDOWN_MS / 1000)
             self._countdown_task = None
             self.clear_countdown()
             await self.impl.send_go(0)

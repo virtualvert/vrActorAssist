@@ -18,8 +18,8 @@ import asyncio
 import itertools
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from dataclasses import dataclass
+from typing import Callable, Protocol
 
 from .timesync import ClockSync
 
@@ -101,25 +101,12 @@ class LoopTimers:
         return handle
 
 
-@dataclass(frozen=True)
-class Fire:
-    """When a scheduled action ran, in server ms."""
-
-    due_ms: float
-    fired_ms: float
-
-    @property
-    def late_ms(self) -> int:
-        return max(0, round(self.fired_ms - self.due_ms))
-
-
 @dataclass
 class Job:
     id: int
     group: str
     due_ms: float
     handle: Handle | None = None
-    data: dict[str, Any] = field(default_factory=dict)
 
 
 class Scheduler:
@@ -131,17 +118,16 @@ class Scheduler:
         self._jobs: dict[int, Job] = {}
         self._ids = itertools.count(1)
 
-    def at(self, server_ms: float, fn: Callable[[Fire], None], group: str = "cue", **data: Any) -> Job:
-        """Run fn(Fire) at server_ms (at once if that's past, or when there's no clock yet)."""
-        job = Job(next(self._ids), group, server_ms, data=data)
+    def at(self, server_ms: float, fn: Callable[[], None], group: str = "cue") -> Job:
+        """Run fn at server_ms (at once if that's past, or when there's no clock yet)."""
+        job = Job(next(self._ids), group, server_ms)
         until = self.clock.until(server_ms)
         delay_s = max(0.0, until / 1000) if until is not None else 0.0
 
         def run() -> None:
             if self._jobs.pop(job.id, None) is None:
                 return  # cancelled
-            now = self.clock.server_now()
-            fn(Fire(server_ms, server_ms if now is None else now))
+            fn()
 
         self._jobs[job.id] = job
         job.handle = self.timers.call_later(delay_s, run)

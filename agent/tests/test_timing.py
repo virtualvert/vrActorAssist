@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from agent.scheduler import Fire, FirePlan, LoopTimers, Scheduler, server_time, sleep_until
+from agent.scheduler import FirePlan, LoopTimers, Scheduler, server_time, sleep_until
 from agent.timesync import ClockSync, run_pings, sample
 
 SERVER_AHEAD = 9000  # the laptop's clock runs ~9 s behind the relay's
@@ -147,26 +147,26 @@ def synced(fake):
 def test_runs_at_the_server_time():
     fake = FakeTime()
     clock, sched = synced(fake)
-    fired: list[Fire] = []
+    fired = []
     at = clock.server_now() + 300
-    sched.at(at, fired.append)
+    sched.at(at, lambda: fired.append(at))
     assert len(sched.pending()) == 1
     fake.advance(299)
     assert fired == []
     fake.advance(1)
-    assert fired == [Fire(at, at)] and fired[0].late_ms == 0
+    assert fired == [at]
     # It ran at the local time that matches the server time
     assert clock.to_local(at) == fake.ms
     assert sched.pending() == []
 
 
-def test_late_arrival_runs_at_once_and_says_how_late():
+def test_late_arrival_runs_at_once():
     fake = FakeTime()
     clock, sched = synced(fake)
-    fired: list[Fire] = []
-    sched.at(clock.server_now() - 45, fired.append)
+    fired = []
+    sched.at(clock.server_now() - 45, lambda: fired.append(1))
     fake.advance(0)
-    assert len(fired) == 1 and fired[0].late_ms == 45
+    assert fired == [1]
 
 
 def test_cancel_by_group_and_all():
@@ -174,13 +174,13 @@ def test_cancel_by_group_and_all():
     clock, sched = synced(fake)
     ran = []
     now = clock.server_now()
-    sched.at(now + 100, lambda f: ran.append("go"), group="cue")
-    sched.at(now + 100, lambda f: ran.append("osc"), group="osc")
-    sched.at(now + 200, lambda f: ran.append("go2"), group="cue")
+    sched.at(now + 100, lambda: ran.append("go"), group="cue")
+    sched.at(now + 100, lambda: ran.append("osc"), group="osc")
+    sched.at(now + 200, lambda: ran.append("go2"), group="cue")
     assert [j.group for j in sched.cancel("cue")] == ["cue", "cue"]
     fake.advance(300)
     assert ran == ["osc"]
-    sched.at(now + 400, lambda f: ran.append("late one"))
+    sched.at(now + 400, lambda: ran.append("late one"))
     assert len(sched.cancel()) == 1
     fake.advance(500)
     assert ran == ["osc"]
@@ -190,9 +190,9 @@ def test_without_a_clock_it_runs_at_once():
     fake = FakeTime()
     sched = Scheduler(ClockSync(now=fake.now, wall=fake.wall), timers=fake)
     fired = []
-    sched.at(123, fired.append)
+    sched.at(123, lambda: fired.append(123))
     fake.advance(0)
-    assert fired == [Fire(123, 123)]
+    assert fired == [123]
 
 
 def test_fire_plan():

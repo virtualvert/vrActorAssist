@@ -10,14 +10,12 @@ import webbrowser
 from typing import Any, Callable
 
 from . import APP_VERSION
-from .actor_runtime import ActorRuntime
-from .config import ROLES, THEMES, ConfigStore, clamp_scale
+from .actor_runtime import ActorRuntime, PlayError
+from .config import LINES, ROLES, THEMES, ConfigStore, clamp_lead, clamp_scale
 import soundpad
 
 from vrcas_protocol import validate
 
-from .actor_runtime import PlayError
-from .config import LINES, clamp_lead
 from .files import Files, received_path
 from .folders import FolderError, Folders, pick_folder
 from .hub import Hub
@@ -100,6 +98,7 @@ class Agent:
         cfg = self.config
         relay = self.relay
         now = time.monotonic()
+        directing = cfg.role == "director" and relay.status == "connected"
         # Soundpad's real status when the pipe is up; otherwise a short flash after each cue
         live = self.actor.live_status
         playing = cfg.role == "actor" and (live in ("PLAYING", "SEEKING") if live else now < relay.self_playing_until)
@@ -143,8 +142,8 @@ class Agent:
                 "legacy": relay.legacy,
             },
             "peers": peers,
-            "pending": list(relay.pending) if cfg.role == "director" and relay.status == "connected" else [],
-            "offline": list(relay.offline) if cfg.role == "director" and relay.status == "connected" else [],
+            "pending": list(relay.pending) if directing else [],
+            "offline": list(relay.offline) if directing else [],
             "targets": relay.target_ids() if cfg.role == "director" else [],
             "countdown": relay.countdown,
             "clock": relay.impl.clock.view() if v2 else dict(NO_CLOCK),

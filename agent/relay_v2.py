@@ -26,7 +26,7 @@ from shared import get_platform_id
 
 from . import APP_VERSION
 from .cues import armable, describe, plan_go
-from .relay_legacy import ActionQueue, _peer, connect_kwargs, machine_id, perform_cue, version_tuple
+from .relay_legacy import RelayBase, _peer, connect_kwargs, perform_cue
 from .scheduler import LATE_MS, MAX_AHEAD_MS, FirePlan, Scheduler, Timing, server_time
 from .timesync import ClockSync, run_pings
 from vrcas_protocol import make, now_ms
@@ -97,22 +97,13 @@ class RemoteSession:
     delay_ms: int = 0
 
 
-class V2Relay:
+class V2Relay(RelayBase):
     legacy = False
 
     def __init__(self, agent: "Agent"):
-        self.agent = agent
-        self.status = "disconnected"
-        self.detail = "Not connected"
-        self.host = ""
-        self.server_version: str | None = None
+        super().__init__(agent)
         self.session_id: str | None = None
         self.sessions: dict[str, RemoteSession] = {}
-        self.pending: list[dict] = []
-        # Director: approved actors and cameras that aren't connected ({id: "offline:<machine id>", name, role, approvedAt})
-        self.offline: list[dict] = []
-        self.targets: set[str] = set()
-        self.self_playing_until = 0.0
         # This connection's clock and the actions waiting for their time (§8.2)
         self.clock = ClockSync()
         self.scheduler = Scheduler(self.clock)
@@ -122,13 +113,7 @@ class V2Relay:
         # Director: the actors of the last scheduled GO, so a Stop reaches them even if unticked since
         self._go_ids: set[str] = set()
         self._seen_actors: set[str] = set()
-        self._ws = None
-        self._machine_id = machine_id()
-        self._actions = ActionQueue()
         self._pings: asyncio.Task | None = None
-        # For agent/relay.py's "Lost connection" line (time.monotonic())
-        self.opened_at: float | None = None
-        self.last_message_at = 0.0
         # What an actor announces in hello (tests pretend to be older builds by changing it)
         self.capabilities = list(ACTOR_CAPABILITIES)
 
@@ -155,11 +140,6 @@ class V2Relay:
         self.pending.clear()
         self.offline.clear()
         self._ws = None
-        self.agent.changed()
-
-    def _set(self, status: str, detail: str) -> None:
-        self.status = status
-        self.detail = detail
         self.agent.changed()
 
     async def _session(self, url: str) -> str | None:
@@ -250,9 +230,7 @@ class V2Relay:
                 self._pings = asyncio.get_running_loop().create_task(run_pings(self.clock, self._ping))
             self.agent.soundpad.start()
             if first:
-                hub.log("success", f"Connected to {self.host} as {role} (v2 relay {self.server_version})")
-                if role != "director":
-                    hub.toast("success", "Approved — you're on the network")
+                self._log_connected(role, f" (v2 relay {self.server_version})")
             status = data.get("version_status")
             if status == "unsupported":
                 hub.log("error", data.get("version_message") or "This app version isn't supported by the relay")
@@ -274,9 +252,7 @@ class V2Relay:
             hub.log("warning", "The director removed you from the session.")
             return "Removed by the director — connect again to request approval"
         elif msg_type == "update.available":
-            latest = data.get("latest_version", "")
-            if version_tuple(latest) > version_tuple(APP_VERSION):
-                hub.log("info", f"vrcActorSync v{latest} is available.")
+            self._log_update(data.get("latest_version", ""))
         elif msg_type == "presence.roster":
             self._on_roster(data)
         elif msg_type == "presence.latency":
@@ -400,7 +376,7 @@ class V2Relay:
             self._actions.put(lambda: self._refuse(env, msg_type, f"Scheduled too far ahead ({ahead / 1000:.0f} s)"))
             return
 
-        def due(_fire) -> None:
+        def due() -> None:
             if msg_type in STOP_TYPES:
                 self._cancel_waiting()
             elif msg_type in START_TYPES and not self.scheduler.pending("cue"):
@@ -491,13 +467,13 @@ class V2Relay:
             if send.hold_until is None:
                 await self._send(send.type, send.data, to={"ids": send.ids})
             else:
-                self.scheduler.at(send.hold_until, lambda _f, s=send: asyncio.get_running_loop().create_task(self._send_held(s)), group="held")
+                self.scheduler.at(send.hold_until, lambda s=send: asyncio.get_running_loop().create_task(self._send_held(s)), group="held")
         self._go_ids = {s.id for s in actors} if at is not None else set()
         if countdown and at is not None:
             ends = self.clock.to_wall(at)
             if ends is not None:
                 self.agent.relay.show_countdown(ends, lead_ms)
-            self.scheduler.at(at, lambda _f: self.agent.relay.clear_countdown(), group="countdown")
+            self.scheduler.at(at, lambda: self.agent.relay.clear_countdown(), group="countdown")
         parts = [s.name + (f" ({describe(armed[s.id])})" if s.id in armed else "") for s in actors]
         when = f" for {server_time(at)} server time (+{lead_ms} ms)" if at is not None else ""
         self.agent.hub.log("info" if countdown else "success", f"{'⏱ Play in 3s' if countdown else '▶ GO'} → {', '.join(parts)}{when}")
@@ -565,9 +541,6 @@ class V2Relay:
         actors = {s.id for s in self._actors()}
         self.targets = {i for i in ids if i in actors}
         self.agent.changed()
-
-    def clear_targets(self) -> None:
-        self.targets.clear()
 
     def target_ids(self) -> list[str]:
         actors = {s.id for s in self._actors()}

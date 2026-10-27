@@ -142,8 +142,6 @@ class ActionQueue:
             job = await queue.get()
             try:
                 await job()
-            except asyncio.CancelledError:
-                raise
             except Exception:  # noqa: BLE001 - one bad action mustn't stop the rest
                 logging.getLogger("vrcas").exception("An actor action failed")
 
@@ -167,10 +165,8 @@ def machine_id() -> str:
     return os.environ.get("VRCAS_MACHINE_ID") or get_machine_id()
 
 
-class LegacyRelay:
-    """One protocol of agent/relay.py's Relay, which owns the reconnect loop and the countdown."""
-
-    legacy = True
+class RelayBase:
+    """State and log lines that LegacyRelay and relay_v2.V2Relay share; each keeps its own wire code."""
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
@@ -178,10 +174,9 @@ class LegacyRelay:
         self.detail = "Not connected"
         self.host = ""
         self.server_version: str | None = None
-        self.actors: dict[str, RemoteActor] = {}
-        self.directors: set[str] = set()
         self.pending: list[dict] = []
-        self.offline: list[dict] = []  # the v0.3 relay doesn't list approved machines that have left
+        # Director: approved actors and cameras that aren't connected (v2 only: {id: "offline:<machine id>", name, role, approvedAt})
+        self.offline: list[dict] = []
         self.targets: set[str] = set()
         self.self_playing_until = 0.0
         self._ws = None
@@ -190,6 +185,35 @@ class LegacyRelay:
         # For agent/relay.py's "Lost connection" line (time.monotonic())
         self.opened_at: float | None = None
         self.last_message_at = 0.0
+
+    def _set(self, status: str, detail: str) -> None:
+        self.status = status
+        self.detail = detail
+        self.agent.changed()
+
+    def clear_targets(self) -> None:
+        self.targets.clear()
+
+    def _log_connected(self, role: str, note: str = "") -> None:
+        hub = self.agent.hub
+        hub.log("success", f"Connected to {self.host} as {role}{note}")
+        if role != "director":
+            hub.toast("success", "Approved — you're on the network")
+
+    def _log_update(self, latest: str) -> None:
+        if version_tuple(latest) > version_tuple(APP_VERSION):
+            self.agent.hub.log("info", f"vrcActorSync v{latest} is available.")
+
+
+class LegacyRelay(RelayBase):
+    """One protocol of agent/relay.py's Relay, which owns the reconnect loop and the countdown."""
+
+    legacy = True
+
+    def __init__(self, agent: "Agent"):
+        super().__init__(agent)
+        self.actors: dict[str, RemoteActor] = {}
+        self.directors: set[str] = set()
 
     # ---- connection -------------------------------------------------------
 
@@ -202,11 +226,6 @@ class LegacyRelay:
         self.directors.clear()
         self.pending.clear()
         self._ws = None
-        self.agent.changed()
-
-    def _set(self, status: str, detail: str) -> None:
-        self.status = status
-        self.detail = detail
         self.agent.changed()
 
     async def _session(self, url: str) -> str | None:
@@ -257,9 +276,7 @@ class LegacyRelay:
             first = self.status != "connected"
             self._set("connected", f"Connected as {role}")
             if first:
-                hub.log("success", f"Connected to {self.host} as {role}")
-                if role != "director":
-                    hub.toast("success", "Approved — you're on the network")
+                self._log_connected(role)
         elif msg_type == "DENIED":
             reason = msg.get("reason", "")
             if "Pending" in reason:
@@ -278,9 +295,7 @@ class LegacyRelay:
                 hub.log("info", f"Relay v{self.server_version} speaks the v0.3 protocol; using compatibility mode.")
             self.agent.changed()
         elif msg_type == "UPDATE":
-            latest = msg.get("latest_version", "")
-            if version_tuple(latest) > version_tuple(APP_VERSION):
-                hub.log("info", f"vrcActorSync v{latest} is available.")
+            self._log_update(msg.get("latest_version", ""))
         elif msg_type == "MSG":
             return self._on_chat(msg.get("sender", ""), msg.get("text", ""))
         elif msg_type == "PRIV":
@@ -387,12 +402,14 @@ class LegacyRelay:
         """A v0.3 relay can't schedule: GO goes out at once (agent/relay.py counts Play in 3s down)."""
         await self._send_cue("*go")
 
+    async def _priv(self, name: str, text: str) -> None:
+        await self.send(format_message("PRIV", sender=clean(self.agent.config.name) or "Director", target=name, text=text))
+
     async def _send_cue(self, command: str) -> None:
         names = [n for n in sorted(self.targets) if n in self.actors and not self.actors[n].timed_out]
         if not names:
             self.agent.hub.log("warning", f"{command} not sent — no actors targeted")
             return
-        sender = clean(self.agent.config.name) or "Director"
         parts = []
         for name in names:
             text = command
@@ -400,7 +417,7 @@ class LegacyRelay:
             if armed and set(armed.get("sound") or {}) == {"index"}:
                 # Armed by number: the only kind a v0.3 relay can carry
                 text = f"*play:{armed['sound']['index']}"
-            await self.send(format_message("PRIV", sender=sender, target=name, text=text))
+            await self._priv(name, text)
             parts.append(f"{name} (#{text.split(':', 1)[1]})" if text.startswith("*play:") else name)
         symbol = "▶" if command == "*go" else "■"
         self.agent.hub.log("success" if command == "*go" else "info", f"{symbol} {command[1:].upper()} → {', '.join(parts)}")
@@ -420,17 +437,13 @@ class LegacyRelay:
     async def send_play_index(self, ids: list[str], index: int) -> list[str]:
         """`*play:N` to the given actors (peer ids `actor:<name>`), like the v0.3 director's PRIV."""
         names = [i.removeprefix("actor:") for i in ids if i.removeprefix("actor:") in self.actors]
-        sender = clean(self.agent.config.name) or "Director"
         for name in names:
-            await self.send(format_message("PRIV", sender=sender, target=name, text=f"*play:{index}"))
+            await self._priv(name, f"*play:{index}")
         return names
 
     def set_targets(self, ids: list[str]) -> None:
         self.targets = {i.split(":", 1)[1] for i in ids if i.startswith("actor:") and i.split(":", 1)[1] in self.actors}
         self.agent.changed()
-
-    def clear_targets(self) -> None:
-        self.targets.clear()
 
     def target_ids(self) -> list[str]:
         return sorted(f"actor:{n}" for n in self.targets if n in self.actors)

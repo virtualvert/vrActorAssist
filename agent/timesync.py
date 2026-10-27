@@ -53,10 +53,10 @@ def wall_ms() -> float:
 class ClockSync:
     """Server time for this connection. `now` returns local ms (perf_counter by default)."""
 
-    def __init__(self, now: Callable[[], float] = perf_ms, wall: Callable[[], float] = wall_ms, keep: int = SAMPLES):
+    def __init__(self, now: Callable[[], float] = perf_ms, wall: Callable[[], float] = wall_ms):
         self._now = now
         self._wall = wall
-        self.samples: deque[Sample] = deque(maxlen=keep)
+        self.samples: deque[Sample] = deque(maxlen=SAMPLES)
         # From welcome.server_time, until the first pong: off by the one-way trip
         self.rough_offset_ms: float | None = None
         self._pings: dict[str, float] = {}
