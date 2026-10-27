@@ -14,7 +14,7 @@
 | **v0.2.2** | Released | Forget Actor flow, cross-platform builds, code cleanup |
 || **v0.3.0** | Released | Multi-file transfer, character routing, batch protocol, overwrite dialog, cancel batch, protocol versioning, auto-updater, About dialog |
 | **v0.3.3** | Released | SSL cert fix for Windows PyInstaller builds |
-|| **v0.4.0** | Planned | Desktop web UI + local agent, replacing both Python clients ([spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md)) |
+|| **v0.4.0** | Planned | Desktop web UI + local agent, replacing both Python clients ([spec](superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md)) |
 
 ## v0.3.0 Features (Planned)
 
@@ -408,7 +408,7 @@ Each release includes:
 
 ## v0.4.0 Features (Planned) — Tauri v2 + Svelte Migration
 
-> **Superseded:** v0.4 is the desktop web UI + local agent described in the [design spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md), not Tauri. This section is kept for history.
+> **Superseded:** v0.4 is the desktop web UI + local agent described in the [design spec](superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md), not Tauri. This section is kept for history.
 
 ### Migration Decision: Tauri Over PySide6
 
@@ -598,7 +598,7 @@ If actor client has `osc_enabled: false` or VRChat OSC is not reachable:
 
 ## v0.4.x Production Helpers (Planned)
 
-Agreed on 2026-10-20. Full design in the [spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md); build order in its §15.1.
+Agreed on 2026-10-20. Full design in the [spec](superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md); build order in its §15.1.
 
 1. [x] **Normalize folder** (§8.4.2) — measure each file's loudness (LUFS) and write copies adjusted to one target, with a peak ceiling. Originals untouched. Works with today's v0.3 batch transfer. **Built 2026-10-20** (16-bit WAV copies; MP3 output still open).
 2. [ ] **Headset notifications** (§8.7) — "Standby", "Rolling" and setup errors ("Not connected", "Soundpad not detected", "VRChat OSC is off", "OBS not detected") in XSOverlay or OVR Toolkit. On by default, can be turned off. Comes with **Standby / Rolling** buttons for the director (§8.8.1).

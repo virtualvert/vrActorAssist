@@ -1,226 +1,186 @@
 # vrcActorSync
 
-*Formerly vrActorAssist.* A director/actor communication system for VRChat filmmaking. Director sends commands, actors receive and execute Soundpad sounds.
+*Formerly vrActorAssist.* Keeps a VRChat film production in sync. A **director** calls cues from one place; **actors** get them on their own PCs, where Soundpad plays their lines and sound effects and VRChat avatar parameters fire over OSC; **camera operators** join the same session. Everyone connects through a small **relay server**.
 
-> **v0.4 preview (branch `feat/web-ui`):** one desktop app for directors, actors and camera operators — a Python agent with a web UI (pywebview window or any browser), an animated network graph, dark/light themes and VR-sized controls. It works with today's v0.3 relay. See [Desktop app (v0.4 preview)](#desktop-app-v04-preview) and [AGENTS.md](AGENTS.md).
+| | Status |
+|---|---|
+| **v0.4** — one desktop app for every role (Python agent + web UI) | Preview: [`vrcActorSync.exe`](https://github.com/virtualvert/vrActorAssist/releases) (Windows), branch `feat/web-ui` |
+| **v0.3** — separate tkinter director and actor clients | Stable, in use. The v0.4 relay keeps them working ([details](#v03-clients)) |
 
-## Quick Start
+## How it works
 
-### For Directors
+```
+                ┌──────────────────────────────┐
+                │  Relay (VPS)  server_ws.py   │
+                │  /v2/ws  v0.4 apps           │
+                │  /ws     v0.3 clients        │
+                └──────────────┬───────────────┘
+        ┌──────────────┬───────┴──────┬──────────────┐
+        ▼              ▼              ▼              ▼
+   ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐
+   │Director │    │ Actor 1 │    │ Actor 2 │    │ Camera  │
+   │ any OS  │    │ Windows │    │ Windows │    │         │
+   │         │    │Soundpad │    │Soundpad │    │         │
+   │         │    │VRChat   │    │VRChat   │    │         │
+   └─────────┘    └─────────┘    └─────────┘    └─────────┘
+```
 
-Download **vrDirectorClient.exe** (Windows) or **vrDirectorClient** (Linux) from [Releases](https://github.com/virtualvert/vrActorAssist/releases).
+The relay checks the director's secret, holds new actors until a director approves them, routes cues and files, and keeps every PC's clock in sync so cues fire together.
 
-Run it and enter:
-- **Server URL** — provided by server owner (e.g., `ws://192.168.1.100:5555/ws`)
-- **Director's Secret** — password from server owner
+## Quick start (v0.4 preview)
 
-### For Actors
+1. Download `vrcActorSync.exe` from [Releases](https://github.com/virtualvert/vrActorAssist/releases) (pre-release).
+   - The exe isn't signed yet. Windows SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
+   - It opens in its own window using the Microsoft WebView2 Runtime (part of Windows 11).
+2. On first launch pick your role, your name and the relay address the server owner gave you:
+   - `relay.example.com` means a secure `wss://` relay (Caddy or Tailscale Funnel).
+   - `192.168.1.100:5555` means a relay on its own port (`ws://`).
+3. **Directors** enter the director's secret. **Actors and cameras** wait until a director approves them.
 
-Download **vrActorClient.exe** (Windows) from [Releases](https://github.com/virtualvert/vrActorAssist/releases).
+Actors also need [Soundpad](https://leppsoft.com/soundpad/) running, and OSC enabled in VRChat for avatar parameters.
 
-Run it and enter:
-- Server URL and your actor name
-- Choose where to save received files
-- Configure Soundpad path if not in default location
-- Click Connect and wait for director approval
+## What v0.4 does
 
-## Releases
+**Director**
+- Cast list and network graph: who's connected, their latency, and approve / deny / forget.
+- **GO**, **Play in 3s** (countdown on every PC) and **Stop**. GO fires at the same moment on every actor's PC, 300 ms after you press it (Settings → Director; 0 = at once). Each actor can have their own delay.
+- Each actor's Soundpad, from the cast:
+  - browse their sound list and play a sound, or arm one for the next GO;
+  - choose the output (speakers, mic or both), volume, mute, pause and seek;
+  - watch playback;
+  - calibrate the actor's start latency.
+- **Send files:** push audio to actors. Files are routed by the character name in the file name, and you can see each file's length.
+- **Normalize folder:** loudness-normalize a folder of audio (default −16 LUFS, −1 dBTP ceiling) to 16-bit 48 kHz WAV in a `normalized/` subfolder.
 
-See [GitHub Releases](https://github.com/virtualvert/vrActorAssist/releases) for downloadable builds.
+**Actor**
+- Cues drive Soundpad through its named pipe, and VRChat avatar parameters through OSC.
+- Received files are saved and added to Soundpad. This needs the full version of Soundpad, and you can turn it off.
+- The app measures your Soundpad start latency and compensates for it.
 
-| File | Platform | Description |
-|------|----------|-------------|
-| `vrDirectorClient.exe` | Windows | Standalone director client |
-| `vrActorClient.exe` | Windows | Standalone actor client |
-| `vrDirectorClient` | Linux | Standalone director client |
+**Everyone:** dark and light themes, UI scale, VR mode (large controls), reduced motion.
 
-> **Note:** No Linux actor binary is distributed. `soundpad.py` is Windows-only; Linux actors can run from source if needed. See [Platform Strategy](#platform-strategy) below.
+**Not built yet:**
+- OBS control for cameras;
+- the OSC timeline editor;
+- P2P streaming;
+- tray icon, installer and auto-updater (closing the window quits);
+- MP3 output in Normalize folder.
 
-| Version | Notes |
-|---------|-------|
-| v0.1.0 | Initial release — basic WebSocket client, Soundpad integration |
-| v0.2.0 | Selective actor triggering, file transfer, status indicators, VR-friendly buttons |
-| v0.2.1 | Configurable Soundpad path, duplicate actor fix |
-| v0.2.2 | Forget Actor flow, cross-platform builds, code cleanup |
-| v0.3.0 | Multi-file batch transfer, character routing, protocol versioning, auto-updater, cancel batch, overwrite dialog |
-| v0.3.3 | SSL cert fix for Windows PyInstaller builds — explicit SSLContext + certifi |
+The design for these is in the [design spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md). Current limits are in [AGENTS.md → Known gaps](AGENTS.md#known-gaps-v04-preview).
 
-## Commands
+### Mixing v0.3 and v0.4
 
-Director can send:
+- The relay serves v0.3 clients on `/ws` unchanged and translates between them and v0.4 apps: cues, Play #N, and files in both directions.
+- A v0.4 app connected to an old v0.3 relay runs in compatibility mode: cast, approvals, Go / Play in 3s / Stop, and Soundpad and OSC cues. It has no file transfer there.
+- v0.3 directors don't see cameras, so a v0.4 director has to approve them.
 
-| Command | Action |
-|---------|--------|
-| `*go` | Play selected sound in Soundpad |
-| `*stop` | Stop playback |
+## Running a relay
 
-**Play in 3s:** Button sends `*go` after 3-second countdown. Actors receive nothing until countdown completes.
-
-## Deployment
-
-| Scenario | Server URL |
-|----------|------------|
-| Local network | `ws://192.168.1.100:5555/ws` |
-| Tailscale tailnet | `ws://100.104.39.106:5555/ws` |
-| Tailscale Funnel (public) | `wss://<tailscale-dns-name>/ws` |
-| Public domain (Caddy) | `wss://actor.yourdomain.com/ws` |
-
-### Public Domain Setup (Optional)
-
-Use Caddy for auto-HTTPS:
+Needs Python 3.10+.
 
 ```bash
-# Caddyfile
-actor.yourdomain.com {
+python -m venv venv && venv/bin/pip install -r requirements.txt
+venv/bin/python server_ws.py --port 5555 --secret your-secret --data-dir /srv/vrcas
+```
+
+| Flag | |
+|---|---|
+| `--host` | Address to bind (default `0.0.0.0`; use `127.0.0.1` behind a proxy) |
+| `--data-dir` | Where `approved_actors.json`, `server.log` and `update_manifest.json` live |
+| `--no-legacy` | Refuse v0.3 clients on `/ws` |
+
+Endpoints: `/v2/ws` (v0.4), `/ws` (v0.3), and `/health`.
+
+| Setup | v0.4 app address | v0.3 client URL |
+|---|---|---|
+| Local network | `192.168.1.100:5555` | `ws://192.168.1.100:5555/ws` |
+| Tailscale Funnel | `<machine>.<tailnet>.ts.net` | `wss://<machine>.<tailnet>.ts.net/ws` |
+| Public domain (Caddy) | `relay.example.com` | `wss://relay.example.com/ws` |
+
+For a public domain, Caddy provides HTTPS automatically:
+
+```
+relay.example.com {
     reverse_proxy localhost:5555
 }
 ```
 
-## Architecture
-
-```
-┌─────────────────────────────────────┐
-│         Server (VPS)                │
-│  - WebSocket endpoint: /ws          │
-│  - Director auth via shared secret   │
-│  - Actor approval system            │
-└─────────────────────────────────────┘
-                 │
-     ┌───────────┼───────────┐
-     ▼           ▼           ▼
-┌─────────┐ ┌─────────┐ ┌─────────┐
-│Director │ │ Actor 1 │ │ Actor 2 │
-│(Linux)  │ │(Windows)│ │(Windows)│
-│         │ │Soundpad │ │Soundpad │
-└─────────┘ └─────────┘ └─────────┘
-```
-
 ## Development
 
-### Install Dependencies
+Prerequisites: Python 3.10+ and [Bun](https://bun.sh), which this project uses instead of Node for everything in `web/`.
 
 ```bash
-# Server
-pip install fastapi uvicorn websockets
-
-# Clients (from source)
-pip install websocket-client PySide6
-```
-
-### Start the Server
-
-```bash
-python server_ws.py --port 5555 --secret your-secret-here
-```
-
-### Run from Source
-
-```bash
-# Director client
-python director_client_ws.py
-
-# Actor client
-python actor_client_ws.py
-```
-
-### Build Executables
-
-```bash
-pip install pyinstaller
-
-python build_exe.py          # Build actor client (default)
-python build_exe.py actor    # Build actor client
-python build_exe.py director # Build director client
-python build_exe.py all      # Build both
-```
-
-Output:
-- **Windows:** `dist/vrActorClient.exe` / `dist/vrDirectorClient.exe`
-- **Linux:** `dist/vrDirectorClient` only (actor build skipped — see [Platform Strategy](#platform-strategy))
-
-## Project Structure
-
-```
-vrcActorSync/
-├── server_ws.py          # WebSocket server (FastAPI)
-├── director_client_ws.py # Director GUI (Python/tkinter)
-├── actor_client_ws.py    # Actor GUI with Soundpad (Python/tkinter)
-├── shared.py             # Protocol utilities
-├── soundpad.py           # Soundpad CLI integration
-├── build_exe.py          # PyInstaller build script
-├── requirements.txt      # Dependencies
-├── FEATURES-PLANNED.md   # Planned features
-├── ROADMAP.md            # Future roadmap
-│
-├── agent/                # v0.4 desktop agent (python -m agent)
-├── web/                  # v0.4 web UI (Svelte 5 + Vite, built with Bun)
-├── tools/                # soundpad_probe.py (Windows Soundpad API check)
-├── AGENTS.md             # Project guide for contributors and coding agents
-│
-├── docs/superpowers/     # Design specs and implementation plans
-│
-├── legacy/               # TCP socket version (reference)
-│   ├── server.py
-│   ├── director_client.py
-│   └── actor_client.py
-│
-└── archive/              # Early prototypes
-    └── *03.py, *04.py
-```
-
-## Desktop app (v0.4 preview)
-
-The new app replaces both tkinter clients. It opens straight into your role (picked on first launch, or imported from your v0.3 `actor_config.json` / `director_config.json`).
-
-```bash
-python -m venv .venv
-.venv/bin/pip install -r agent/requirements.txt
+# one-time
+python -m venv .venv && .venv/bin/pip install -r agent/requirements-dev.txt
 bun --cwd=web install
+
+# UI alone with a simulated session (no relay or agent): http://localhost:5173/?demo=director (or actor, camera)
+bun --cwd=web run dev
+
+# full stack locally
+.venv/bin/python server_ws.py --port 5599 --secret local-test-secret --data-dir /tmp/vrcas-relay
 bun --cwd=web run build
-.venv/bin/python -m agent
+.venv/bin/python -m agent --role director --name Mira --server 127.0.0.1:5599
+
+# tests and checks
+.venv/bin/python -m pytest agent/tests tests -q
+bun --cwd=web test && bun --cwd=web run check
 ```
 
-- Windows shows a desktop window (needs the Microsoft WebView2 Runtime); Linux opens your browser. **Settings → Open in browser** opens the same live UI in any browser.
-- Desktop window on Linux: install `python-gobject` and `webkit2gtk-4.1`, create the venv with `--system-site-packages`, `pip install pywebview`, then run `.venv/bin/python -m agent --window`.
-- Try the UI without a relay: `bun --cwd=web run dev`, then open http://localhost:5173/?demo=director (or `actor`, `camera`).
-- Works with the current v0.3 relay: cast list, approvals, Go / Play in 3s / Stop, chat, Soundpad and OSC cues. Not yet: file transfer, OBS control, installer/auto-update. Details in [AGENTS.md](AGENTS.md#known-gaps-v04-preview) and the [design spec](docs/superpowers/specs/2026-10-17-vrcActorSync-web-ui-agent-design.md).
+Useful agent flags:
+- `--headless`: use the browser instead of a window.
+- `--window`: open a desktop window on Linux. It needs `python-gobject` and `webkit2gtk-4.1`, and a venv created with `--system-site-packages` plus `pip install pywebview`.
+- `--no-open`: print the UI link instead of opening it.
+- `--data-dir` and `--portable`: choose where config and logs live.
 
-## Requirements
+To run a second agent on the same PC, give it its own `VRCAS_MACHINE_ID` and `--port`. **[AGENTS.md](AGENTS.md)** is the full contributor guide: repo map, rules that keep v0.3 working, and known gaps.
 
-### Server (VPS)
-- Python 3.8+
-- fastapi, uvicorn, websockets
+### Builds
 
-### Director (Linux/Windows/macOS)
-- Python 3.8+ (if running from source)
-- websocket-client, tkinter
-- **OR** use standalone executable (no Python needed)
+```bash
+.venv/bin/pip install pyinstaller
+.venv/bin/python build_agent.py           # v0.4 → dist/vrcActorSync(.exe), one file
+.venv/bin/python build_agent.py --onedir  # one folder instead
+```
 
-### Actor (Windows)
-- **Windows 10/11** for Soundpad integration
-- Soundpad installed
-- Python 3.8+ (if running from source)
-- **OR** use standalone `vrActorClient.exe` (no Python needed)
+Build on the OS you're targeting, because PyInstaller doesn't cross-compile.
+- **Windows** builds are windowed apps (WebView2).
+- **Linux** builds are console programs that open your browser. They aren't published as releases.
 
-> **Note:** Actor builds are Windows-only. Soundpad has no Linux equivalent, so Linux actor binaries are not distributed. The source code remains cross-platform for future Pipewire support. See [ROADMAP.md](ROADMAP.md).
+## v0.3 clients
 
-## Future
+The tkinter clients (`director_client_ws.py`, `actor_client_ws.py`) are the current stable release. Their builds are `vrDirectorClient(.exe)` and `vrActorClient.exe`. They take the relay URL with its path, for example `wss://relay.example.com/ws`.
+- The director sends `*go` (play the selected sound) and `*stop`.
+- **Play in 3s** sends `*go` after a local countdown.
 
-See [ROADMAP.md](ROADMAP.md) for planned features:
-- **Tauri v2 + Svelte migration** — Replacing Python/tkinter clients with a modern desktop app
-- OSC cue editor with audio player
-- Multiple director support
-- Ping compensation/delay
-- OpenVR/OpenXR overlay
-- Web dashboard for server admin
+```bash
+pip install -r requirements.txt
+python director_client_ws.py        # or actor_client_ws.py
+python build_exe.py all             # → dist/vrActorClient.exe, dist/vrDirectorClient(.exe); deletes dist/ first
+```
 
----
+| Version | Notes |
+|---|---|
+| v0.1.0 | Initial release: basic WebSocket client, Soundpad integration |
+| v0.2.0 | Selective actor triggering, file transfer, status indicators, VR-friendly buttons |
+| v0.2.1 | Configurable Soundpad path, duplicate actor fix |
+| v0.2.2 | Forget Actor flow, cross-platform builds, code cleanup |
+| v0.3.0 | Multi-file batch transfer, character routing, protocol versioning, auto-updater, cancel batch, overwrite dialog |
+| v0.3.3 | SSL cert fix for Windows PyInstaller builds (explicit SSLContext + certifi) |
+| v0.4.0-preview.1, .2 | Desktop app preview (Windows) |
 
-## Platform Strategy
+## Project structure
 
-| Client | Windows | Linux | Notes |
-|--------|---------|-------|-------|
-| **Director** | ✅ Full feature | ✅ Full feature | Cross-platform, no OS-specific dependencies |
-| **Actor** | ✅ Full feature | ⛔ Build not distributed | Soundpad.exe Windows-only; source still runs on Linux for chat/file receive |
-
-We are migrating both clients from **Python/tkinter** to **Tauri v2 + Svelte** in v0.4.0 for a modern, cross-platform desktop app with a Rust backend. The Python server stays unchanged. See [ROADMAP.md](ROADMAP.md) for details.
+```
+server_ws.py, server/     Relay: /v2/ws (protocol v2), /ws (v0.3 bridge), /health
+protocol/vrcas_protocol/  Protocol v2 message models (TypeScript types generated into web/)
+agent/                    v0.4 desktop agent (python -m agent): relay link, Soundpad, OSC, files, local UI server
+web/                      v0.4 UI: Svelte 5 + Vite + TypeScript, built with Bun
+build_agent.py            v0.4 PyInstaller build
+director_client_ws.py, actor_client_ws.py, shared.py, soundpad.py, build_exe.py   v0.3 clients
+tests/, agent/tests/      Relay and agent tests (incl. a byte-for-byte v0.3 transcript)
+tools/                    Windows-only probes (Soundpad pipe API, VRChat window size)
+docs/superpowers/         Design specs and plans
+docs/ROADMAP.md, docs/FEATURES-PLANNED.md   Earlier roadmap and feature plans (history)
+legacy/, archive/         TCP-era code and prototypes (reference only)
+```
