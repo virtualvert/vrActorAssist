@@ -1,6 +1,5 @@
 <script lang="ts">
   import { Crosshair, Hash, Play, Square, Timer, TriangleAlert } from "@lucide/svelte";
-  import { onDestroy } from "svelte";
   import Button from "../components/Button.svelte";
   import type { AppState } from "../protocol";
   import { app } from "../state.svelte";
@@ -18,17 +17,12 @@
 
   // Local clock for the countdown ring; the agent owns the actual timing.
   let now = $state(Date.now());
-  let timer: number | null = null;
   $effect(() => {
-    if (counting && timer === null) {
-      now = Date.now(); // not the time the deck was first drawn
-      timer = window.setInterval(() => (now = Date.now()), 50);
-    } else if (!counting && timer !== null) {
-      window.clearInterval(timer);
-      timer = null;
-    }
+    if (!counting) return;
+    now = Date.now(); // not the time the deck was first drawn
+    const timer = window.setInterval(() => (now = Date.now()), 50);
+    return () => window.clearInterval(timer);
   });
-  onDestroy(() => timer !== null && window.clearInterval(timer));
 
   const remaining = $derived(data.countdown ? Math.max(0, data.countdown.endsAt - now) : 0);
   const progress = $derived(data.countdown ? 1 - remaining / data.countdown.durationMs : 0);

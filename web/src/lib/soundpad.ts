@@ -96,3 +96,5 @@ export const OWN_LINE_HELP: Record<Lines, string> = {
   speakers: "Only you hear it (rehearsal)",
   mic: "The audience hears it, you don't",
 };
+
+export const STATUS_TEXT = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;

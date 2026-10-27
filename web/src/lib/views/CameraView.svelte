@@ -25,7 +25,7 @@
 </script>
 
 <div class="wrap">
-  <div class="view">
+  <div class="view compact-view">
     <div class="banner-slot"><ConnectBanner /></div>
 
     <section class="tally card" class:live aria-live="polite">
@@ -91,14 +91,6 @@
     gap: var(--gap);
     min-height: 100%;
     padding: var(--gap);
-  }
-
-  .banner-slot {
-    grid-area: banner;
-  }
-
-  .banner-slot:empty {
-    display: none;
   }
 
   .tally {
@@ -169,18 +161,8 @@
     overflow: hidden;
   }
 
-  .stage header {
-    padding: 1rem var(--pad) 0;
-  }
-
-  .stage h2,
   .obs h3 {
     font-size: 1.1rem;
-  }
-
-  .graph-slot {
-    flex: 1;
-    min-height: 16rem;
   }
 
   .obs {
@@ -188,28 +170,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-  }
-
-  .tool-head {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-  }
-
-  .tool-head > div {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-  }
-
-  .tool-icon {
-    display: grid;
-    place-items: center;
-    width: var(--target);
-    aspect-ratio: 1;
-    border-radius: var(--radius);
-    color: var(--role);
-    background: color-mix(in srgb, var(--role) 14%, transparent);
   }
 
   .chip.ok {

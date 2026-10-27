@@ -6,10 +6,9 @@
   interface Props {
     /** Called after a successful Connect click (onboarding uses it to finish). */
     ondone?: () => void;
-    submitLabel?: string;
   }
 
-  let { ondone, submitLabel = "Connect" }: Props = $props();
+  let { ondone }: Props = $props();
 
   const data = $derived(app.state!);
   const isDirector = $derived(data.role === "director");
@@ -54,7 +53,7 @@
   <div class="row actions">
     <Button type="submit" variant="primary" size="l" disabled={data.connection.status === "connecting"}>
       <Plug size="1.2em" />
-      {busy ? "Save & reconnect" : submitLabel}
+      {busy ? "Save & reconnect" : "Connect"}
     </Button>
     {#if busy}
       <Button type="button" size="l" variant="ghost" onclick={() => app.call({ call: "disconnect" })}>

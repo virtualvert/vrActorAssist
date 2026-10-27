@@ -7,7 +7,7 @@
   import Segmented from "../components/Segmented.svelte";
   import { mediaLength, mediaTime } from "../format";
   import type { Lines, SoundRef } from "../protocol";
-  import { LINE_HELP, LINE_OPTIONS, positionNow, searchSounds, soundpadReach, steadyPosition, wontAddReceived, wontAddText } from "../soundpad";
+  import { LINE_HELP, LINE_OPTIONS, positionNow, searchSounds, soundpadReach, STATUS_TEXT, steadyPosition, wontAddReceived, wontAddText } from "../soundpad";
   import { app } from "../state.svelte";
   import { armedText, armReason, DEFAULT_START_LATENCY_MS, isArmed } from "../timing";
 
@@ -15,7 +15,6 @@
   const SHOWN = 200;
   const JUMP_MS = 5000;
   const HOLD_MS = 1500;
-  const STATUS_TEXT = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;
 
   const data = $derived(app.state!);
   const peer = $derived(app.soundpadFor ? (data.peers.find((p) => p.id === app.soundpadFor) ?? null) : null);
@@ -140,14 +139,28 @@
     void app.call({ call: "calibrate", args: { id: peer.id, sound } });
   }
 
-  function seconds(ms: number | null): string {
-    return ms === null ? "" : mediaTime(ms);
-  }
-
   function length(ms: number | null): string {
     return ms === null ? "" : mediaLength(ms);
   }
 </script>
+
+<!-- Play and Arm for one sound; `hint` adds the long Arm tooltip (the sound list only) -->
+{#snippet actions(sound: SoundRef, name: string, on: boolean, hint: boolean)}
+  <Button size="s" variant="subtle" aria-label="Play {name}" onclick={() => play(sound, name)}>
+    <Play size="0.9em" fill="currentColor" /> Play
+  </Button>
+  <Button
+    size="s"
+    class="arm"
+    variant={on ? "go" : "ghost"}
+    aria-pressed={on}
+    aria-label="{on ? 'Clear the armed' : 'Arm'} {name} for GO"
+    title={hint ? (on ? "Armed: GO plays this. Press to clear" : "Arm for GO: GO plays this on them instead of their selected sound") : undefined}
+    onclick={() => arm(sound, name)}
+  >
+    <Crosshair size="0.9em" /> {on ? "Armed" : "Arm"}
+  </Button>
+{/snippet}
 
 <Drawer open={!!app.soundpadFor} title={peer ? `${peer.name}'s Soundpad` : "Soundpad"} onclose={() => (app.soundpadFor = null)}>
   <div class="panel">
@@ -177,7 +190,7 @@
         <div class="now-row">
           <span class="chip status-{(sp.status ?? 'STOPPED').toLowerCase()}">{STATUS_TEXT[sp.status ?? "STOPPED"]}</span>
           <span class="track">{playing ? (sp.title ?? "Their selected sound") : "Nothing playing"}</span>
-          {#if playing}<span class="mono small">{seconds(position)} / {length(sp.durationMs)}</span>{/if}
+          {#if playing}<span class="mono small">{mediaTime(position)} / {length(sp.durationMs)}</span>{/if}
         </div>
         {#if playing && sp.lines}<span class="faint small">{LINE_HELP[sp.lines]}</span>{/if}
         <input
@@ -276,20 +289,7 @@
                 <span class="num mono">{s.index}</span>
                 <span class="title">{s.title}</span>
                 <span class="mono small faint">{length(s.durationMs)}</span>
-                <Button size="s" variant="subtle" aria-label="Play {s.title}" onclick={() => play({ key: s.key }, s.title)}>
-                  <Play size="0.9em" fill="currentColor" /> Play
-                </Button>
-                <Button
-                  size="s"
-                  class="arm"
-                  variant={on ? "go" : "ghost"}
-                  aria-pressed={on}
-                  aria-label="{on ? 'Clear the armed' : 'Arm'} {s.title} for GO"
-                  title={on ? "Armed: GO plays this. Press to clear" : "Arm for GO: GO plays this on them instead of their selected sound"}
-                  onclick={() => arm({ key: s.key }, s.title)}
-                >
-                  <Crosshair size="0.9em" /> {on ? "Armed" : "Arm"}
-                </Button>
+                {@render actions({ key: s.key }, s.title, on, true)}
               </li>
             {/each}
           </ul>
@@ -306,19 +306,7 @@
               <li>
                 <FileCheck size="1em" aria-hidden="true" />
                 <span class="title">{f.name}</span>
-                <Button size="s" variant="subtle" aria-label="Play {f.name}" onclick={() => play({ sha256: f.sha256 }, f.name)}>
-                  <Play size="0.9em" fill="currentColor" /> Play
-                </Button>
-                <Button
-                  size="s"
-                  class="arm"
-                  variant={on ? "go" : "ghost"}
-                  aria-pressed={on}
-                  aria-label="{on ? 'Clear the armed' : 'Arm'} {f.name} for GO"
-                  onclick={() => arm({ sha256: f.sha256 }, f.name)}
-                >
-                  <Crosshair size="0.9em" /> {on ? "Armed" : "Arm"}
-                </Button>
+                {@render actions({ sha256: f.sha256 }, f.name, on, false)}
               </li>
             {/each}
           </ul>
@@ -391,22 +379,6 @@
 
   .small {
     font-size: 0.8125rem;
-  }
-
-  .message {
-    padding: 0.65rem 0.85rem;
-    border-radius: var(--radius-s);
-    font-size: 0.875rem;
-  }
-
-  .message.bad {
-    color: var(--bad);
-    background: color-mix(in srgb, var(--bad) 10%, transparent);
-  }
-
-  .message.note {
-    background: color-mix(in srgb, var(--warn) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
   }
 
   .now-row,

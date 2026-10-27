@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { CircleAlert, CircleCheck, Info, MessageCircle, Send, TriangleAlert } from "@lucide/svelte";
+  import { Send } from "@lucide/svelte";
   import { tick } from "svelte";
   import { clockTime } from "../format";
   import { app } from "../state.svelte";
   import Button from "./Button.svelte";
   import Drawer from "./Drawer.svelte";
-
-  const ICONS = { success: CircleCheck, error: CircleAlert, warning: TriangleAlert, info: Info, chat: MessageCircle };
+  import { ICONS } from "./levelIcons";
 
   let text = $state("");
   let list: HTMLOListElement | undefined = $state();

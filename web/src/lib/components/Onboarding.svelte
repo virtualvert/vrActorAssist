@@ -50,7 +50,7 @@
       <section class="step narrow card card-pad">
         <h2>Connect to your relay</h2>
         <p class="faint">You can skip this and connect later from Settings.</p>
-        <ConnectForm submitLabel="Connect" ondone={finish} />
+        <ConnectForm ondone={finish} />
         <div class="row between">
           <Button variant="ghost" onclick={() => (step = "role")}><ArrowLeft size="1.1em" /> Back</Button>
           <Button variant="ghost" onclick={finish}>Skip for now</Button>

@@ -59,6 +59,19 @@
   }
 </script>
 
+{#snippet forgetButton(id: string, name: string)}
+  <Button
+    size="s"
+    icon={confirmForget !== id}
+    variant={confirmForget === id ? "danger" : "ghost"}
+    aria-label="Forget {name}"
+    title="Forget — they must be approved again"
+    onclick={() => forget(id)}
+  >
+    {#if confirmForget === id}Forget?{:else}<Trash size="1em" />{/if}
+  </Button>
+{/snippet}
+
 <aside class="cast card">
   <header>
     <div>
@@ -129,16 +142,7 @@
               <Timer size="1.05em" />
             </Button>
           {/if}
-          <Button
-            size="s"
-            icon={confirmForget !== p.id}
-            variant={confirmForget === p.id ? "danger" : "ghost"}
-            aria-label="Forget {p.name}"
-            title="Forget — they must be approved again"
-            onclick={() => forget(p.id)}
-          >
-            {#if confirmForget === p.id}Forget?{:else}<Trash size="1em" />{/if}
-          </Button>
+          {@render forgetButton(p.id, p.name)}
           {#if sound || (p.delayMs !== null && p.delayMs !== 0) || late}
             <div class="extras">
               {#if sound}
@@ -200,16 +204,7 @@
               <span class="sub">{m.role === "camera" ? "Camera" : "Actor"} · {approvedOn(m.approvedAt)}</span>
             </span>
             <div class="spacer"></div>
-            <Button
-              size="s"
-              icon={confirmForget !== m.id}
-              variant={confirmForget === m.id ? "danger" : "ghost"}
-              aria-label="Forget {m.name}"
-              title="Forget — they must be approved again"
-              onclick={() => forget(m.id)}
-            >
-              {#if confirmForget === m.id}Forget?{:else}<Trash size="1em" />{/if}
-            </Button>
+            {@render forgetButton(m.id, m.name)}
           </div>
         {/each}
       </details>

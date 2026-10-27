@@ -59,14 +59,6 @@
     padding: var(--gap);
   }
 
-  .banner-slot {
-    grid-area: banner;
-  }
-
-  .banner-slot:empty {
-    display: none;
-  }
-
   .stage {
     grid-area: stage;
     display: flex;

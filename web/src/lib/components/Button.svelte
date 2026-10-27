@@ -5,17 +5,16 @@
   interface Props extends HTMLButtonAttributes {
     variant?: "subtle" | "ghost" | "primary" | "go" | "stop" | "warn" | "danger";
     size?: "s" | "m" | "l" | "xl";
-    block?: boolean;
     icon?: boolean;
     children: Snippet;
   }
 
   // type defaults to "button": inside a <form> a plain <button> submits it as well as running its onclick
   // (laptop run, M3: "Reset to 0" saved the old delay again, "Arm #N" also played it). Submit buttons say so.
-  let { variant = "subtle", size = "m", block = false, icon = false, type = "button", children, class: cls = "", ...rest }: Props = $props();
+  let { variant = "subtle", size = "m", icon = false, type = "button", children, class: cls = "", ...rest }: Props = $props();
 </script>
 
-<button {type} class="btn {variant} {size} {cls}" class:block class:icon {...rest}>
+<button {type} class="btn {variant} {size} {cls}" class:icon {...rest}>
   {@render children()}
 </button>
 
@@ -51,10 +50,6 @@
   .btn:disabled {
     opacity: 0.42;
     filter: saturate(0.4);
-  }
-
-  .block {
-    width: 100%;
   }
 
   .s {

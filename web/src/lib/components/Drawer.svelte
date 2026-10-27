@@ -11,7 +11,6 @@
   interface Props {
     open: boolean;
     title: string;
-    side?: "right" | "left";
     /** Room for a table: up to 60rem instead of 32rem. */
     wide?: boolean;
     onclose: () => void;
@@ -19,7 +18,7 @@
     footer?: Snippet;
   }
 
-  let { open, title, side = "right", wide = false, onclose, children, footer }: Props = $props();
+  let { open, title, wide = false, onclose, children, footer }: Props = $props();
   let dialog: HTMLDialogElement | undefined = $state();
 
   $effect(() => {
@@ -34,7 +33,7 @@
 
 <dialog
   bind:this={dialog}
-  class="drawer {side}"
+  class="drawer"
   class:wide
   aria-label={title}
   onclose={onclose}
@@ -99,13 +98,6 @@
 
   .wide .panel {
     width: min(60rem, 100%);
-  }
-
-  .left .panel {
-    right: auto;
-    left: 0;
-    border-left: 0;
-    border-right: 1px solid var(--border);
   }
 
   header {

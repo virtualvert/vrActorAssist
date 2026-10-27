@@ -21,6 +21,7 @@
   const length = (seconds: number) => (seconds < 60 ? `${seconds.toFixed(1)} s` : mediaTime(seconds * 1000));
   import type { FolderListing } from "../protocol";
   import { app } from "../state.svelte";
+  import { browseFolder, message, recall, remember } from "./folderPanel";
 
   type Status = "waiting" | "measuring" | "measured" | "saving" | "saved" | "skipped" | "error";
 
@@ -36,7 +37,7 @@
 
   // Per-viewer conveniences only: the last folder and settings.
   const STORE = "vrcas.normalize";
-  const remembered = load();
+  const remembered = recall<{ folder?: string; targetLufs?: number; ceilingDbtp?: number }>(STORE);
 
   let folderInput = $state(remembered.folder ?? "");
   let target = $state(clampSetting(remembered.targetLufs ?? NaN, TARGET_RANGE, DEFAULT_SETTINGS.targetLufs));
@@ -58,37 +59,10 @@
 
   onDestroy(() => engine?.dispose());
 
-  function load(): { folder?: string; targetLufs?: number; ceilingDbtp?: number } {
-    try {
-      return JSON.parse(localStorage.getItem(STORE) ?? "{}") ?? {};
-    } catch {
-      return {};
-    }
-  }
+  const persist = () => remember(STORE, { folder: folderInput, targetLufs: target, ceilingDbtp: ceiling });
 
-  function persist() {
-    try {
-      localStorage.setItem(STORE, JSON.stringify({ folder: folderInput, targetLufs: target, ceilingDbtp: ceiling }));
-    } catch {
-      // Storage can be unavailable (private windows); the panel works without it.
-    }
-  }
-
-  const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
-
-  async function browse() {
-    const folders = app.folders;
-    if (!folders || !idle) return;
-    error = "";
-    try {
-      const path = await folders.pick();
-      if (path) {
-        folderInput = path;
-        await openFolder();
-      }
-    } catch (err) {
-      error = message(err);
-    }
+  function browse() {
+    if (idle) return browseFolder((path) => ((folderInput = path), openFolder()), (text) => (error = text));
   }
 
   async function openFolder(event?: SubmitEvent) {
@@ -217,7 +191,7 @@
 </script>
 
 <Drawer open={app.normalizeOpen} title="Normalize folder" wide onclose={() => (app.normalizeOpen = false)}>
-  <div class="panel">
+  <div class="folder-panel">
     <p class="intro">
       Measures how loud each audio file is and writes copies at one loudness into a <strong>normalized</strong> folder inside it, so every line
       plays at the same level. Your original files aren't changed.
@@ -304,7 +278,7 @@
   </div>
 
   {#snippet footer()}
-    <div class="footer">
+    <div class="folder-footer">
       {#if busy === "measuring" || busy === "saving"}
         <span class="progress" aria-live="polite">{busy === "measuring" ? "Measuring" : "Saving"} {Math.min(progress.done + 1, progress.total)} of {progress.total}…</span>
         <Button variant="subtle" onclick={() => (stopRequested = true)}><Square size="1em" /> Stop</Button>
@@ -321,32 +295,8 @@
 </Drawer>
 
 <style>
-  .panel {
-    container-type: inline-size;
-    display: flex;
-    flex-direction: column;
-    gap: 1.1rem;
-  }
-
-  .intro {
-    color: var(--text-2);
-  }
-
-  .folder {
-    display: flex;
-    align-items: flex-end;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-
-  .grow {
-    flex: 1 1 18rem;
-    min-width: 0;
-  }
-
-  .folder-actions {
-    display: flex;
-    gap: 0.5rem;
+  .folder-panel {
+    --cell-y: 0.55rem;
   }
 
   .settings {
@@ -358,90 +308,6 @@
 
   .small {
     font-size: 0.8125rem;
-  }
-
-  .message {
-    padding: 0.65rem 0.85rem;
-    border-radius: var(--radius-s);
-    font-size: 0.875rem;
-  }
-
-  .message.bad {
-    color: var(--bad);
-    background: color-mix(in srgb, var(--bad) 10%, transparent);
-  }
-
-  .message.note {
-    background: color-mix(in srgb, var(--warn) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
-  }
-
-  .summary {
-    display: flex;
-    align-items: baseline;
-    gap: 0.8rem;
-    min-width: 0;
-  }
-
-  .count {
-    flex: none;
-    white-space: nowrap;
-  }
-
-  .path {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.8125rem;
-  }
-
-  .table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }
-
-  th,
-  td {
-    padding: 0.55rem 0.7rem;
-    text-align: left;
-    vertical-align: middle;
-    border-bottom: 1px solid var(--border);
-  }
-
-  th {
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-3);
-    background: var(--surface-2);
-  }
-
-  tbody tr:last-child td {
-    border-bottom: 0;
-  }
-
-  .check {
-    width: 1%;
-  }
-
-  .check input {
-    width: 1.15rem;
-    height: 1.15rem;
-    accent-color: var(--accent);
-  }
-
-  .num {
-    text-align: right;
-    white-space: nowrap;
   }
 
   .file {
@@ -481,26 +347,9 @@
     color: var(--bad);
   }
 
-  .footer {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-
   .progress {
     margin-right: auto;
     color: var(--text-2);
-  }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
   }
 
   @container (max-width: 40rem) {

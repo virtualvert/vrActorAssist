@@ -8,7 +8,7 @@
   import { ago, fileSize, mediaLength, mediaTime, percent } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
   import type { AppState } from "../protocol";
-  import { OWN_LINE_HELP, OWN_LINE_OPTIONS } from "../soundpad";
+  import { OWN_LINE_HELP, OWN_LINE_OPTIONS, STATUS_TEXT } from "../soundpad";
   import { app } from "../state.svelte";
   import { clockText, delayText } from "../timing";
 
@@ -68,7 +68,6 @@
   }
 
   const SP_LABEL = { ready: "Ready", closed: "Not running", fallback: "Command line", simulated: "Simulated", missing: "Not found", disabled: "Off" } as const;
-  const STATUS_LABEL = { STOPPED: "Stopped", PLAYING: "Playing", PAUSED: "Paused", SEEKING: "Seeking" } as const;
   const LINE_LABEL = Object.fromEntries(OWN_LINE_OPTIONS.map((o) => [o.value, o.label]));
 
   function edition(trial: boolean | null): string {
@@ -78,7 +77,7 @@
 </script>
 
 <div class="wrap">
-  <div class="view">
+  <div class="view compact-view">
     <div class="banner-slot"><ConnectBanner /></div>
 
     {#if asking.length}
@@ -147,7 +146,7 @@
         {#if playback && active}
           <div class="transport" aria-label="Soundpad playback">
             <div class="transport-row">
-              <span class="chip status-{playback.status.toLowerCase()}">{STATUS_LABEL[playback.status]}</span>
+              <span class="chip status-{playback.status.toLowerCase()}">{STATUS_TEXT[playback.status]}</span>
               <span class="track">{playback.title ?? "Selected sound"}</span>
               <span class="mono small">{mediaTime(playback.positionMs)} / {mediaLength(playback.durationMs)}</span>
             </div>
@@ -312,14 +311,6 @@
     padding: var(--gap);
   }
 
-  .banner-slot {
-    grid-area: banner;
-  }
-
-  .banner-slot:empty {
-    display: none;
-  }
-
   .hero {
     grid-area: hero;
     display: flex;
@@ -427,18 +418,8 @@
     overflow: hidden;
   }
 
-  .stage header {
-    padding: 1rem var(--pad) 0;
-  }
-
-  .stage h2,
   .tool h3 {
     font-size: 1.1rem;
-  }
-
-  .graph-slot {
-    flex: 1;
-    min-height: 16rem;
   }
 
   .tool {
@@ -555,27 +536,9 @@
     color: var(--warn);
   }
 
-  .tool-head {
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-  }
-
+  /* Wraps here; the camera view's header stays on one line */
   .tool-head > div {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
     flex-wrap: wrap;
-  }
-
-  .tool-icon {
-    display: grid;
-    place-items: center;
-    width: var(--target);
-    aspect-ratio: 1;
-    border-radius: var(--radius);
-    color: var(--role);
-    background: color-mix(in srgb, var(--role) 14%, transparent);
   }
 
   .small {

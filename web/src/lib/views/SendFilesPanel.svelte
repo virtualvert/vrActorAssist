@@ -7,11 +7,12 @@
   import type { FolderListing, Peer, SendBatch, SendFileState } from "../protocol";
   import { wontAddReceived, wontAddText } from "../soundpad";
   import { app } from "../state.svelte";
+  import { browseFolder, message, recall, remember } from "./folderPanel";
 
   // Per-viewer conveniences only: the last folder, and which actor plays which character (by
   // actor name, since session ids change when the relay restarts).
   const STORE = "vrcas.send";
-  const remembered = load();
+  const remembered = recall<{ folder?: string; cast?: Record<string, string> }>(STORE);
 
   let folderInput = $state(remembered.folder ?? "");
   let listing = $state<FolderListing | null>(null);
@@ -69,23 +70,7 @@
     }),
   );
 
-  function load(): { folder?: string; cast?: Record<string, string> } {
-    try {
-      return JSON.parse(localStorage.getItem(STORE) ?? "{}") ?? {};
-    } catch {
-      return {};
-    }
-  }
-
-  function persist() {
-    try {
-      localStorage.setItem(STORE, JSON.stringify({ folder: folderInput, cast: castNames }));
-    } catch {
-      // Storage can be unavailable (private windows); the panel works without it.
-    }
-  }
-
-  const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
+  const persist = () => remember(STORE, { folder: folderInput, cast: castNames });
 
   /** v0.4 actors announce `files`; v0.3 actors receive through the relay's bridge. */
   function canReceive(p: Peer): boolean {
@@ -104,19 +89,8 @@
     return (character !== null && castIds[character]) || "";
   }
 
-  async function browse() {
-    const folders = app.folders;
-    if (!folders || busy) return;
-    error = "";
-    try {
-      const path = await folders.pick();
-      if (path) {
-        folderInput = path;
-        await openFolder();
-      }
-    } catch (err) {
-      error = message(err);
-    }
+  function browse() {
+    if (!busy) return browseFolder((path) => ((folderInput = path), openFolder()), (text) => (error = text));
   }
 
   async function openFolder(event?: SubmitEvent) {
@@ -192,6 +166,10 @@
     cancelled: "Cancelled",
   };
 
+  function resultText(r: SendBatch["results"][number]): string {
+    return `${STATE_TEXT[r.state]}${r.detail && r.detail !== "Declined" ? `: ${r.detail}` : ""}`;
+  }
+
   function batchLine(b: SendBatch): string {
     if (b.state === "waiting") return "Getting the files ready…";
     if (b.state === "sending" && b.current) {
@@ -208,7 +186,7 @@
 </script>
 
 <Drawer open={app.sendOpen} title="Send files" wide onclose={() => (app.sendOpen = false)}>
-  <div class="panel">
+  <div class="folder-panel">
     {#if batches.length}
       <section class="transfers" aria-label="Transfers">
         <div class="transfers-head">
@@ -250,7 +228,7 @@
                   {#each b.results as r, i (i)}
                     <li>
                       <span class="name">{r.name}</span>
-                      <span class="r-{r.state}">{STATE_TEXT[r.state]}{r.detail && r.detail !== "Declined" ? `: ${r.detail}` : ""}</span>
+                      <span class="r-{r.state}">{resultText(r)}</span>
                     </li>
                   {/each}
                 </ul>
@@ -264,7 +242,7 @@
                 {#if notSent.length}
                   <ul class="results">
                     {#each notSent as r, i (i)}
-                      <li><span class="name">{r.name}</span> <span class="r-{r.state}">{STATE_TEXT[r.state]}{r.detail && r.detail !== "Declined" ? `: ${r.detail}` : ""}</span></li>
+                      <li><span class="name">{r.name}</span> <span class="r-{r.state}">{resultText(r)}</span></li>
                     {/each}
                   </ul>
                 {/if}
@@ -394,7 +372,7 @@
   </div>
 
   {#snippet footer()}
-    <div class="footer">
+    <div class="folder-footer">
       {#if active.length > 1}
         <Button variant="subtle" onclick={() => app.call({ call: "cancelBatch", args: { id: "all" } })}><Square size="1em" /> Cancel all</Button>
       {/if}
@@ -409,50 +387,6 @@
 </Drawer>
 
 <style>
-  .panel {
-    container-type: inline-size;
-    display: flex;
-    flex-direction: column;
-    gap: 1.1rem;
-  }
-
-  .intro {
-    color: var(--text-2);
-  }
-
-  .folder {
-    display: flex;
-    align-items: flex-end;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-
-  .grow {
-    flex: 1 1 18rem;
-    min-width: 0;
-  }
-
-  .folder-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .message {
-    padding: 0.65rem 0.85rem;
-    border-radius: var(--radius-s);
-    font-size: 0.875rem;
-  }
-
-  .message.bad {
-    color: var(--bad);
-    background: color-mix(in srgb, var(--bad) 10%, transparent);
-  }
-
-  .message.note {
-    background: color-mix(in srgb, var(--warn) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
-  }
-
   .transfers ul,
   .results {
     list-style: none;
@@ -624,69 +558,6 @@
     min-width: 0;
   }
 
-  .summary {
-    display: flex;
-    align-items: baseline;
-    gap: 0.8rem;
-    min-width: 0;
-  }
-
-  .count {
-    flex: none;
-    white-space: nowrap;
-  }
-
-  .path {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 0.8125rem;
-  }
-
-  .table-wrap {
-    overflow-x: auto;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }
-
-  th,
-  td {
-    padding: 0.5rem 0.7rem;
-    text-align: left;
-    vertical-align: middle;
-    border-bottom: 1px solid var(--border);
-  }
-
-  th {
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-3);
-    background: var(--surface-2);
-  }
-
-  tbody tr:last-child td {
-    border-bottom: 0;
-  }
-
-  .check {
-    width: 1%;
-  }
-
-  .check input {
-    width: 1.15rem;
-    height: 1.15rem;
-    accent-color: var(--accent);
-  }
-
   .file {
     min-width: 12rem;
     overflow-wrap: anywhere;
@@ -697,32 +568,10 @@
     min-width: 9rem;
   }
 
-  .num {
-    text-align: right;
-    white-space: nowrap;
-  }
-
   tr.off td.file,
   tr.off td.len,
   tr.off td.size {
     opacity: 0.45;
-  }
-
-  .footer {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
   }
 
   @container (max-width: 34rem) {

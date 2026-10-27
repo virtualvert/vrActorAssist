@@ -2,7 +2,7 @@
   import type { LatencyLevel } from "../format";
 
   interface Props {
-    level: LatencyLevel | "live" | "idle" | "warn" | "bad";
+    level: LatencyLevel | "idle" | "warn" | "bad";
     pulse?: boolean;
   }
 
@@ -31,7 +31,6 @@
   .bad { --c: var(--bad); }
   .lost,
   .idle { --c: var(--idle); }
-  .live { --c: var(--live); }
 
   .pulse::after {
     content: "";

@@ -1,10 +1,8 @@
 <script lang="ts">
-  import { CircleCheck, CircleAlert, Info, MessageCircle, TriangleAlert } from "@lucide/svelte";
   import { onMount } from "svelte";
   import { app } from "../state.svelte";
   import { LAYER_EVENT } from "./Drawer.svelte";
-
-  const ICONS = { success: CircleCheck, error: CircleAlert, warning: TriangleAlert, info: Info, chat: MessageCircle };
+  import { ICONS } from "./levelIcons";
 
   // Drawers are modal dialogs in the browser's top layer, above any z-index. The toasts are a
   // popover so they can go there too; when a drawer opens they're shown again, since the newest

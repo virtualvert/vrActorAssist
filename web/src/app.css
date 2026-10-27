@@ -337,6 +337,175 @@ button:disabled {
   font-size: 0.8125rem;
 }
 
+/* Notices inside drawers (Send files, Normalize folder, Soundpad) */
+.message {
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius-s);
+  font-size: 0.875rem;
+}
+
+.message.bad {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+}
+
+.message.note {
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+}
+
+/* Drawer panels with a folder form and a file table (Send files, Normalize folder).
+   --cell-y: a panel's own table cell padding. */
+.folder-panel {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.folder-panel .intro {
+  color: var(--text-2);
+}
+
+.folder-panel .folder {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.folder-panel .grow {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+.folder-panel .folder-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.folder-panel .summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.folder-panel .count {
+  flex: none;
+  white-space: nowrap;
+}
+
+.folder-panel .path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+}
+
+.folder-panel .table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.folder-panel table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.folder-panel th,
+.folder-panel td {
+  padding: var(--cell-y, 0.5rem) 0.7rem;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
+
+.folder-panel th {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface-2);
+}
+
+.folder-panel tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.folder-panel .check {
+  width: 1%;
+}
+
+.folder-panel .check input {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--accent);
+}
+
+.folder-panel .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* In the drawer's footer, which is outside .folder-panel */
+.folder-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+/* The tool cards and network card of the actor and camera views */
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.tool-head > div {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.tool-icon {
+  display: grid;
+  place-items: center;
+  width: var(--target);
+  aspect-ratio: 1;
+  border-radius: var(--radius);
+  color: var(--role);
+  background: color-mix(in srgb, var(--role) 14%, transparent);
+}
+
+.compact-view .stage header {
+  padding: 1rem var(--pad) 0;
+}
+
+.compact-view .stage h2 {
+  font-size: 1.1rem;
+}
+
+.compact-view .graph-slot {
+  flex: 1;
+  min-height: 16rem;
+}
+
+/* Where a view shows the connection banner; nothing there, no grid cell */
+.banner-slot {
+  grid-area: banner;
+}
+
+.banner-slot:empty {
+  display: none;
+}
+
 /* Status colours shared by dots, rings and links */
 .lvl-good { --lvl: var(--ok); }
 .lvl-fair { --lvl: var(--warn); }
