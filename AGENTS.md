@@ -174,3 +174,14 @@ There are no tests for the v0.3 tkinter clients; test changes there by hand. Rel
 - `build_agent.py`: the Linux one-file build is tested (CachyOS): UI, relay connection, director → actor cue, `--portable`, Ctrl+C. The Windows one-file build is tested too (Windows 11, Python 3.12, PyInstaller 6.22, pywebview 6.2 on WebView2 155): the window opens without the browser fallback, the actor drives Soundpad through the named pipe while frozen, Go / Stop / countdown and `*play:N` play against a local relay, closing the window ends the process, and `--portable` keeps its data beside the exe. An actor on the live `wss://` relay (Tailscale Funnel) gets approved and plays Go / Stop. The exe is unsigned: a copy marked as downloaded gets SmartScreen's "Windows protected your PC" block. Not tried yet: a PC without the WebView2 Runtime. The app icon passed on Windows 11 (2026-10-22, 125 % and 150 %): Explorer, the title bar, the taskbar, a pin, Alt-Tab. A run from source sets the same taskbar id as the exe (`vrcActorSync.App`), so it lights up a pinned exe's button.
 - Normalize folder (spec §8.4.2) writes 16-bit WAV at 48 kHz only; MP3 output for MP3 sources isn't built. Its folder dialog inside the desktop window (Windows, Linux `--window`) is untested; the browser-mode fallbacks (`kdialog` / `zenity` / typed path) are.
 - OBS addon, OSC timeline editor and P2P streaming are designed (spec §8.3, §8.5, §8.6), not built.
+
+## ProjDeck (plan + time tracking)
+This repo is project `vrcactorsync` in ProjDeck (MCP server `projdeck`).
+- At the start of a session call `get_overview`, then `get_project` with `vrcactorsync`.
+- When you finish or advance a plan item call `update_item` (status / progress). ALWAYS pass `reason` (one sentence: what you did or found).
+- Estimates marked UNVERIFIED are guesses. If the code shows the real size, correct them with `update_item` (`est_hours_min`/`est_hours_max` + `reason`). If you agree with one, send `est_confidence: "confirmed"` + `reason`.
+- Record measurements and test outcomes with `add_note` (`kind: "verdict"` for pass/fail).
+- Claude Code session time is tracked automatically by hooks. Only call `log_time` for work not covered by a session, with `kind: "agent"`.
+- When a substantial task ends, call `submit_report` (what changed vs the plan, new risks, estimate corrections, blockers).
+- Only touch items and checkpoints of `vrcactorsync`. Cross-project issues go into a report.
+- If a write returns 403, the token is append-only: use `submit_report` instead of retrying.
