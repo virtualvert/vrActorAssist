@@ -1,9 +1,17 @@
 # vrcActorSync: Desktop Web UI + Local Agent Design
 
-**Date:** 2026-10-17 (revised 2026-10-21)
+**Date:** 2026-10-17 (revised 2026-10-30)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.13
+**Version:** 0.14
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.14
+
+- Camera ops (§8.5, not built yet), from Danny's decisions on 2026-10-30:
+  - The director's **Ready check** sets up each camera: it applies the profile when the operator allows it, matches the VRChat window, and reports what is still off (§8.8.2).
+  - New camera setting `allow_profile_changes`, **Allow directors to change OBS settings**, off by default. When it's off, or OBS doesn't take a change, the camera reports `mismatch` (§8.5.1, §8.5.2).
+  - New check: the capture source fills the canvas 1:1 (§8.5.8).
+  - Closing the camera app puts the VRChat window back to its size and position from before the first resize (§8.5.8).
 
 ### Changes in v0.13
 
@@ -875,7 +883,8 @@ Lines recorded at different levels sound uneven in a scene. The director's app m
 #### 8.5.1 Connection
 
 - Library: `simpleobsws` (asyncio, obs-websocket 5.x).
-- **Config:** `url` (default `ws://127.0.0.1:4455`), `password`, `allow_remote_control`, `local_encoder`, `slate_scene_item`, `slate_media_input`.
+- **Config:** `url` (default `ws://127.0.0.1:4455`), `password`, `allow_remote_control`, `allow_profile_changes`, `local_encoder`, `slate_scene_item`, `slate_media_input`.
+  - `allow_profile_changes` (off by default) is the operator's **Allow directors to change OBS settings** toggle: whether a director's profile (§8.5.2) may change OBS settings. It's separate from `allow_remote_control`, so an operator can let directors roll without letting them change settings.
 - Sends `GetVersion` on connect and builds feature flags from `availableRequests`:
 
 | Feature flag | Requires | Notes |
@@ -902,16 +911,18 @@ Lines recorded at different levels sound uneven in a scene. The director's app m
 
 `vrchat_window` is the optional capture helper (§8.5.8).
 
-**Apply algorithm:**
-1. If an output is active, report `pending_idle` and retry once it stops.
-2. Remember the operator's current profile, then switch to a dedicated `vrcActorSync` profile:
+**Apply algorithm** (on `obs.profile.apply`, and on a ready check, §8.8.2):
+1. If `allow_profile_changes` is off, change nothing: read the current settings, compare, and report `compliant` or `mismatch` with the diffs.
+2. If an output is active, report `pending_idle` and retry once it stops.
+3. Remember the operator's current profile, then switch to a dedicated `vrcActorSync` profile:
    - `CreateProfile` if it doesn't exist (this also switches to it), otherwise `SetCurrentProfile`.
    - **The operator's own profiles are never edited.**
-3. `SetVideoSettings`.
-4. `SetProfileParameter` for output mode, format, rate control, quality and audio bitrate.
+4. `SetVideoSettings`.
+5. `SetProfileParameter` for output mode, format, rate control, quality and audio bitrate.
    - **The encoder is a local setting** (`local_encoder`, chosen once by the operator). The profile only sets the codec family and quality.
-5. Read everything back, compare, and report `obs.profile.status {compliant | mismatch | pending_idle | error, diffs}`.
-6. `obs.profile.release`, or the operator's Release button, restores the remembered profile.
+6. Read everything back, compare, and report `obs.profile.status {compliant | mismatch | pending_idle | error, diffs}`.
+   - A change OBS refused, or a key this OBS version doesn't have, shows up here as `mismatch` with its diff.
+7. `obs.profile.release`, or the operator's Release button, restores the remembered profile.
 
 - The profile parameter keys per OBS version live in `agent/addons/obs/profile_keys.py`, filled in and checked in the OBS spike.
 - The record directory stays local unless the director pushes one (needs `record_dir`).
@@ -991,7 +1002,8 @@ Every 2 s the agent sends `obs.status` with:
 ```
 
 - The target size is `video.base`.
-- `match: false` (the default) means nothing happens until the operator presses **Match VRChat window**.
+- `match: true`: a ready check (§8.8.2) or a profile apply resizes the window to the target size.
+- `match: false` (the default): they only compare and report. Nothing is resized until the operator presses **Match VRChat window**.
 
 **Two methods, chosen per machine:**
 
@@ -1045,13 +1057,22 @@ Every 2 s the agent sends `obs.status` with:
   - What Window Capture records of an off-screen window is **unconfirmed**.
 - **Linux:** use the obs-vkcapture source. PipeWire screen or window capture records what the compositor shows, which is the window size, not the render size.
 
+**Fill check:** the capture source has to fill the canvas 1:1. Its scene item in the current program scene (`GetCurrentProgramScene`, `GetSceneItemList`, `GetSceneItemTransform`) needs:
+- a source size and a shown size that both equal `video.base`
+- position 0, 0, no crop and no rotation
+
+Otherwise the check reports what's off, e.g. "capture is 1700×950, scaled to 1920×1080". For Game Capture the source size should be VRChat's swap-chain size, so this also confirms the render size (**unconfirmed**).
+
 **Flow:**
-1. After a profile apply, or when the operator presses **Match VRChat window**, the agent finds VRChat and compares its client size and aspect ratio with `video.base`.
+1. On a ready check (§8.8.2), after a profile apply, or when the operator presses **Match VRChat window**, the agent finds VRChat and compares its client size and aspect ratio with `video.base`.
 2. On a mismatch:
+   - With `match: true`, a ready check or a profile apply resizes the window right away (Method A) and reads the size back. Only a size that still doesn't match counts as a mismatch.
    - The operator sees "VRChat is 1700×950; recording is 1920×1080" with **Match now**, **Copy launch options** and **Ignore**.
-   - The director sees ⚠ "window 1700×950" in that camera's profile status.
-3. **Match now** (Method A) only works while the camera isn't recording, because resizing briefly stalls the game. The agent resizes, reads the size back and reports.
-4. **Restore** puts the window back to its previous size and position.
+   - The director sees ⚠ "window 1700×950" in that camera's profile status and its ready-check row.
+3. Resizing (automatic or **Match now**, Method A) only happens while the camera isn't recording, because it briefly stalls the game. The agent resizes, reads the size back, runs the fill check and reports.
+4. The agent remembers the window's size and position from before its first resize. **Restore**, and closing the camera app, put the window back. Between takes it stays at the recording size.
+   - If VRChat was restarted in the meantime, there's nothing to restore.
+   - If the app is killed or crashes, nothing runs at exit. Saving the original size in the config, so the next start can put it back, isn't decided.
 
 **Consent and safety:**
 - Needs the OBS consent from §8.5.6, plus a separate one-time "Allow vrcActorSync to resize the VRChat window" prompt.
@@ -1067,7 +1088,8 @@ Every 2 s the agent sends `obs.status` with:
 **Status:** `obs.profile.status` gains:
 
 ```json
-"window": { "state": "matched | mismatch | not_found | unsupported | needs_restart | declined", "size": [1700, 950], "method": "live | launch_options" }
+"window": { "state": "matched | mismatch | not_found | unsupported | needs_restart | declined", "size": [1700, 950], "method": "live | launch_options" },
+"capture": { "state": "fills | mismatch | wrong_source | not_found", "source_size": [1700, 950] }
 ```
 
 **Capabilities:** `obs.window.live` (Method A works on this machine) and `obs.window.launch` (always).
@@ -1140,8 +1162,10 @@ People in VR can't see the desktop app, so the agent shows short status messages
 | Actor | Files up to date | project inventory (§8.4.1) |
 | Actor | OSC on, VRChat OSC found | osc config; OSCQuery (§8.9.1) |
 | Actor | Latency below the lead | RTT/2 vs. lead (§8.2.2) |
-| Camera | OBS connected, profile applied, at least 30 min of disk | §8.5.1, §8.5.2, §8.5.5 |
+| Camera | OBS connected, profile applied (`mismatch` when changes aren't allowed or OBS didn't take them), at least 30 min of disk | §8.5.1, §8.5.2, §8.5.5 |
+| Camera | VRChat window at the recording size, capture fills the canvas 1:1 | §8.5.8 |
 
+- A camera sets itself up before it answers: it runs the profile apply (§8.5.2, which only compares when `allow_profile_changes` is off) and the window match (§8.5.8, which only resizes with `match: true`). Whatever it couldn't fix shows red.
 - Being connected is implicit: someone who isn't connected shows as offline.
 - **Ready** can also come from the avatar menu (§8.9.1), so actors don't need to leave VR.
 - **Ping:** the director pings anyone not ready with `ready.ping {to}`. They get an in-app banner with a sound, a flashing taskbar button, and **Director is waiting** in the headset (§8.7). At most one ping per person every 5 s.
