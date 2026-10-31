@@ -11,7 +11,8 @@ from typing import Any, Callable
 
 from . import APP_VERSION
 from .actor_runtime import ActorRuntime, PlayError
-from .config import LINES, ROLES, THEMES, ConfigStore, clamp_lead, clamp_scale
+from .camera import CameraError, CameraRuntime
+from .config import LINES, OBS_URL, ROLES, THEMES, ConfigStore, clamp_lead, clamp_scale
 import soundpad
 
 from vrcas_protocol import validate
@@ -40,6 +41,7 @@ class Agent:
         self.store = store
         self.hub = Hub(self.snapshot)
         self.actor = ActorRuntime(store.config, changed=self.changed, log=self.hub.log)
+        self.camera = CameraRuntime(store.config, changed=self.changed, log=self.hub.log)
         # Folders opened in this run (Normalize folder, Send files); file access stays inside them
         self.folders = Folders()
         self.files = Files(self)
@@ -79,6 +81,7 @@ class Agent:
         if self.store.migrated:
             self.hub.log("info", "Imported your settings from the v0.3 client.")
         await self.actor.refresh()
+        await self.camera.refresh()
         if self.ready_to_connect():
             self.relay.start()
         self.changed()
@@ -87,6 +90,7 @@ class Agent:
         self.hub.log("info", "Closing vrcActorSync")
         await self.relay.stop("App closed")
         await self.actor.close()
+        await self.camera.close()  # puts the VRChat window back
 
     def ready_to_connect(self) -> bool:
         cfg = self.config
@@ -163,15 +167,7 @@ class Agent:
                 if cfg.role == "director"
                 else None
             ),
-            "camera": (
-                {
-                    "obs": {"connected": False, "detail": "OBS control isn't built yet. It arrives with the OBS addon."},
-                    "recording": False,
-                    "recordingSince": None,
-                }
-                if cfg.role == "camera"
-                else None
-            ),
+            "camera": self.camera.view() if cfg.role == "camera" else None,
         }
 
     # ---- UI calls -----------------------------------------------------------
@@ -210,6 +206,7 @@ class Agent:
         self.relay.clear_targets()
         self.hub.log("info", f"Role set to {role}")
         await self.actor.refresh()  # opens or closes Soundpad's pipe
+        await self.camera.refresh()  # connects to OBS, or puts the VRChat window back
         if was_online:
             await self.relay.restart()
 
@@ -543,7 +540,30 @@ class Agent:
         )
 
     async def _call_camera(self, args: dict) -> None:
-        raise CallError("Roll and Cut need the OBS addon, which isn't built yet.")
+        action = args.get("action")
+        if action not in ("match", "restore"):
+            raise CallError("Roll and Cut from the app aren't built yet; use OBS's own buttons.")
+        try:
+            await (self.camera.match() if action == "match" else self.camera.restore())
+        except CameraError as exc:
+            raise CallError(str(exc)) from exc
+
+    async def _call_setCameraLocal(self, args: dict) -> None:
+        obs = self.config.obs
+        reconnect = False
+        if isinstance(args.get("obsUrl"), str):
+            url = args["obsUrl"].strip() or OBS_URL
+            if not url.startswith(("ws://", "wss://")):
+                raise CallError("The OBS address starts with ws:// (for example ws://127.0.0.1:4455)")
+            if url != obs.url:
+                obs.url, reconnect = url, True
+        if isinstance(args.get("obsPassword"), str) and args["obsPassword"]:
+            obs.password, reconnect = args["obsPassword"], True
+        if "allowWindowResize" in args:
+            obs.allow_window_resize = bool(args["allowWindowResize"])
+        self.store.save()
+        if reconnect:
+            await self.camera.refresh()
 
     async def _call_openBrowser(self, args: dict) -> None:
         if self.ui_url is None:

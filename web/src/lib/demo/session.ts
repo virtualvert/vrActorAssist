@@ -79,6 +79,9 @@ export const DEFAULT_NAMES: Record<Role, string> = {
 export const DEFAULT_PREFS: Prefs = { theme: "system", scale: 1, vrMode: false, reduceMotion: false };
 
 const HOST = "relay.demo";
+const DEMO_OBS_URL = "ws://127.0.0.1:4455";
+/** The demo camera's VRChat window before Match now: smaller than the 1920×1080 canvas. */
+const DEMO_VRCHAT_SIZE: [number, number] = [1700, 950];
 const JITTER_EVERY_MS = 2000;
 const INCOMING_CUE_EVERY_MS = 14_000;
 const COUNTDOWN_MS = 3000;
@@ -276,6 +279,14 @@ export class DemoSession {
           if (call.args.soundpadPath !== undefined) this.state.actor.soundpad.path = call.args.soundpadPath.trim();
           if (call.args.autoAcceptFiles !== undefined) this.state.actor.files.autoAccept = call.args.autoAcceptFiles;
           if (call.args.autoCompensateLatency !== undefined) this.state.actor.timing.autoCompensate = call.args.autoCompensateLatency;
+        }
+        break;
+      case "setCameraLocal":
+        if (this.state.camera) {
+          const { obsUrl, obsPassword, allowWindowResize } = call.args;
+          if (obsUrl !== undefined) this.state.camera.obs.url = obsUrl.trim() || DEMO_OBS_URL;
+          if (obsPassword) this.state.camera.obs.hasPassword = true;
+          if (allowWindowResize !== undefined) this.state.camera.window.allowResize = allowWindowResize;
         }
         break;
       case "setDirectorLocal":
@@ -929,15 +940,29 @@ export class DemoSession {
     this.#traffic(director.id, to, "cue");
   }
 
-  #camera(action: "roll" | "cut"): void {
-    if (!this.state.camera || this.state.connection.status !== "connected") return;
+  #camera(action: "roll" | "cut" | "match" | "restore"): void {
+    const cam = this.state.camera;
+    if (cam && (action === "match" || action === "restore")) {
+      const win = cam.window;
+      if (cam.recording) this.#toast("error", "OBS is recording; resizing VRChat now would stall the take");
+      else if (action === "match" && !win.allowResize) this.#toast("error", "Turn on “Let vrcActorSync resize the VRChat window” first");
+      else if (action === "match" && win.state === "mismatch" && cam.obs.base) {
+        this.#log("success", `VRChat window resized to ${cam.obs.base.join("×")} (was ${win.size!.join("×")}, demo)`);
+        cam.window = { ...win, state: "matched", size: cam.obs.base, canRestore: true };
+      } else if (action === "restore" && win.canRestore) {
+        cam.window = { ...win, state: "mismatch", size: DEMO_VRCHAT_SIZE, canRestore: false };
+        this.#log("info", `VRChat window put back to ${DEMO_VRCHAT_SIZE.join("×")} (demo)`);
+      }
+      return;
+    }
+    if (!cam || this.state.connection.status !== "connected") return;
     const self = this.state.peers.find((p) => p.self);
-    if (action === "roll" && !this.state.camera.recording) {
-      this.state.camera = { ...this.state.camera, recording: true, recordingSince: this.#clock.now() };
+    if (action === "roll" && !cam.recording) {
+      this.state.camera = { ...cam, recording: true, recordingSince: this.#clock.now() };
       if (self) self.activity = "rolling";
       this.#log("success", "● Rolling (demo)");
-    } else if (action === "cut" && this.state.camera.recording) {
-      this.state.camera = { ...this.state.camera, recording: false, recordingSince: null };
+    } else if (action === "cut" && cam.recording) {
+      this.state.camera = { ...cam, recording: false, recordingSince: null };
       if (self) self.activity = "idle";
       this.#log("info", "■ Cut — recording stopped (demo)");
     }
@@ -1132,7 +1157,12 @@ export class DemoSession {
     this.state.director = role === "director" ? { files: { batches: [] }, leadMs: DEFAULT_LEAD_MS, armed: {} } : null;
     this.state.camera =
       role === "camera"
-        ? ({ obs: { connected: true, detail: "OBS 31 · demo" }, recording: false, recordingSince: null } satisfies CameraLocal)
+        ? ({
+            obs: { connected: true, detail: "OBS 31 · demo", url: DEMO_OBS_URL, hasPassword: false, base: [1920, 1080], output: [1920, 1080], fps: 60 },
+            window: { state: "mismatch", size: DEMO_VRCHAT_SIZE, mode: "window", allowResize: false, canRestore: false },
+            recording: false,
+            recordingSince: null,
+          } satisfies CameraLocal)
         : null;
   }
 

@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { Circle, Clapperboard, Square, Video } from "@lucide/svelte";
+  import { Circle, Clapperboard, Maximize, Square, Undo2, Video } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import Button from "../components/Button.svelte";
   import ConnectBanner from "../components/ConnectBanner.svelte";
+  import Toggle from "../components/Toggle.svelte";
   import { duration } from "../format";
   import NodeGraph from "../graph/NodeGraph.svelte";
-  import type { AppState } from "../protocol";
+  import type { AppState, WindowState } from "../protocol";
   import { app } from "../state.svelte";
 
   interface Props {
@@ -22,6 +23,38 @@
   const live = $derived(!!cam?.recording);
   const connected = $derived(data.connection.status === "connected");
   const canControl = $derived(data.demo && connected);
+
+  const obs = $derived(cam?.obs);
+  const win = $derived(cam?.window);
+  const canMatch = $derived(!!win?.allowResize && win.state === "mismatch" && win.mode === "window" && !live);
+
+  const WINDOW_CHIP: Record<WindowState, string> = {
+    matched: "Matches",
+    mismatch: "Wrong size",
+    unknown: "Not compared",
+    not_found: "Not found",
+    unsupported: "Windows only",
+  };
+
+  const px = (size: [number, number] | null | undefined) => (size ? `${size[0]}×${size[1]}` : "—");
+
+  function windowText(): string {
+    if (!win || !obs) return "";
+    switch (win.state) {
+      case "matched":
+        return `VRChat renders at ${px(win.size)}, the canvas size, so OBS captures it pixel for pixel.`;
+      case "mismatch":
+        return `VRChat is ${px(win.size)}; the canvas is ${px(obs.base)}.` + (win.mode !== "window" ? ` It's ${win.mode}: switch it to a normal window to match.` : "");
+      case "unknown":
+        return `VRChat is ${px(win.size)}. Connect OBS to compare it with the canvas.`;
+      case "not_found":
+        return "VRChat isn't running, or it has no window. Start it in desktop mode.";
+      case "unsupported":
+        return "Resizing the VRChat window works on Windows only so far.";
+    }
+  }
+
+  const camera = (action: "match" | "restore") => app.call({ call: "camera", args: { action } });
 </script>
 
 <div class="wrap">
@@ -59,14 +92,40 @@
         <span class="tool-icon role-camera"><Video size="1.3em" /></span>
         <div>
           <h3>OBS</h3>
-          <span class="chip" class:ok={cam?.obs.connected}>{cam?.obs.connected ? "Connected" : "Not connected"}</span>
+          <span class="chip" class:ok={obs?.connected}>{obs?.connected ? "Connected" : "Not connected"}</span>
         </div>
       </div>
-      <p class="faint">{cam?.obs.detail}</p>
+      <p class="faint">{obs?.detail}</p>
+      {#if obs?.base}
+        <p>Canvas <span class="mono">{px(obs.base)}</span> · recording <span class="mono">{px(obs.output)}</span> at {obs.fps} fps</p>
+      {/if}
+
+      {#if win}
+        <div class="vrchat">
+          <div class="vrchat-head">
+            <h4>VRChat window</h4>
+            <span class="chip" class:ok={win.state === "matched"} class:warn={win.state === "mismatch"}>{WINDOW_CHIP[win.state]}</span>
+          </div>
+          <p class="faint">{windowText()}</p>
+          {#if win.state !== "unsupported"}
+            <Toggle
+              checked={win.allowResize}
+              label="Let vrcActorSync resize the VRChat window"
+              description="Only its size, only when you press Match now, never while OBS records. Closing the app puts it back."
+              onchange={(allowWindowResize) => app.call({ call: "setCameraLocal", args: { allowWindowResize } })}
+            />
+            <div class="row">
+              <Button disabled={!canMatch} onclick={() => camera("match")}><Maximize size="1em" /> Match now</Button>
+              <Button variant="subtle" disabled={!win.canRestore || live} onclick={() => camera("restore")}><Undo2 size="1em" /> Restore</Button>
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       {#if !data.demo}
         <p class="note">
-          <Clapperboard size="1em" /> Profile sync and roll-on-cue come with the OBS addon (spec §8.5). This build shows your connection and the
-          network; Roll / Cut are only simulated in demo mode (<span class="mono">?demo=camera</span>).
+          <Clapperboard size="1em" /> The director's ready check and roll-on-cue come next (spec §8.5, §8.8.2). The tally follows OBS; Roll / Cut
+          here are only simulated in demo mode (<span class="mono">?demo=camera</span>).
         </p>
       {/if}
     </section>
@@ -174,6 +233,28 @@
 
   .chip.ok {
     color: var(--ok);
+  }
+
+  .chip.warn {
+    color: var(--warn);
+  }
+
+  .vrchat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .vrchat-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+
+  .vrchat h4 {
+    font-size: 1rem;
   }
 
   .note {

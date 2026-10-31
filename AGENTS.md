@@ -65,6 +65,10 @@ agent/                  v0.4 desktop agent (python -m agent)
   sounds.py             Sound keys (hash of the path; paths never leave the actor's PC) and soundpad.list pages (≤ 500)
   soundpad_remote.py    soundpad.* over v2: actors answer with soundpad.ack (late_ms, start_latency_ms), send lists and soundpad.state, run soundpad.calibrate; directors keep it all for the UI
   files.py              Files addon: Receiver (offer checks, prompt or auto-accept, .part file, hash, rename) and Sender (batches, 8 in flight, cancel)
+  camera.py             Camera operator: polls OBS (video settings, recording) and the VRChat window; Match now / Restore (consent, never while
+                        recording, restored on close or role change)
+  obs.py                Small obs-websocket 5.x client over `websockets` (identify with password, one request at a time)
+  vrchat_window.py      VRChat window on Windows (spec §8.5.8 method A), ported from tools/vrchat_window_probe.py: find, resize, place back
   folders.py            Folder access for Normalize folder and Send files: picker, listings, guarded reads, writes only under normalized/,
                         audio/video lengths for Send files' Length column
   media.py              Lengths of audio and video files from their headers (WAV, FLAC, MP3, AAC, Ogg/Opus, MP4/MOV, MKV/WebM, AVI; stdlib only)
@@ -173,7 +177,8 @@ There are no tests for the v0.3 tkinter clients; test changes there by hand. Rel
 - No tray icon, installer or auto-updater yet; closing the window quits. In browser mode, Ctrl+C in the terminal quits. With no terminal (a Windows build without WebView2, or a Linux build started from a file manager), the only way to quit is ending the process.
 - `build_agent.py`: the Linux one-file build is tested (CachyOS): UI, relay connection, director → actor cue, `--portable`, Ctrl+C. The Windows one-file build is tested too (Windows 11, Python 3.12, PyInstaller 6.22, pywebview 6.2 on WebView2 155): the window opens without the browser fallback, the actor drives Soundpad through the named pipe while frozen, Go / Stop / countdown and `*play:N` play against a local relay, closing the window ends the process, and `--portable` keeps its data beside the exe. An actor on the live `wss://` relay (Tailscale Funnel) gets approved and plays Go / Stop. The exe is unsigned: a copy marked as downloaded gets SmartScreen's "Windows protected your PC" block. Not tried yet: a PC without the WebView2 Runtime. The app icon passed on Windows 11 (2026-10-22, 125 % and 150 %): Explorer, the title bar, the taskbar, a pin, Alt-Tab. A run from source sets the same taskbar id as the exe (`vrcActorSync.App`), so it lights up a pinned exe's button.
 - Normalize folder (spec §8.4.2) writes 16-bit WAV at 48 kHz only; MP3 output for MP3 sources isn't built. Its folder dialog inside the desktop window (Windows, Linux `--window`) is untested; the browser-mode fallbacks (`kdialog` / `zenity` / typed path) are.
-- OBS addon, OSC timeline editor and P2P streaming are designed (spec §8.3, §8.5, §8.6), not built.
+- OBS addon (spec §8.5), first slice: a camera reads OBS's video settings and recording state (the tally follows OBS) and, with the operator's consent, matches the VRChat window to the base resolution (Match now / Restore; put back when the app closes). Settings → Camera holds the OBS address and password. Not built: `ready.*`, `obs.*` messages, profile apply, the fill check, roll on cue, slate, take log, Linux window paths. Windows 11 at 150 % with OBS 32.2.1 (obs-websocket 5.7.4), 2026-10-31: Match now took a borderless 1920×1080 VRChat to the 3840×2160 canvas (OBS Game Capture re-hooked at 3840×2160 within 80 ms), Restore and `Agent.shutdown()` put back the exact rect. Not tried live: the refusal while OBS records, a DPI change while matched.
+- OSC timeline editor and P2P streaming are designed (spec §8.3, §8.6), not built.
 
 ## ProjDeck (plan + time tracking)
 This repo is project `vrcactorsync` in ProjDeck (MCP server `projdeck`).

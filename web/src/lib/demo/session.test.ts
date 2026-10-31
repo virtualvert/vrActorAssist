@@ -404,4 +404,15 @@ describe("DemoSession", () => {
     s.handle({ call: "camera", args: { action: "cut" } });
     expect(lastState().camera?.recording).toBe(false);
   });
+
+  test("camera matches the VRChat window only after consent, and restores it", () => {
+    const s = make(new MemoryStorage(), "camera");
+    s.handle({ call: "camera", args: { action: "match" } });
+    expect(lastState().camera?.window.state).toBe("mismatch");
+    s.handle({ call: "setCameraLocal", args: { allowWindowResize: true } });
+    s.handle({ call: "camera", args: { action: "match" } });
+    expect(lastState().camera?.window).toMatchObject({ state: "matched", size: [1920, 1080], canRestore: true });
+    s.handle({ call: "camera", args: { action: "restore" } });
+    expect(lastState().camera?.window).toMatchObject({ state: "mismatch", size: [1700, 950], canRestore: false });
+  });
 });

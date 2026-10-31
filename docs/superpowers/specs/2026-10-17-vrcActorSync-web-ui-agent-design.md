@@ -882,7 +882,7 @@ Lines recorded at different levels sound uneven in a scene. The director's app m
 
 #### 8.5.1 Connection
 
-- Library: `simpleobsws` (asyncio, obs-websocket 5.x).
+- Library: a small client of our own over `websockets` (`agent/obs.py`, obs-websocket 5.x), instead of `simpleobsws`, which would add `msgpack` to the build for a few requests.
 - **Config:** `url` (default `ws://127.0.0.1:4455`), `password`, `allow_remote_control`, `allow_profile_changes`, `local_encoder`, `slate_scene_item`, `slate_media_input`.
   - `allow_profile_changes` (off by default) is the operator's **Allow directors to change OBS settings** toggle: whether a director's profile (§8.5.2) may change OBS settings. It's separate from `allow_remote_control`, so an operator can let directors roll without letting them change settings.
 - Sends `GetVersion` on connect and builds feature flags from `availableRequests`:

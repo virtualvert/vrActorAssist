@@ -270,8 +270,37 @@ export interface DirectorLocal {
   armed: Record<string, ArmedSound>;
 }
 
+/**
+ * The VRChat window against OBS's base resolution (spec §8.5.8). unknown: VRChat was found but
+ * OBS isn't connected, so there's no size to compare with. unsupported: not on Windows (yet).
+ */
+export type WindowState = "matched" | "mismatch" | "unknown" | "not_found" | "unsupported";
+
 export interface CameraLocal {
-  obs: { connected: boolean; detail: string };
+  obs: {
+    connected: boolean;
+    detail: string;
+    /** obs-websocket address, ws://127.0.0.1:4455 by default. */
+    url: string;
+    /** The password itself never reaches the UI. */
+    hasPassword: boolean;
+    /** The canvas size: what VRChat should render at. null while OBS isn't connected. */
+    base: [number, number] | null;
+    /** The scaled output size that gets recorded. */
+    output: [number, number] | null;
+    fps: number | null;
+  };
+  window: {
+    state: WindowState;
+    /** VRChat's client area in physical pixels; null when not found. */
+    size: [number, number] | null;
+    mode: "window" | "minimized" | "maximized" | "fullscreen" | null;
+    /** The operator's consent to resize the VRChat window (kept in the config). */
+    allowResize: boolean;
+    /** This app resized the window and remembers its size from before; closing the app puts it back too. */
+    canRestore: boolean;
+  };
+  /** From OBS: true while it records, whoever started it. */
   recording: boolean;
   recordingSince: number | null;
 }
@@ -391,7 +420,10 @@ export type Call =
   | { call: "cancelBatch"; args: { id: string } }
   /** Remove finished batches from the list: a batch id, or "all" (running ones stay). */
   | { call: "clearBatches"; args: { id: string } }
-  | { call: "camera"; args: { action: "roll" | "cut" } }
+  /** roll / cut: demo only so far. match: resize VRChat to OBS's base resolution; restore: put it back. */
+  | { call: "camera"; args: { action: "roll" | "cut" | "match" | "restore" } }
+  /** An empty obsPassword keeps the saved one. */
+  | { call: "setCameraLocal"; args: { obsUrl?: string; obsPassword?: string; allowWindowResize?: boolean } }
   | { call: "openBrowser" }
   /** Show the log folder (`logDir`) in Explorer / the file manager. */
   | { call: "openLogFolder" };

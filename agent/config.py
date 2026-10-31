@@ -86,6 +86,18 @@ class FilesConfig:
     auto_accept: bool = False
 
 
+OBS_URL = "ws://127.0.0.1:4455"
+
+
+@dataclass
+class ObsConfig:
+    # obs-websocket 5.x on the camera operator's PC (spec §8.5.1); the password never goes to the UI
+    url: str = OBS_URL
+    password: str = ""
+    # The operator's one-time consent to resize the VRChat window (§8.5.8)
+    allow_window_resize: bool = False
+
+
 @dataclass
 class Config:
     role: str | None = None
@@ -97,6 +109,7 @@ class Config:
     osc: OscConfig = field(default_factory=OscConfig)
     files: FilesConfig = field(default_factory=FilesConfig)
     director: DirectorConfig = field(default_factory=DirectorConfig)
+    obs: ObsConfig = field(default_factory=ObsConfig)
 
     @classmethod
     def from_dict(cls, data: Any) -> "Config":
@@ -142,6 +155,13 @@ class Config:
 
         director = data.get("director") if isinstance(data.get("director"), dict) else {}
         cfg.director = DirectorConfig(lead_ms=clamp_lead(director.get("lead_ms", 300)))
+
+        obs = data.get("obs") if isinstance(data.get("obs"), dict) else {}
+        cfg.obs = ObsConfig(
+            url=_str(obs.get("url")) or OBS_URL,
+            password=obs.get("password") if isinstance(obs.get("password"), str) else "",
+            allow_window_resize=bool(obs.get("allow_window_resize", False)),
+        )
         return cfg
 
     def to_dict(self) -> dict:

@@ -218,6 +218,38 @@
       </section>
     {/if}
 
+    {#if data.camera}
+      <section>
+        <h3 class="eyebrow">Camera</h3>
+        <div class="field">
+          <span>OBS WebSocket address</span>
+          <input
+            class="input mono"
+            aria-label="OBS WebSocket address"
+            value={data.camera.obs.url}
+            spellcheck="false"
+            onchange={(e) => app.call({ call: "setCameraLocal", args: { obsUrl: e.currentTarget.value } })}
+          />
+          <small>In OBS: Tools → WebSocket Server Settings, turn on the server. The port is 4455 unless you changed it.</small>
+        </div>
+        <div class="field">
+          <span>OBS WebSocket password</span>
+          <input
+            class="input"
+            type="password"
+            aria-label="OBS WebSocket password"
+            autocomplete="off"
+            placeholder={data.camera.obs.hasPassword ? "Saved — type to replace" : "From Show Connect Info in OBS"}
+            onchange={(e) => {
+              const obsPassword = e.currentTarget.value;
+              e.currentTarget.value = "";
+              if (obsPassword) void app.call({ call: "setCameraLocal", args: { obsPassword } });
+            }}
+          />
+        </div>
+      </section>
+    {/if}
+
     <section>
       <h3 class="eyebrow">About</h3>
       <dl class="about">
