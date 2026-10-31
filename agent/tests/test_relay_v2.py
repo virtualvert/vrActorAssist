@@ -268,3 +268,72 @@ def test_director_forgets_an_offline_actor(relay, tmp_path, monkeypatch):
             await director.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_ready_check_matches_the_camera_window(relay, tmp_path, monkeypatch):
+    """The director's ready check (§8.8.2): the camera resizes VRChat to OBS's canvas and answers
+    green; a refusal (OBS records) or no consent is a red check, never an error."""
+    from .test_camera import PASSWORD, VRCHAT, FakeWindows, fake_obs, url_of
+
+    running, _ = relay
+    url = f"127.0.0.1:{running.port}"
+    obs = {"GetVersion": {"obsVersion": "32.2.1"},
+           "GetVideoSettings": {"baseWidth": 1920, "baseHeight": 1080, "outputWidth": 1920, "outputHeight": 1080,
+                                "fpsNumerator": 60, "fpsDenominator": 1},
+           "GetRecordStatus": {"outputActive": False}}
+
+    async def scenario():
+        director = make_agent(tmp_path, monkeypatch, "Mira", "director", "m-mira", url, SECRET)
+        actor = make_agent(tmp_path, monkeypatch, "Coda", "actor", "m-coda", url)
+        camera = make_agent(tmp_path, monkeypatch, "Cam", "camera", "m-cam", url)
+        windows = FakeWindows()
+        camera.camera._win = windows
+
+        def rows():
+            check = director.snapshot()["director"]["readyCheck"]
+            return {r["name"]: r for r in check["rows"]} if check else {}
+
+        async with fake_obs(obs) as server:
+            cfg = camera.config.obs
+            cfg.url, cfg.password, cfg.allow_window_resize = url_of(server), PASSWORD, True
+            try:
+                for agent in (director, actor, camera):
+                    await agent.start()
+                await wait_for(lambda: len(director.snapshot()["pending"]) == 2)
+                for p in list(director.snapshot()["pending"]):
+                    await director.handle_call("approve", {"id": p["id"]})
+                await wait_for(lambda: camera.relay.status == "connected" and camera.camera.video is not None)
+                await wait_for(lambda: peer(director, "Cam") is not None and peer(director, "Coda") is not None)
+
+                await director.handle_call("readyCheck", {})
+                await wait_for(lambda: rows() and all(r["state"] != "waiting" for r in rows().values()))
+                assert list(rows()) == ["Coda", "Cam"]
+                assert (rows()["Coda"]["state"], rows()["Coda"]["checks"]) == ("ready", [])  # no actor checks yet
+                assert rows()["Cam"]["state"] == "ready"
+                assert rows()["Cam"]["checks"] == [{"id": "obs", "ok": True, "detail": "OBS 32.2.1 · obs-websocket 5.6.2"},
+                                                   {"id": "window", "ok": True, "detail": "window 1920×1080"}]
+                assert windows.calls == [("resize", 1920, 1080)]
+                assert logged(director, "Cam is ready") and logged(camera, "Ready check from Mira: ready")
+
+                # OBS records: the camera won't resize, and the director sees why
+                windows.win = VRCHAT
+                obs["GetRecordStatus"] = {"outputActive": True}
+                await director.handle_call("readyCheck", {})
+                await wait_for(lambda: rows()["Cam"]["state"] == "not_ready")
+                assert rows()["Cam"]["checks"][1] == {
+                    "id": "window", "ok": False,
+                    "detail": "window 1700×950, recording 1920×1080 — OBS is recording; resizing VRChat now would stall the take"}
+
+                # Without the operator's consent nothing is resized; a check can go to some people only
+                obs["GetRecordStatus"] = {"outputActive": False}
+                cfg.allow_window_resize = False
+                await director.handle_call("readyCheck", {"ids": [peer(director, "Cam")["id"]]})
+                await wait_for(lambda: list(rows()) == ["Cam"] and rows()["Cam"]["state"] == "not_ready")
+                assert rows()["Cam"]["checks"][1]["detail"].endswith("resizing isn't allowed on that PC")
+                assert windows.calls == [("resize", 1920, 1080)]
+            finally:
+                for agent in (camera, actor, director):
+                    await agent.shutdown()
+        assert windows.calls[-1] == ("place", 42, VRCHAT.rect)  # closing the camera app put VRChat back
+
+    asyncio.run(scenario())

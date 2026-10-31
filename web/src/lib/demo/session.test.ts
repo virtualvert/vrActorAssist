@@ -415,4 +415,27 @@ describe("DemoSession", () => {
     s.handle({ call: "camera", args: { action: "restore" } });
     expect(lastState().camera?.window).toMatchObject({ state: "mismatch", size: [1700, 950], canRestore: false });
   });
+
+  test("director's ready check: one row per v0.4 actor and camera, a camera that can't resize is red", () => {
+    const s = make(new MemoryStorage(), "director");
+    clock.advance(1000, s);
+    s.handle({ call: "readyCheck", args: {} });
+    const asked = lastState().director!.readyCheck!;
+    expect(asked.rows.map((r) => r.name)).toEqual(["Coda", "Infinity", "Juno", "Cam A", "Cam B"]); // not Quincey (v0.3)
+    expect(asked.rows.every((r) => r.state === "waiting")).toBe(true);
+    clock.advance(3000, s);
+    const rows = Object.fromEntries(lastState().director!.readyCheck!.rows.map((r) => [r.name, r]));
+    expect(rows["Coda"]).toMatchObject({ state: "ready", checks: [] });
+    expect(rows["Cam A"].checks).toEqual([
+      { id: "obs", ok: true, detail: "OBS 31 · obs-websocket 5.5 (demo)" },
+      { id: "window", ok: true, detail: "window 1920×1080" },
+    ]);
+    expect(rows["Cam B"].state).toBe("not_ready");
+    expect(rows["Cam B"].checks[1]).toMatchObject({ id: "window", ok: false });
+    // A new check for some people only replaces the last one
+    s.handle({ call: "readyCheck", args: { ids: [rows["Cam A"].peerId] } });
+    expect(lastState().director!.readyCheck!.rows).toMatchObject([{ name: "Cam A", state: "waiting" }]);
+    s.handle({ call: "disconnect" });
+    expect(lastState().director!.readyCheck).toBeNull();
+  });
 });

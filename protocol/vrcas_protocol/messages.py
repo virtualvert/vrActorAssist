@@ -195,6 +195,31 @@ class UpdateAvailable(Payload):
     release_notes: str = ""
 
 
+# ---- ready check (§8.8.2) --------------------------------------------------------------------
+
+
+class ReadyRequest(Payload):
+    """From a director to everyone or the targeted people. Each answers with ready.status."""
+
+    check_id: str = Field(min_length=1, max_length=64)
+    scene: str | None = Field(default=None, max_length=200)
+
+
+class ReadyItem(Payload):
+    """One automatic check. `id` is free text ("obs", "window", later the actor's), so newer checks
+    reach older directors; they show the id when they have no label for it."""
+
+    id: str = Field(min_length=1, max_length=64)
+    ok: bool
+    detail: str = Field(default="", max_length=500)
+
+
+class ReadyStatus(Payload):
+    check_id: str = Field(min_length=1, max_length=64)
+    ready: bool
+    checks: list[ReadyItem] = Field(default_factory=list, max_length=32)
+
+
 # ---- cues (legacy-compatible semantics) --------------------------------------------------------
 
 
@@ -482,8 +507,8 @@ MODELS: dict[str, type[Payload] | None] = {
     "cue.play": CuePlay,
     "cue.ack": CueAck,
     "stage.state": None,
-    "ready.request": None,
-    "ready.status": None,
+    "ready.request": ReadyRequest,
+    "ready.status": ReadyStatus,
     "ready.ping": None,
     # soundpad addon
     "soundpad.play": SoundpadPlay,

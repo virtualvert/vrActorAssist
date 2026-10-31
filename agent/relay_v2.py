@@ -29,7 +29,7 @@ from .cues import armable, describe, plan_go
 from .relay_legacy import RelayBase, _peer, connect_kwargs, perform_cue
 from .scheduler import LATE_MS, MAX_AHEAD_MS, FirePlan, Scheduler, Timing, server_time
 from .timesync import ClockSync, run_pings
-from vrcas_protocol import make, now_ms
+from vrcas_protocol import make, new_id, now_ms, validate
 
 if TYPE_CHECKING:
     from .core import Agent
@@ -113,6 +113,8 @@ class V2Relay(RelayBase):
         # Director: the actors of the last scheduled GO, so a Stop reaches them even if unticked since
         self._go_ids: set[str] = set()
         self._seen_actors: set[str] = set()
+        # Director: the last ready check (§8.8.2): {id, asked: {session id: (name, role)}, answers}
+        self.ready: dict | None = None
         self._pings: asyncio.Task | None = None
         # What an actor announces in hello (tests pretend to be older builds by changing it)
         self.capabilities = list(ACTOR_CAPABILITIES)
@@ -129,6 +131,7 @@ class V2Relay(RelayBase):
         self.clock.reset()
         self._go_ids.clear()
         self.late.clear()
+        self.ready = None  # session ids change with the connection
         if self.status == "connected":
             self.agent.files.reset(detail)
         self.agent.soundpad.stop()
@@ -296,6 +299,12 @@ class V2Relay(RelayBase):
                 self._on_action(env, msg_type, data, lambda timing: self._send_osc(env, data, timing))
         elif isinstance(msg_type, str) and msg_type.startswith("file."):
             await self.agent.files.on_message(env, sender.name if sender else "the director")
+        elif msg_type == "ready.request":
+            if role in ("actor", "camera") and env.get("from"):
+                self._actions.put(lambda: self._answer_ready(env, data, sender_name))
+        elif msg_type == "ready.status":
+            if role == "director":
+                self._on_ready_status(env, data, sender.name if sender else "Someone")
         elif msg_type == "cue.ack":
             self._note_late(env, data, sender_name)
             if not data.get("ok", True):
@@ -437,6 +446,19 @@ class V2Relay(RelayBase):
                 ack["late_ms"] = timing.late_ms
             await self._send(ack_type, ack, **reply)
 
+    async def _answer_ready(self, env: dict, data: dict, sender: str) -> None:
+        """A ready check (§8.8.2): a camera sets itself up and reports; actors have no automatic
+        checks yet, so they answer ready (their answer still shows they're reachable)."""
+        if not isinstance(data.get("check_id"), str):
+            return
+        checks = await self.agent.camera.ready_checks() if self.agent.config.role == "camera" else []
+        ready = all(c["ok"] for c in checks)
+        await self._send("ready.status", {"check_id": data["check_id"], "ready": ready, "checks": checks},
+                         to={"ids": [env["from"]]}, reply_to=env.get("id"))
+        failed = "; ".join(c["detail"] or c["id"] for c in checks if not c["ok"])
+        self.agent.hub.log("success" if ready else "warning", f"Ready check from {sender}: " + ("ready" if ready else f"not ready — {failed}"))
+        self.agent.changed()
+
     @staticmethod
     def _ack(ack_type: str, command: str, ok: bool, error: str | None) -> dict:
         ack: dict[str, Any] = {"status": "ok" if ok else "error"} if ack_type == "soundpad.ack" else {"command": command, "ok": ok}
@@ -522,6 +544,53 @@ class V2Relay(RelayBase):
         if late > LATE_MS:
             self.agent.hub.log("warning", f"{sender_name} started {late} ms late")
         self.agent.changed()
+
+    async def ready_check(self, ids: list[str] | None = None) -> None:
+        """Ask actors and cameras whether they're ready (§8.8.2): everyone, or the given session ids.
+        v0.3 clients can't answer, so they aren't asked."""
+        order = {"actor": 0, "camera": 1}
+        asked = sorted((s for s in self.sessions.values()
+                        if s.role in order and not s.legacy and s.id != self.session_id and (ids is None or s.id in ids)),
+                       key=lambda s: (order[s.role], s.name.lower()))
+        if not asked:
+            raise RuntimeError("Nobody to ask: no actors or cameras on the v0.4 app are connected")
+        check_id = new_id()
+        self.ready = {"id": check_id, "asked": {s.id: (s.name, s.role) for s in asked}, "answers": {}}
+        await self._send("ready.request", {"check_id": check_id}, to={"ids": [s.id for s in asked]})
+        self.agent.hub.log("info", f"Ready check → {', '.join(s.name for s in asked)}")
+        self.agent.hub.traffic("self", [s.id for s in asked], "cue")
+
+    def _on_ready_status(self, env: dict, data: dict, sender_name: str) -> None:
+        check, sender = self.ready, env.get("from")
+        if check is None or data.get("check_id") != check["id"] or sender not in check["asked"]:
+            return  # an answer to an earlier check
+        try:
+            answer = validate("ready.status", data)  # relays from before the model only route it
+        except ValueError:
+            return
+        check["answers"][sender] = answer
+        failed = "; ".join(c.detail or c.id for c in answer.checks if not c.ok)
+        self.agent.hub.log("success" if answer.ready else "warning",
+                           f"{sender_name} is ready" if answer.ready else f"{sender_name} isn't ready: {failed or 'no reason given'}")
+        self.agent.changed()
+
+    def ready_view(self) -> dict | None:
+        """The last ready check for the UI (ReadyCheck in web/src/lib/protocol.ts)."""
+        check = self.ready
+        if check is None:
+            return None
+        rows = []
+        for sid, (name, role) in check["asked"].items():
+            answer = check["answers"].get(sid)
+            if sid not in self.sessions:
+                state = "offline"
+            elif answer is None:
+                state = "waiting"
+            else:
+                state = "ready" if answer.ready else "not_ready"
+            checks = [c.model_dump() for c in answer.checks] if answer and state != "offline" else []
+            rows.append({"peerId": sid, "name": name, "role": role, "state": state, "checks": checks})
+        return {"id": check["id"], "rows": rows}
 
     def can_arm(self, actor_id: str, sound: dict, lines: str | None) -> str | None:
         """Why this sound can't be armed on that actor, or None."""

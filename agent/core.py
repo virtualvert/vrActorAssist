@@ -163,7 +163,8 @@ class Agent:
                 else None
             ),
             "director": (
-                {"files": self.files.sender.view(), "leadMs": cfg.director.lead_ms, "armed": dict(self.armed)}
+                {"files": self.files.sender.view(), "leadMs": cfg.director.lead_ms, "armed": dict(self.armed),
+                 "readyCheck": relay.impl.ready_view() if v2 else None}
                 if cfg.role == "director"
                 else None
             ),
@@ -259,6 +260,17 @@ class Agent:
         if command not in ("go", "stop", "countdown"):
             raise CallError("Unknown cue")
         await self._relay_action(self.relay.cue(command))
+
+    async def _call_readyCheck(self, args: dict) -> None:
+        """Ask everyone (or args["ids"]) whether they're ready (§8.8.2); cameras set themselves up first."""
+        self._require_director()
+        relay = self.relay.impl
+        if relay.status != "connected":
+            raise CallError("Not connected to the relay")
+        if relay.legacy:
+            raise CallError("The ready check needs the v0.4 relay; this one is v0.3")
+        ids = args.get("ids")
+        await self._relay_action(relay.ready_check([i for i in ids if isinstance(i, str)] if isinstance(ids, list) else None))
 
     async def _call_setTargets(self, args: dict) -> None:
         self._require_director()

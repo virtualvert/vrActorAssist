@@ -93,6 +93,8 @@ const INCOMING_FILES_AFTER_MS = 9000;
 const RECEIVE_DIR = "C:\\Users\\you\\Documents\\vrcActorSync";
 /** Juno's Soundpad isn't running in the demo, so the "unavailable" look shows up. */
 const SOUNDPAD_OFF = "Juno";
+/** Cam B's operator hasn't allowed resizing, so a ready check shows a red row. */
+const NO_RESIZE = "Cam B";
 /** Infinity turned off "Add received files to Soundpad", so the director's warning shows up. */
 const NO_AUTO_ADD = "Infinity";
 const SELECTED_SOUND_MS = 6000;
@@ -159,6 +161,7 @@ export class DemoSession {
   /** Demo actors' Soundpad clocks: when the current sound started (adjusted for pauses and seeks). */
   #spStart = new Map<string, number>();
   #incomingCount = 0;
+  #readyChecks = 0;
 
   constructor(
     clock: DemoClock,
@@ -251,6 +254,9 @@ export class DemoSession {
         this.state.targets = call.args.ids.filter((id) => valid.has(id));
         break;
       }
+      case "readyCheck":
+        this.#readyCheck(call.args.ids);
+        break;
       case "approve":
         this.#approve(call.args.id);
         break;
@@ -485,6 +491,7 @@ export class DemoSession {
     this.state.targets = [];
     this.state.countdown = null;
     this.state.clock = { ...NO_CLOCK };
+    if (this.state.director) this.state.director.readyCheck = null;
     if (this.state.camera) this.state.camera = { ...this.state.camera, recording: false, recordingSince: null };
     this.#setSelfOnly();
     this.#log("info", detail);
@@ -517,6 +524,43 @@ export class DemoSession {
     this.#traffic("self", targets.map((p) => p.id), "cue");
     const lead = this.state.director?.leadMs ?? 0;
     this.#log("success", `▶ GO → ${parts.join(", ")}${lead ? ` for ${serverTime(now + lead)} server time (+${lead} ms)` : ""}`);
+  }
+
+  /** Actors and cameras on the v0.4 app answer one by one: actors with no checks, cameras with OBS and the window. */
+  #readyCheck(ids: string[] | undefined): void {
+    const director = this.state.director;
+    if (!director || this.state.connection.status !== "connected") return;
+    const asked = this.state.peers
+      .filter((p) => !p.self && (p.role === "actor" || p.role === "camera") && !p.caps.includes("legacy") && (!ids || ids.includes(p.id)))
+      .sort((a, b) => Number(a.role === "camera") - Number(b.role === "camera"));
+    if (!asked.length) {
+      this.#toast("error", "Nobody to ask: no actors or cameras on the v0.4 app are connected");
+      return;
+    }
+    const id = `demo-check-${++this.#readyChecks}`;
+    director.readyCheck = { id, rows: asked.map((p) => ({ peerId: p.id, name: p.name, role: p.role, state: "waiting", checks: [] })) };
+    this.#log("info", `Ready check → ${asked.map((p) => p.name).join(", ")}`);
+    this.#traffic("self", asked.map((p) => p.id), "cue");
+    asked.forEach((p, i) =>
+      this.#later(400 + i * 250, () => {
+        const row = director.readyCheck?.id === id ? director.readyCheck.rows.find((r) => r.peerId === p.id) : undefined;
+        if (!row) return;
+        const size = p.name === NO_RESIZE ? DEMO_VRCHAT_SIZE : ([1920, 1080] as const);
+        row.checks =
+          p.role === "camera"
+            ? [
+                { id: "obs", ok: true, detail: "OBS 31 · obs-websocket 5.5 (demo)" },
+                p.name === NO_RESIZE
+                  ? { id: "window", ok: false, detail: `window ${size.join("×")}, recording 1920×1080 — resizing isn't allowed on that PC` }
+                  : { id: "window", ok: true, detail: `window ${size.join("×")}` },
+              ]
+            : [];
+        row.state = row.checks.every((c) => c.ok) ? "ready" : "not_ready";
+        if (row.state === "ready") this.#log("success", `${p.name} is ready`);
+        else this.#log("warning", `${p.name} isn't ready: ${row.checks.filter((c) => !c.ok).map((c) => c.detail).join("; ")}`);
+        this.#traffic(p.id, ["self"], "cue");
+      }),
+    );
   }
 
   #arm(id: string, sound: SoundRef, label: string, lines: Lines | null): void {
@@ -1154,7 +1198,7 @@ export class DemoSession {
             timing: { startLatencyMs: DEFAULT_START_LATENCY_MS, measured: false, samples: 0, autoCompensate: true, delayMs: 0 },
           } satisfies ActorLocal)
         : null;
-    this.state.director = role === "director" ? { files: { batches: [] }, leadMs: DEFAULT_LEAD_MS, armed: {} } : null;
+    this.state.director = role === "director" ? { files: { batches: [] }, leadMs: DEFAULT_LEAD_MS, armed: {}, readyCheck: null } : null;
     this.state.camera =
       role === "camera"
         ? ({

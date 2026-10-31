@@ -202,6 +202,28 @@ export interface ProtocolError {
   ids?: string[] | null;
 }
 
+/**
+ * One automatic check. `id` is free text ("obs", "window", later the actor's), so newer checks
+ * reach older directors; they show the id when they have no label for it.
+ */
+export interface ReadyItem {
+  id: string;
+  ok: boolean;
+  detail?: string;
+}
+
+/** From a director to everyone or the targeted people. Each answers with ready.status. */
+export interface ReadyRequest {
+  check_id: string;
+  scene?: string | null;
+}
+
+export interface ReadyStatus {
+  check_id: string;
+  ready: boolean;
+  checks?: ReadyItem[];
+}
+
 export interface RosterSession {
   id: string;
   name: string;
@@ -385,8 +407,8 @@ export interface MessageData {
   "cue.play": CuePlay;
   "cue.ack": CueAck;
   "stage.state": Record<string, unknown>;
-  "ready.request": Record<string, unknown>;
-  "ready.status": Record<string, unknown>;
+  "ready.request": ReadyRequest;
+  "ready.status": ReadyStatus;
   "ready.ping": Record<string, unknown>;
   "soundpad.play": SoundpadPlay;
   "soundpad.stop": SoundpadStop;

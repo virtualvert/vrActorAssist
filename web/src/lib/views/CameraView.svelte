@@ -111,7 +111,7 @@
             <Toggle
               checked={win.allowResize}
               label="Let vrcActorSync resize the VRChat window"
-              description="Only its size, only when you press Match now, never while OBS records. Closing the app puts it back."
+              description="Only its size, when you press Match now or the director runs a ready check, never while OBS records. Closing the app puts it back."
               onchange={(allowWindowResize) => app.call({ call: "setCameraLocal", args: { allowWindowResize } })}
             />
             <div class="row">
@@ -124,7 +124,7 @@
 
       {#if !data.demo}
         <p class="note">
-          <Clapperboard size="1em" /> The director's ready check and roll-on-cue come next (spec §8.5, §8.8.2). The tally follows OBS; Roll / Cut
+          <Clapperboard size="1em" /> Roll-on-cue comes next (spec §8.5). The tally follows OBS; Roll / Cut
           here are only simulated in demo mode (<span class="mono">?demo=camera</span>).
         </p>
       {/if}

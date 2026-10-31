@@ -268,6 +268,27 @@ export interface DirectorLocal {
   leadMs: number;
   /** By actor peer id; kept after GO until cleared. */
   armed: Record<string, ArmedSound>;
+  /** The last ready check this director started (v2 relay); null before the first. */
+  readyCheck: ReadyCheck | null;
+}
+
+/**
+ * A ready check (spec §8.8.2): one row per person asked (v0.3 clients can't answer, so they aren't).
+ * Cameras match the VRChat window first when their operator allowed it; actors have no checks yet.
+ */
+export interface ReadyCheck {
+  id: string;
+  rows: ReadyRow[];
+}
+
+export interface ReadyRow {
+  peerId: string;
+  name: string;
+  role: Role;
+  /** waiting: no answer yet (apps from before the ready check never answer); offline: left since. */
+  state: "waiting" | "ready" | "not_ready" | "offline";
+  /** `id`: "obs", "window", or a newer app's own check (shown by its id). */
+  checks: { id: string; ok: boolean; detail: string }[];
 }
 
 /**
@@ -375,6 +396,8 @@ export type Call =
   | { call: "sendChat"; args: { text: string } }
   | { call: "cue"; args: { command: "go" | "stop" | "countdown" } }
   | { call: "setTargets"; args: { ids: string[] } }
+  /** Ask actors and cameras whether they're ready; `ids` left out = everyone. */
+  | { call: "readyCheck"; args: { ids?: string[] } }
   | { call: "approve"; args: { id: string } }
   | { call: "deny"; args: { id: string } }
   /** A connected peer's id, or an offline machine's ("offline:…"). */

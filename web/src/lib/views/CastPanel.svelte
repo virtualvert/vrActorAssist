@@ -8,6 +8,7 @@
   import { soundpadReach } from "../soundpad";
   import { app } from "../state.svelte";
   import { armedText, delayText, LATE_MS } from "../timing";
+  import ReadyPanel from "./ReadyPanel.svelte";
 
   interface Props {
     data: AppState;
@@ -100,6 +101,8 @@
         {/each}
       </section>
     {/if}
+
+    {#if data.director}<ReadyPanel {data} />{/if}
 
     <ul class="list" aria-label="Actors">
       {#each actors as p (p.id)}

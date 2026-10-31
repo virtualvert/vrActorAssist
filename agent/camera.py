@@ -154,6 +154,38 @@ class CameraRuntime:
         self.window = win
         self._log("info", f"VRChat window put back to {win.client[0]}×{win.client[1]}")
 
+    async def ready_checks(self) -> list[dict]:
+        """This camera's part of a ready check (§8.8.2): set up first, then report. The window is
+        matched when the operator allowed resizing (the spec's profile `vrchat_window.match` isn't
+        built yet). Whatever couldn't be fixed comes back as a red check, never as an error."""
+        problem = ""
+        try:
+            if self._win.SUPPORTED:
+                self.window = await asyncio.to_thread(self._win.find)
+            if self.view()["window"]["state"] == "mismatch":
+                if self._config.obs.allow_window_resize:
+                    await self.match()
+                else:
+                    problem = "resizing isn't allowed on that PC"
+        except (CameraError, WindowError, OSError) as exc:
+            problem = str(exc)
+        view = self.view()
+        win, base = view["window"], view["obs"]["base"]
+        if win["state"] in ("matched", "mismatch"):
+            detail = f"window {win['size'][0]}×{win['size'][1]}"
+            if win["state"] == "mismatch":
+                detail += f", recording {base[0]}×{base[1]}" + (f" — {problem}" if problem else "")
+        else:
+            detail = {
+                "unknown": "No recording size to compare with: OBS isn't connected",
+                "not_found": "VRChat isn't running, or it has no window",
+                "unsupported": "The window check works on Windows only so far",
+            }[win["state"]]
+        return [
+            {"id": "obs", "ok": self.obs is not None, "detail": self.obs_detail},
+            {"id": "window", "ok": win["state"] == "matched", "detail": detail},
+        ]
+
     async def _refuse_while_recording(self) -> None:
         """Resizing stalls the game for a moment: ask OBS now rather than trusting the last poll."""
         recording = self.recording
