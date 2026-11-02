@@ -21,6 +21,7 @@ from .files import Files, received_path
 from .folders import FolderError, Folders, pick_folder
 from .hub import Hub
 from .relay import Relay
+from .shadermotion import ShaderMotion
 from .shell import open_folder
 from .soundpad_remote import LINES_TEXT, SoundpadRemote
 
@@ -46,6 +47,7 @@ class Agent:
         self.folders = Folders()
         self.files = Files(self)
         self.soundpad = SoundpadRemote(self)
+        self.shadermotion = ShaderMotion(self.hub.event, self.hub.has_clients)
         self.actor.received_lookup = lambda sha256: received_path(store.folder, sha256)
         self.actor.on_latency = self._latency_measured
         self.relay = Relay(self)
@@ -91,6 +93,7 @@ class Agent:
         await self.relay.stop("App closed")
         await self.actor.close()
         await self.camera.close()  # puts the VRChat window back
+        await self.shadermotion.close()
 
     def ready_to_connect(self) -> bool:
         cfg = self.config
@@ -578,8 +581,8 @@ class Agent:
             await self.camera.refresh()
 
     async def _call_shadermotion(self, args: dict) -> None:
-        if args.get("on"):
-            raise CallError("The ShaderMotion preview only runs in demo mode so far")
+        # actors decode their own VRChat window; directors get nothing yet (M3: over the relay)
+        self.shadermotion.set(bool(args.get("on")) and self.config.role == "actor")
 
     async def _call_openBrowser(self, args: dict) -> None:
         if self.ui_url is None:

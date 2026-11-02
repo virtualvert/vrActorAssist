@@ -33,6 +33,9 @@ class Hub:
     def remove(self, ws: Any) -> None:
         self._clients.discard(ws)
 
+    def has_clients(self) -> bool:
+        return bool(self._clients)
+
     # ---- events -----------------------------------------------------------
 
     def log(self, level: str, text: str, sender: str | None = None) -> None:

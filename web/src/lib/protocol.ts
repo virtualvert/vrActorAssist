@@ -381,6 +381,7 @@ export interface Traffic {
 /**
  * ShaderMotion preview (prototype): one actor's decoded strip, layer 0: 270 slot values (135 humanoid, then the
  * face block), or `slots: null` and why there's none. Sent while the preview is on, ≤ 30 per second per actor.
+ * An actor's own strip (decoded on their PC) has peerId "self".
  */
 export interface ShaderMotionFrame {
   peerId: string;

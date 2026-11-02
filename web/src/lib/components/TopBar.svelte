@@ -67,6 +67,8 @@
       <Button icon variant="ghost" aria-label="Normalize folder" title="Normalize folder" onclick={() => (app.normalizeOpen = true)}>
         <AudioLines size="1.25em" />
       </Button>
+    {/if}
+    {#if data.role === "director" || data.role === "actor"}
       <Button icon variant="ghost" aria-label="ShaderMotion preview" title="ShaderMotion preview" onclick={() => (app.shadermotionOpen = true)}>
         <PersonStanding size="1.25em" />
       </Button>

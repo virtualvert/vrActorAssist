@@ -72,6 +72,9 @@ agent/                  v0.4 desktop agent (python -m agent)
   folders.py            Folder access for Normalize folder and Send files: picker, listings, guarded reads, writes only under normalized/,
                         audio/video lengths for Send files' Length column
   media.py              Lengths of audio and video files from their headers (WAV, FLAC, MP3, AAC, Ogg/Opus, MP4/MOV, MKV/WebM, AVI; stdlib only)
+  shadermotion.py       Prototype, Windows: while a UI has the ShaderMotion preview open, ffmpeg's gfxcapture scales VRChat's window
+                        on the GPU to the 80×45 grid (one centre pixel per square); layer 0 decoded here, sent as "shadermotion"
+                        events (peerId "self"). VRCAS_SHADERMOTION_SOURCE: a video file or window selector, for testing
   web.py                Local UI server: Host/Origin guard, one-time token → session cookie, /ui/ws
   hub.py                Fan-out of state/log/traffic events to every open UI
   shell.py              pywebview window (Windows + WebView2) or default browser

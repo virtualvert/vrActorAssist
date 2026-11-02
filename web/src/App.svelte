@@ -85,7 +85,8 @@
   </div>
   <SettingsPanel />
   <LogDrawer />
-  {#if app.state.role === "director"}<NormalizePanel /><SendFilesPanel /><SoundpadPanel /><ShaderMotionPanel />{/if}
+  {#if app.state.role === "director"}<NormalizePanel /><SendFilesPanel /><SoundpadPanel />{/if}
+  {#if app.state.role === "director" || app.state.role === "actor"}<ShaderMotionPanel />{/if}
 {/if}
 
 <Toasts />

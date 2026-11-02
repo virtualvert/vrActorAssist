@@ -25,7 +25,12 @@
   let loading = $state("");
   let labels = $state<{ id: string; name: string; note: string; left: number; top: number }[]>([]);
 
-  const actors = $derived(app.state?.peers.filter((p) => p.role === "actor" && !p.self && p.status === "online") ?? []);
+  /** Directors see online actors; an actor sees their own strip ("self"). */
+  const actors = $derived(
+    app.state?.role === "actor"
+      ? [{ id: "self", name: app.state.profile.name || "You" }]
+      : (app.state?.peers.filter((p) => p.role === "actor" && !p.self && p.status === "online") ?? []),
+  );
   const ids = $derived(actors.map((p) => p.id).join(" "));
 
   $effect(() => {

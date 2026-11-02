@@ -1217,9 +1217,9 @@ export class DemoSession {
   }
 
   /**
-   * ShaderMotion preview: online actors replay one recorded clip (each from its own point) at 30 fps, the
-   * agent's rate. The clip is decode_all.py's CSV (frame, s0..s269) in the git-ignored web/dev-models folder.
-   * A real interval, not tick(): the demo ticks every 250 ms.
+   * ShaderMotion preview: online actors (or, for an actor, "self") replay one recorded clip, each from its own
+   * point, at 30 fps, the agent's rate. The clip is decode_all.py's CSV (frame, s0..s269) in the git-ignored
+   * web/dev-models folder. A real interval, not tick(): the demo ticks every 250 ms.
    */
   async #shaderMotion(on: boolean): Promise<void> {
     clearInterval(this.#smTimer);
@@ -1234,12 +1234,16 @@ export class DemoSession {
     const start = this.#clock.now();
     this.#smTimer = setInterval(() => {
       const frame = Math.floor((this.#clock.now() - start) / (1000 / 30));
-      this.state.peers
-        .filter((p) => p.role === "actor" && !p.self && p.status === "online")
-        .forEach((p, i) => {
-          const why = p.caps.includes("legacy") ? "v0.3 apps don't decode ShaderMotion" : clip.length ? "" : "No demo clip in web/dev-models/clip.csv";
-          this.#emit({ type: "shadermotion", peerId: p.id, slots: why ? null : clip[(frame + i * 97) % clip.length], problem: why || undefined });
-        });
+      const peers =
+        this.state.role === "actor"
+          ? [{ id: "self", legacy: false }]
+          : this.state.peers
+              .filter((p) => p.role === "actor" && !p.self && p.status === "online")
+              .map((p) => ({ id: p.id, legacy: p.caps.includes("legacy") }));
+      peers.forEach((p, i) => {
+        const why = p.legacy ? "v0.3 apps don't decode ShaderMotion" : clip.length ? "" : "No demo clip in web/dev-models/clip.csv";
+        this.#emit({ type: "shadermotion", peerId: p.id, slots: why ? null : clip[(frame + i * 97) % clip.length], problem: why || undefined });
+      });
     }, 1000 / 30);
   }
 
