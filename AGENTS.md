@@ -88,8 +88,11 @@ web/                    v0.4 UI: Svelte 5 + Vite + TypeScript, built and tested 
   src/lib/timing.ts     Timing helpers: delay text and parsing, clock text, GO lead warnings, what can be armed (mirror of agent/cues.py)
   src/lib/audio/        Loudness (BS.1770 / R128, 4× true peak), WAV writer, gain/output planning; worker + engine (decodes at 48 kHz)
   src/lib/graph/        Animated node graph (d3-force) + pure layout math (layout.ts)
+  src/lib/shadermotion/ Prototype: ShaderMotion web player copied from lox9973's site/ (MIT, LICENSE.txt; AvatarView takes an avatar count,
+                        gl-matrix from npm), .d.ts for the parts the app uses, frame.ts (strip checks, face weights), overlay.ts (floor, gizmo).
+                        ShaderMotionPanel shows it; models and clips come from the git-ignored web/dev-models/ (no license: never commit them)
   src/lib/views/        DirectorView, ActorView, CameraView, CastPanel, CueDeck, NormalizePanel, SendFilesPanel, ReadyPanel (the director's ready check, in the cast), SoundpadPanel (one actor's Soundpad, opened from the cast:
-                        sounds, Arm for GO, delay, Calibrate)
+                        sounds, Arm for GO, delay, Calibrate), ShaderMotionPanel (prototype)
   src/lib/components/   Shell pieces: TopBar, Settings, Onboarding, LogDrawer, Button, DelayEditor, ...
   src/app.css           Design tokens: dark/light themes, --ui-scale, VR mode, motion
 

@@ -378,6 +378,16 @@ export interface Traffic {
   kind: TrafficKind;
 }
 
+/**
+ * ShaderMotion preview (prototype): one actor's decoded strip, layer 0: 270 slot values (135 humanoid, then the
+ * face block), or `slots: null` and why there's none. Sent while the preview is on, ≤ 30 per second per actor.
+ */
+export interface ShaderMotionFrame {
+  peerId: string;
+  slots: number[] | null;
+  problem?: string;
+}
+
 export type AgentEvent =
   | { type: "state"; state: AppState }
   | { type: "logs"; entries: LogEntry[] }
@@ -385,6 +395,7 @@ export type AgentEvent =
   | { type: "traffic"; traffic: Traffic }
   | { type: "toast"; level: LogLevel; text: string }
   | ({ type: "sounds" } & SoundList)
+  | ({ type: "shadermotion" } & ShaderMotionFrame)
   | { type: "result"; id: number; ok: boolean; error?: string };
 
 export type Call =
@@ -447,6 +458,8 @@ export type Call =
   | { call: "camera"; args: { action: "roll" | "cut" | "match" | "restore" } }
   /** An empty obsPassword keeps the saved one. */
   | { call: "setCameraLocal"; args: { obsUrl?: string; obsPassword?: string; allowWindowResize?: boolean } }
+  /** ShaderMotion preview (prototype): "shadermotion" events flow only while it's on (the panel is open). */
+  | { call: "shadermotion"; args: { on: boolean } }
   | { call: "openBrowser" }
   /** Show the log folder (`logDir`) in Explorer / the file manager. */
   | { call: "openLogFolder" };

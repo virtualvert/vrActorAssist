@@ -162,6 +162,9 @@ export class DemoSession {
   #spStart = new Map<string, number>();
   #incomingCount = 0;
   #readyChecks = 0;
+  #smOn = false;
+  #smTimer: ReturnType<typeof setInterval> | undefined;
+  #smClip: Promise<number[][]> | undefined;
 
   constructor(
     clock: DemoClock,
@@ -364,6 +367,9 @@ export class DemoSession {
         break;
       case "pickReceiveDir":
         if (this.state.actor) this.state.actor.files.receiveDir = "C:\\Users\\you\\Music\\Lines";
+        break;
+      case "shadermotion":
+        void this.#shaderMotion(call.args.on);
         break;
       case "openBrowser":
         this.#log("info", "Demo mode already runs in the browser.");
@@ -1208,6 +1214,33 @@ export class DemoSession {
             recordingSince: null,
           } satisfies CameraLocal)
         : null;
+  }
+
+  /**
+   * ShaderMotion preview: online actors replay one recorded clip (each from its own point) at 30 fps, the
+   * agent's rate. The clip is decode_all.py's CSV (frame, s0..s269) in the git-ignored web/dev-models folder.
+   * A real interval, not tick(): the demo ticks every 250 ms.
+   */
+  async #shaderMotion(on: boolean): Promise<void> {
+    clearInterval(this.#smTimer);
+    this.#smOn = on;
+    if (!on) return;
+    this.#smClip ??= fetch("/dev-models/clip.csv")
+      .then((r) => (r.ok ? r.text() : ""))
+      .catch(() => "")
+      .then((csv) => csv.trim().split("\n").slice(1).map((row) => row.split(",").slice(1).map(Number)));
+    const clip = await this.#smClip;
+    if (!this.#smOn) return;
+    const start = this.#clock.now();
+    this.#smTimer = setInterval(() => {
+      const frame = Math.floor((this.#clock.now() - start) / (1000 / 30));
+      this.state.peers
+        .filter((p) => p.role === "actor" && !p.self && p.status === "online")
+        .forEach((p, i) => {
+          const why = p.caps.includes("legacy") ? "v0.3 apps don't decode ShaderMotion" : clip.length ? "" : "No demo clip in web/dev-models/clip.csv";
+          this.#emit({ type: "shadermotion", peerId: p.id, slots: why ? null : clip[(frame + i * 97) % clip.length], problem: why || undefined });
+        });
+    }, 1000 / 30);
   }
 
   #later(ms: number, fn: () => void): void {

@@ -577,6 +577,10 @@ class Agent:
         if reconnect:
             await self.camera.refresh()
 
+    async def _call_shadermotion(self, args: dict) -> None:
+        if args.get("on"):
+            raise CallError("The ShaderMotion preview only runs in demo mode so far")
+
     async def _call_openBrowser(self, args: dict) -> None:
         if self.ui_url is None:
             raise CallError("Browser access isn't available")

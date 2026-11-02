@@ -1,4 +1,4 @@
-import type { AgentEvent, AppState, Call, LogEntry, LogLevel, Prefs, SoundList, Traffic } from "./protocol";
+import type { AgentEvent, AppState, Call, LogEntry, LogLevel, Prefs, ShaderMotionFrame, SoundList, Traffic } from "./protocol";
 import type { FolderAccess, LinkState, Transport } from "./transport/types";
 import { applyPrefs } from "./prefs";
 
@@ -23,6 +23,7 @@ class AppStore {
   settingsOpen = $state(false);
   normalizeOpen = $state(false);
   sendOpen = $state(false);
+  shadermotionOpen = $state(false);
   /** Director: the actor whose Soundpad panel is open (peer id), if any. */
   soundpadFor = $state<string | null>(null);
   /** Director: actors' sound lists, by peer id (they arrive as "sounds" events). */
@@ -32,6 +33,8 @@ class AppStore {
 
   #transport: Transport | null = null;
   #traffic = new Set<(t: Traffic) => void>();
+  /** Not reactive state: frames arrive up to 30 times a second per actor. */
+  #shadermotion = new Set<(f: ShaderMotionFrame) => void>();
   #toastId = 1;
 
   attach(transport: Transport): void {
@@ -77,6 +80,11 @@ class AppStore {
     return () => this.#traffic.delete(fn);
   }
 
+  onShaderMotion(fn: (f: ShaderMotionFrame) => void): () => void {
+    this.#shadermotion.add(fn);
+    return () => this.#shadermotion.delete(fn);
+  }
+
   toast(level: LogLevel, text: string): void {
     const id = this.#toastId++;
     this.toasts = [...this.toasts.slice(-3), { id, level, text }];
@@ -115,6 +123,11 @@ class AppStore {
       case "sounds": {
         const { type: _type, ...list } = event;
         this.sounds = { ...this.sounds, [list.peerId]: list };
+        break;
+      }
+      case "shadermotion": {
+        const { type: _type, ...frame } = event;
+        for (const fn of this.#shadermotion) fn(frame);
         break;
       }
     }

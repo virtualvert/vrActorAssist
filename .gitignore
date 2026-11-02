@@ -33,3 +33,7 @@ tools/probe-results/
 # Web UI
 node_modules/
 web/dist/
+
+# shortcut: dev-only model folder, replace with the CC0 mannequin VRM before shipping.
+# ShaderMotion preview models and slot clips without a license: never commit or ship them.
+web/dev-models/

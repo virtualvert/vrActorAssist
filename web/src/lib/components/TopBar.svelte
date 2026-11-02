@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AudioLines, FileUp, Minus, Monitor, Moon, Plus, ScrollText, Settings, Sun } from "@lucide/svelte";
+  import { AudioLines, FileUp, Minus, Monitor, Moon, PersonStanding, Plus, ScrollText, Settings, Sun } from "@lucide/svelte";
   import { SCALE_STEP } from "../prefs";
   import { clampScale, type Theme } from "../protocol";
   import { ROLE_INFO } from "../roles";
@@ -66,6 +66,9 @@
       </Button>
       <Button icon variant="ghost" aria-label="Normalize folder" title="Normalize folder" onclick={() => (app.normalizeOpen = true)}>
         <AudioLines size="1.25em" />
+      </Button>
+      <Button icon variant="ghost" aria-label="ShaderMotion preview" title="ShaderMotion preview" onclick={() => (app.shadermotionOpen = true)}>
+        <PersonStanding size="1.25em" />
       </Button>
     {/if}
     <Button icon variant="ghost" aria-label="Activity and chat" title="Activity and chat" onclick={() => app.openLog(true)}>
