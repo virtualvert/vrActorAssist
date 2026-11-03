@@ -1,9 +1,10 @@
 """ShaderMotion preview (prototype): the ShaderMotion strip in an actor's VRChat window, decoded live
 on the actor's PC (Windows) while their own UI has the preview open or a director watches.
 
-ffmpeg's gfxcapture (Windows.Graphics.Capture) scales the window on the GPU to ShaderMotion's 80×45
-grid with point sampling, which picks each square's centre pixel, so only 80×45 pixels leave the GPU.
-Layer 0 is the 12 left columns: 270 slots (humanoid, then the face block), sent to the UI as
+ffmpeg's gfxcapture (Windows.Graphics.Capture) scales the window on the GPU to the dense 160×90 grid
+with point sampling, which picks each dense square's centre pixel (a normal 80×45 square is 2×2 of them),
+so only 160×90 pixels leave the GPU. Layer 0, on either grid, is in the 24 left pixel columns: 270 slots
+(humanoid, then the face block), sent to the UI as
 "shadermotion" events (peerId "self"), every frame (about 30 a second), or with the reason there are none.
 
 Over a v2 relay a director with the preview open sends shadermotion.watch to actors with the
@@ -36,9 +37,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("vrcas")
 
-SQUARES = 12  # layer 0: 6 slot columns of 2 squares
-ROWS = 45
-FRAME_BYTES = SQUARES * ROWS * 4  # BGRA
+# Captured at the dense grid's 160×90, cropped to layer 0: 12 normal squares (24 px) wide, 90 px high
+WIDTH, HEIGHT = 24, 90
+ROWS = 45  # slots per slot column
+FRAME_BYTES = WIDTH * HEIGHT * 4  # BGRA
 NO_FRAMES_S = 1.0
 RETRY_S = 2.0
 STATS_S = 10.0
@@ -77,12 +79,25 @@ def decode_slot(c0, c1) -> float:
     return _enc_sum(st) / ((POW - 1) / 2)
 
 
+def _dense_square(s: int) -> tuple[int, int]:
+    # 3 slot columns, 90 rows: the face block (slots 135+) sits below the humanoid block (MotionTracks.SlotSquares)
+    return 2 * (s // ROWS % 3), s % ROWS + s // 135 * ROWS
+
+
+def _normal_square(s: int) -> tuple[int, int]:
+    return 4 * (s // ROWS), 2 * (s % ROWS)  # a normal square is 2×2 pixels here
+
+
 def decode_frame(buf: bytes) -> list[float]:
-    """One 12×45 BGRA frame (a pixel per square, top row first) → layer 0's 270 slot values."""
-    def rgb(x: int, y: int):
-        i = (y * SQUARES + x) * 4
-        return buf[i + 2] / 255, buf[i + 1] / 255, buf[i] / 255
-    return [round(decode_slot(rgb(2 * c, row), rgb(2 * c + 1, row)), 4) for c in range(SQUARES // 2) for row in range(ROWS)]
+    """One 24×90 BGRA frame (a pixel per dense square, top row first) → layer 0's 270 slot values, from the
+    dense grid when its marker (0.5, -0.5 in slots 133-134) is there, else from the normal grid."""
+    def slot(s: int, square, step: int) -> float:
+        x, y = square(s)
+        i, j = (y * WIDTH + x) * 4, (y * WIDTH + x + step) * 4
+        return decode_slot((buf[i + 2] / 255, buf[i + 1] / 255, buf[i] / 255), (buf[j + 2] / 255, buf[j + 1] / 255, buf[j] / 255))
+    dense = abs(slot(133, _dense_square, 1) - 0.5) < 0.05 and abs(slot(134, _dense_square, 1) + 0.5) < 0.05
+    square, step = (_dense_square, 1) if dense else (_normal_square, 2)
+    return [round(slot(s, square, step), 4) for s in range(270)]
 
 
 def find_ffmpeg() -> str | None:
@@ -90,18 +105,19 @@ def find_ffmpeg() -> str | None:
 
 
 def command(ffmpeg: str, source: str) -> list[str]:
-    """ffmpeg writing 12×45 BGRA frames to stdout. source: a video file, or a gfxcapture window selector."""
+    """ffmpeg writing 24×90 BGRA frames to stdout. source: a video file, or a gfxcapture window selector."""
     if Path(source).is_file():
         # a recording: crop, even out compression noise around each centre, one sample per square (decode_all.py).
         # RGB before the blur: blurring the video's YUV gave a face header of 0.93, -0.94, 0.24 instead of 0.5, -0.5, 0.125
         inp = ["-re", "-stream_loop", "-1", "-i", source]
-        vf = f"fps=30,crop=iw*{SQUARES}/80:ih:0:0,format=gbrp,avgblur=sizeX=3:sizeY=3,scale={SQUARES}:{ROWS}:flags=neighbor,format=bgra"
+        vf = f"fps=30,crop=iw*{WIDTH}/160:ih:0:0,format=gbrp,avgblur=sizeX=3:sizeY=3,scale={WIDTH}:{HEIGHT}:flags=neighbor,format=bgra"
     else:
         # frames snap to the display's refresh: a cap of 30 got 26.6/s on a 60 Hz screen (a frame now and then
         # waits an extra refresh), 32 gets 29.9/s
-        grab = f"gfxcapture={source}:capture_cursor=0:max_framerate=32:width=80:height=45:resize_mode=scale:scale_mode=point"
+        grab = f"gfxcapture={source}:capture_cursor=0:max_framerate=32:width=160:height=90:resize_mode=scale:scale_mode=point"
         inp = ["-f", "lavfi", "-i", f"{grab},hwdownload,format=bgra"]
-        vf = f"crop={SQUARES}:{ROWS}:0:0"
+        # setpts: capture times can repeat, which passthrough turns into an error line every few seconds
+        vf = f"crop={WIDTH}:{HEIGHT}:0:0,setpts=N"
     # passthrough: the default constant frame rate duplicates frames and costs about a frame (median 107 → 80 ms)
     return [ffmpeg, "-hide_banner", "-loglevel", "error", *inp, "-an", "-vf", vf, "-fps_mode", "passthrough",
             "-f", "rawvideo", "-pix_fmt", "bgra", "-"]
@@ -196,12 +212,13 @@ class ShaderMotion:
             if argv:
                 proc = await asyncio.create_subprocess_exec(*argv, stdin=asyncio.subprocess.DEVNULL,
                                                             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                stderr = asyncio.create_task(proc.stderr.read())  # read as it comes: a full pipe would stall ffmpeg
                 try:
                     await self._read(proc)
                 finally:
                     if proc.returncode is None:
                         proc.kill()
-                    err = (await proc.stderr.read()).decode(errors="replace").strip()
+                    err = (await stderr).decode(errors="replace").strip()
                     await proc.wait()
                 if err:
                     log.info("shadermotion: ffmpeg exited %s: %s", proc.returncode, err.splitlines()[-1])

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { FRAME_SLOTS, faceSources, stripStatus } from "./frame";
+import { FRAME_SLOTS, faceSources, isStrip } from "./frame";
 
 function frame(): number[] {
   const v = new Array<number>(FRAME_SLOTS).fill(0);
@@ -7,19 +7,19 @@ function frame(): number[] {
   return v;
 }
 
-describe("stripStatus", () => {
-  test("a real strip", () => expect(stripStatus(frame())).toBe("ok"));
-  test("the dense grid's marker", () => {
+describe("isStrip", () => {
+  test("a real strip", () => expect(isStrip(frame())).toBe(true));
+  test("the dense grid's marker plays too", () => {
     const v = frame();
     v[133] = 0.5;
     v[134] = -0.5;
-    expect(stripStatus(v)).toBe("dense");
+    expect(isStrip(v)).toBe(true);
   });
   test("scene pixels fail the hips test", () => {
     const v = frame();
     v.splice(6, 6, 0.4, 0.4, 0.1, 0.5, 0.3, -0.2);
-    expect(stripStatus(v)).toBe("none");
-    expect(stripStatus(new Array(FRAME_SLOTS).fill(0))).toBe("none");
+    expect(isStrip(v)).toBe(false);
+    expect(isStrip(new Array(FRAME_SLOTS).fill(0))).toBe(false);
   });
 });
 

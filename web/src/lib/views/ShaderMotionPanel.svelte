@@ -6,7 +6,7 @@
   import Drawer from "../components/Drawer.svelte";
   import Segmented from "../components/Segmented.svelte";
   import type { ShaderMotionFrame } from "../protocol";
-  import { faceSources, stripStatus } from "../shadermotion/frame";
+  import { faceSources, isStrip } from "../shadermotion/frame";
   import { axisDirections, projectSegment } from "../shadermotion/overlay";
   import { AvatarView } from "../shadermotion/lib/SMX/AvatarView.js";
   import { app } from "../state.svelte";
@@ -43,8 +43,7 @@
     if (app.state?.peers.find((p) => p.id === id)?.caps.includes("shadermotion") === false) return "Their app doesn't send ShaderMotion";
     if (!f) return "Waiting for frames…";
     if (!f.slots) return f.problem ?? "No frames";
-    const status = stripStatus(f.slots);
-    return status === "dense" ? "Dense grid not supported" : status === "none" ? "No ShaderMotion strip" : "";
+    return isStrip(f.slots) ? "" : "No ShaderMotion strip";
   }
 
   /** One WebGL view per actor list and model ({#key} below makes a new canvas when either changes). */
@@ -117,7 +116,7 @@
         peers.forEach((id, i) => {
           if (!fresh.delete(id)) return;
           const v = frames.get(id)!.slots;
-          const ok = !!v && stripStatus(v) === "ok";
+          const ok = !!v && isStrip(v);
           view.setMotion(i, ok ? v : null, x(i), ok ? faceSources(v!) : null);
         });
         view.render();

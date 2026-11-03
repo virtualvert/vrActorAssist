@@ -74,8 +74,9 @@ agent/                  v0.4 desktop agent (python -m agent)
                         audio/video lengths for Send files' Length column
   media.py              Lengths of audio and video files from their headers (WAV, FLAC, MP3, AAC, Ogg/Opus, MP4/MOV, MKV/WebM, AVI; stdlib only)
   shadermotion.py       Prototype, Windows: while the actor's own preview is open or a director watches (shadermotion.watch,
-                        repeated every 5 s), ffmpeg's gfxcapture scales VRChat's window on the GPU to the 80×45 grid (one centre
-                        pixel per square); layer 0 decoded here, to the UI (peerId "self") and as shadermotion.frame (int16, base64)
+                        repeated every 5 s), ffmpeg's gfxcapture scales VRChat's window on the GPU to the dense 160×90 grid (one
+                        pixel per square; normal squares are 2×2); layer 0 of either grid decoded here (the dense marker picks the
+                        layout), to the UI (peerId "self") and as shadermotion.frame (int16, base64)
                         to the watching directors, whose agent passes them on. VRCAS_SHADERMOTION_SOURCE: a video or window, for tests
   web.py                Local UI server: Host/Origin guard, one-time token → session cookie, /ui/ws
   hub.py                Fan-out of state/log/traffic events to every open UI
