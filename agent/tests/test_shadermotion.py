@@ -1,6 +1,10 @@
+import sys
+from pathlib import Path
+
 import pytest
 
-from agent.shadermotion import FRAME_BYTES, POW, ROWS, WIDTH, command, decode_frame, pack, unpack
+from agent import shadermotion
+from agent.shadermotion import FRAME_BYTES, POW, ROWS, WIDTH, command, decode_frame, find_ffmpeg, pack, unpack
 
 HALF = (POW - 1) // 2
 
@@ -57,6 +61,15 @@ def test_command_recording_loops_at_its_own_speed(tmp_path):
     argv = command("ffmpeg", str(video))
     assert argv[argv.index("-i") - 3:argv.index("-i")] == ["-re", "-stream_loop", "-1"]
     assert "format=gbrp,avgblur" in argv[argv.index("-vf") + 1]  # blur in RGB, not the video's YUV
+
+
+def test_find_ffmpeg_sees_an_install_made_while_the_app_runs(tmp_path, monkeypatch):
+    exe = tmp_path / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
+    exe.write_bytes(b"")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", "")  # the PATH the app started with doesn't have it
+    monkeypatch.setattr(shadermotion, "_saved_path", lambda: str(tmp_path))
+    assert Path(find_ffmpeg()).samefile(exe)
 
 
 def test_frames_on_the_relay_round_trip_as_int16():

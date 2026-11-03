@@ -101,8 +101,26 @@ def decode_frame(buf: bytes) -> list[float]:
     return [round(slot(s, square, step), 4) for s in range(270)]
 
 
+def _saved_path() -> str:
+    """PATH as Windows has it saved now (user, then machine). The app's own PATH is from when it started, so
+    without this an ffmpeg installed meanwhile (winget install Gyan.FFmpeg) needs a restart to be found."""
+    if sys.platform != "win32":
+        return ""
+    import winreg
+    parts = []
+    for root, key in ((winreg.HKEY_CURRENT_USER, "Environment"),
+                      (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")):
+        try:
+            with winreg.OpenKey(root, key) as k:
+                parts.append(os.path.expandvars(winreg.QueryValueEx(k, "Path")[0]))
+        except OSError:
+            pass
+    return os.pathsep.join(parts)
+
+
 def find_ffmpeg() -> str | None:
-    return shutil.which("ffmpeg") or next((str(p) for d in FFMPEG_DIRS if (p := d / "ffmpeg.exe").is_file()), None)
+    dirs = [os.environ.get("PATH", ""), _saved_path(), *map(str, FFMPEG_DIRS)]
+    return shutil.which("ffmpeg", path=os.pathsep.join(d for d in dirs if d))
 
 
 def command(ffmpeg: str, source: str) -> list[str]:
@@ -235,7 +253,7 @@ class ShaderMotion:
     def _command(self) -> tuple[list[str] | None, str | None]:
         ffmpeg = find_ffmpeg()
         if not ffmpeg:
-            return None, "ffmpeg wasn't found (PATH or C:\\ffmpeg\\bin)"
+            return None, "ffmpeg isn't installed (Windows: winget install Gyan.FFmpeg)"
         source = os.environ.get("VRCAS_SHADERMOTION_SOURCE", "")
         if not source:
             if sys.platform != "win32":
