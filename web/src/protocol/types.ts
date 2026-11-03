@@ -237,6 +237,25 @@ export interface RosterSession {
   delay_ms?: number;
 }
 
+/**
+ * From an actor to the directors watching: layer 0 of its strip, the 270 slot values in [-1, 1] as
+ * little-endian int16 (× 32767) in base64, or no `slots` and the `problem` instead. `t`: server-clock
+ * ms when the frame was decoded.
+ */
+export interface ShadermotionFrame {
+  slots?: string | null;
+  problem?: string | null;
+  t?: number | null;
+}
+
+/**
+ * From a director to actors with the `shadermotion` capability: its preview is open (`on`, sent
+ * again every few seconds) or closed. An actor stops sending to a director it stops hearing from.
+ */
+export interface ShadermotionWatch {
+  on: boolean;
+}
+
 export interface SoundEntry {
   index: number;
   key: string;
@@ -456,6 +475,8 @@ export interface MessageData {
   "rtc.answer": Record<string, unknown>;
   "rtc.ice": Record<string, unknown>;
   "rtc.bye": Record<string, unknown>;
+  "shadermotion.watch": ShadermotionWatch;
+  "shadermotion.frame": ShadermotionFrame;
 }
 
 export type MsgType = keyof MessageData;

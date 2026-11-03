@@ -47,7 +47,7 @@ class Agent:
         self.folders = Folders()
         self.files = Files(self)
         self.soundpad = SoundpadRemote(self)
-        self.shadermotion = ShaderMotion(self.hub.event, self.hub.has_clients)
+        self.shadermotion = ShaderMotion(self)
         self.actor.received_lookup = lambda sha256: received_path(store.folder, sha256)
         self.actor.on_latency = self._latency_measured
         self.relay = Relay(self)
@@ -581,8 +581,9 @@ class Agent:
             await self.camera.refresh()
 
     async def _call_shadermotion(self, args: dict) -> None:
-        # actors decode their own VRChat window; directors get nothing yet (M3: over the relay)
-        self.shadermotion.set(bool(args.get("on")) and self.config.role == "actor")
+        # actors decode their own VRChat window; directors ask the actors over the relay
+        if self.config.role in ("actor", "director"):
+            self.shadermotion.set(bool(args.get("on")))
 
     async def _call_openBrowser(self, args: dict) -> None:
         if self.ui_url is None:

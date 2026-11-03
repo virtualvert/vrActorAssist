@@ -34,6 +34,8 @@ SPEC = {
                            "obs.mark", "obs.slate")},
     **{t: {C} for t in ("obs.profile.status", "obs.record.state", "obs.status")},
     **{t: {D, A, C} for t in ("rtc.offer", "rtc.answer", "rtc.ice", "rtc.bye")},
+    # ShaderMotion preview (prototype, not in §5.5)
+    "shadermotion.watch": {D, A}, "shadermotion.frame": {ACT},
     "hello": ALL, "time.ping": ALL, "time.pong": ALL,
     **{t: set() for t in ("welcome", "denied", "error", "presence.roster", "presence.latency", "approval.pending",
                           "approval.forgotten", "update.available")},
@@ -69,6 +71,22 @@ def test_v2_relay_enforces_every_row(tmp_path, role):
         replies = me.sync()
     forbidden = {sent[e["reply_to"]] for e in replies if e["type"] == "error" and e["data"]["code"] == "forbidden"}
     assert forbidden == {t for t, roles in SPEC.items() if role not in roles}
+
+
+def test_shadermotion_frames_only_reach_directors(tmp_path):
+    approved = {"m-a1": {"name": "Coda"}, "m-a2": {"name": "Juno"}}
+    with ExitStack() as stack:
+        client = stack.enter_context(TestClient(make_relay(tmp_path, approved)))
+        d = connect_v2(client, stack, D, "Mira", "m-d")
+        a1 = connect_v2(client, stack, ACT, "Coda", "m-a1", expect="welcome")
+        a2 = connect_v2(client, stack, ACT, "Juno", "m-a2", expect="welcome")
+        msg = a1.send("shadermotion.frame", {"problem": "VRChat is minimized"}, to="all")
+        err = a1.until("error")
+        got = d.until("shadermotion.frame")
+        juno = a2.sync()
+    assert err["reply_to"] == msg and err["data"]["code"] == "forbidden" and len(err["data"]["ids"]) == 1
+    assert got["data"]["problem"] == "VRChat is minimized"
+    assert not [e for e in juno if e["type"] == "shadermotion.frame"]
 
 
 def test_v2_unknown_type_is_rejected(tmp_path):

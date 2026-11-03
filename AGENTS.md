@@ -30,7 +30,8 @@ server/                 The relay (FastAPI): /v2/ws (protocol v2), /ws (v0.3 cli
   transfers.py          File transfers on /v2/ws: one entry per offer; binary chunks only sender → recipient after accept
   legacy_bridge.py      /ws: the v0.3 handler (byte for byte), translation to and from v2, scheduling emulation
   file_bridge.py        Files between v0.3 clients and v0.4 apps: FILEREQ … FILEEND / BATCH_* ⇄ file.* and binary chunks
-  permissions.py        Spec §5.5 table as data, and which v2 type each v0.3 message counts as
+  permissions.py        Spec §5.5 table as data (who may send), RECIPIENTS (types that may only go to some roles), and which
+                        v2 type each v0.3 message counts as
   sessions.py           Session, Registry (connection order, session ids), Approvals (approved_actors.json)
   settings.py           Settings (secret, data dir, intervals) and the server.log writer
   timesync.py, updates.py  Server clock (fake-able); version checks and the update manifest
@@ -72,9 +73,10 @@ agent/                  v0.4 desktop agent (python -m agent)
   folders.py            Folder access for Normalize folder and Send files: picker, listings, guarded reads, writes only under normalized/,
                         audio/video lengths for Send files' Length column
   media.py              Lengths of audio and video files from their headers (WAV, FLAC, MP3, AAC, Ogg/Opus, MP4/MOV, MKV/WebM, AVI; stdlib only)
-  shadermotion.py       Prototype, Windows: while a UI has the ShaderMotion preview open, ffmpeg's gfxcapture scales VRChat's window
-                        on the GPU to the 80×45 grid (one centre pixel per square); layer 0 decoded here, sent as "shadermotion"
-                        events (peerId "self"). VRCAS_SHADERMOTION_SOURCE: a video file or window selector, for testing
+  shadermotion.py       Prototype, Windows: while the actor's own preview is open or a director watches (shadermotion.watch,
+                        repeated every 5 s), ffmpeg's gfxcapture scales VRChat's window on the GPU to the 80×45 grid (one centre
+                        pixel per square); layer 0 decoded here, to the UI (peerId "self") and as shadermotion.frame (int16, base64)
+                        to the watching directors, whose agent passes them on. VRCAS_SHADERMOTION_SOURCE: a video or window, for tests
   web.py                Local UI server: Host/Origin guard, one-time token → session cookie, /ui/ws
   hub.py                Fan-out of state/log/traffic events to every open UI
   shell.py              pywebview window (Windows + WebView2) or default browser

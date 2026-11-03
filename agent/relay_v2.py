@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 # whether Soundpad is up right now comes in soundpad.state (Phase 2 decision D7). `schedule`:
 # actions with `at` start at that server time (an older build would run them at once).
 ACTOR_CAPABILITIES = ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add",
-                      "soundpad.calibrate", "osc", "files", "schedule"]
+                      "soundpad.calibrate", "osc", "files", "schedule", "shadermotion"]
 CUE_TYPES = {"cue.go", "cue.stop", "cue.play"}
 SOUNDPAD_ACTIONS = {"soundpad.play", "soundpad.stop", "soundpad.pause", "soundpad.seek", "soundpad.jump",
                     "soundpad.volume", "soundpad.mute", "soundpad.list.request", "soundpad.calibrate"}
@@ -305,6 +305,12 @@ class V2Relay(RelayBase):
         elif msg_type == "ready.status":
             if role == "director":
                 self._on_ready_status(env, data, sender.name if sender else "Someone")
+        elif msg_type == "shadermotion.watch":
+            if role == "actor" and env.get("from"):
+                self.agent.shadermotion.watch(env["from"], bool(data.get("on")))
+        elif msg_type == "shadermotion.frame":
+            if role == "director":
+                self.agent.shadermotion.on_frame(env)
         elif msg_type == "cue.ack":
             self._note_late(env, data, sender_name)
             if not data.get("ok", True):
@@ -314,6 +320,9 @@ class V2Relay(RelayBase):
             # errors about file messages are races at the end of a transfer, already shown in its result.
             if self.agent.files.sender.on_error(env.get("reply_to"), str(data.get("message") or data.get("code") or "")):
                 pass
+            elif str(data.get("type") or "").startswith("shadermotion."):
+                # a director that left (unknown_target), or an older relay: stop sending there, quietly
+                self.agent.shadermotion.drop(data.get("ids") or [])
             elif str(data.get("type") or "").startswith("file."):
                 logging.getLogger("vrcas").info("Relay about %s: %s", data.get("type"), data.get("message"))
             else:

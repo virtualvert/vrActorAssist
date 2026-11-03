@@ -74,6 +74,8 @@ SAMPLES = {
     "file.err": {"transfer_id": "0f" * 16, "error": "Checksum mismatch"},
     "file.batch.end": {"batch_id": "b1", "ok": 1, "failed": 1},
     "file.batch.cancel": {"batch_id": "b1", "reason": "Cancelled by the director"},
+    "shadermotion.watch": {"on": True},
+    "shadermotion.frame": {"slots": "AAAA" * 180, "t": 1_793_000_000_000},
 }
 
 INVALID = {
@@ -94,6 +96,7 @@ INVALID = {
     "file.end": {"transfer_id": "0F" * 16, "md5": "cd" * 16},  # upper-case id
     "file.accept": {"transfer_id": "short"},
     "file.progress": {"transfer_id": "0f" * 16, "received": -1},
+    "shadermotion.frame": {"slots": "AAAA"},  # not 270 values
 }
 
 

@@ -39,7 +39,8 @@
     return () => void app.call({ call: "shadermotion", args: { on: false } });
   });
 
-  function note(f: ShaderMotionFrame | undefined): string {
+  function note(id: string, f: ShaderMotionFrame | undefined): string {
+    if (app.state?.peers.find((p) => p.id === id)?.caps.includes("shadermotion") === false) return "Their app doesn't send ShaderMotion";
     if (!f) return "Waiting for frames…";
     if (!f.slots) return f.problem ?? "No frames";
     const status = stripStatus(f.slots);
@@ -124,7 +125,7 @@
         labels = peers.map((id, i) => {
           vec4.transformMat4(at, [x(i), 0, 0, 1], view.glob.uniforms.matrixVP);
           const name = actors.find((p) => p.id === id)?.name ?? "";
-          return { id, name, note: note(frames.get(id)), left: ((at[0] / at[3] + 1) / 2) * 100, top: ((1 - at[1] / at[3]) / 2) * 100 };
+          return { id, name, note: note(id, frames.get(id)), left: ((at[0] / at[3] + 1) / 2) * 100, top: ((1 - at[1] / at[3]) / 2) * 100 };
         });
       };
       raf = requestAnimationFrame(draw);

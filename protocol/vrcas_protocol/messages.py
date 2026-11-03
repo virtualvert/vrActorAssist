@@ -481,6 +481,28 @@ class FileBatchCancel(Payload):
     reason: str = Field(default="", max_length=500)
 
 
+# ---- ShaderMotion preview (prototype, not in the spec) -----------------------------------------------
+
+SHADERMOTION_SLOTS = 270  # layer 0: 135 humanoid slots, then the face block
+
+
+class ShadermotionWatch(Payload):
+    """From a director to actors with the `shadermotion` capability: its preview is open (`on`, sent
+    again every few seconds) or closed. An actor stops sending to a director it stops hearing from."""
+
+    on: bool
+
+
+class ShadermotionFrame(Payload):
+    """From an actor to the directors watching: layer 0 of its strip, the 270 slot values in [-1, 1] as
+    little-endian int16 (× 32767) in base64, or no `slots` and the `problem` instead. `t`: server-clock
+    ms when the frame was decoded."""
+
+    slots: str | None = Field(default=None, min_length=SHADERMOTION_SLOTS * 8 // 3, max_length=SHADERMOTION_SLOTS * 8 // 3)
+    problem: str | None = Field(default=None, max_length=200)
+    t: int | None = None
+
+
 # ---- catalogue ---------------------------------------------------------------------------------
 
 MODELS: dict[str, type[Payload] | None] = {
@@ -545,6 +567,9 @@ MODELS: dict[str, type[Payload] | None] = {
                                    "record.state", "mark", "slate", "status")},
     # stream addon
     **{f"rtc.{t}": None for t in ("offer", "answer", "ice", "bye")},
+    # ShaderMotion preview (prototype)
+    "shadermotion.watch": ShadermotionWatch,
+    "shadermotion.frame": ShadermotionFrame,
 }
 
 

@@ -263,6 +263,11 @@ class Router:
             await self._error(sender, "invalid", f"{env.type} needs a target (to)", env)
             return
         recipients, missing = self._resolve(sender, env.to)
+        if (only := permissions.RECIPIENTS.get(env.type)) is not None:
+            refused = [r.id for r in recipients if r.perm_role not in only]
+            if refused:
+                recipients = [r for r in recipients if r.perm_role in only]
+                await self._error(sender, "forbidden", f"{env.type} only goes to {', '.join(sorted(only))}s", env, ids=refused)
         text = frame(env)
         unsupported: list[str] = []
         for recipient in recipients:

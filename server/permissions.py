@@ -38,6 +38,9 @@ ROWS: list[tuple[tuple[str, ...], frozenset[str]]] = [
      DIRECTION),
     (("obs.profile.status", "obs.record.state", "obs.status"), frozenset({CAMERA})),
     (("rtc.*",), frozenset({DIRECTOR, ASSISTANT, CAMERA})),
+    # ShaderMotion preview (prototype, not in §5.5): directors watch, actors send their strip
+    (("shadermotion.watch",), DIRECTION),
+    (("shadermotion.frame",), frozenset({ACTOR})),
     # Not in §5.5: the handshake and clock sync, addressed to the relay itself
     (("hello", "time.ping", "time.pong"), EVERYONE),
     # Only the relay sends these
@@ -50,6 +53,10 @@ for _types, _roles in ROWS:
     for _type in _types:
         assert _type not in TABLE, f"{_type} is listed twice"
         TABLE[_type] = _roles
+
+
+# Types that may only go to some roles; the relay drops other recipients and answers `forbidden`.
+RECIPIENTS: dict[str, frozenset[str]] = {"shadermotion.frame": DIRECTION}
 
 
 def rule(msg_type: str) -> frozenset[str] | None:

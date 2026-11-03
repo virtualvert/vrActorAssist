@@ -102,7 +102,7 @@ const DEMO_SOUNDPAD_EXE = "C:\\Program Files\\Soundpad\\Soundpad.exe";
 const NO_CLOCK: ClockState = { synced: false, offsetMs: null, rttMs: null };
 const DEMO_CLOCK: ClockState = { synced: true, offsetMs: 12, rttMs: 46 };
 const DEFAULT_LEAD_MS = 300;
-const ACTOR_CAPS = ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add", "soundpad.calibrate", "osc", "files", "schedule"];
+const ACTOR_CAPS = ["soundpad", "soundpad.lines", "soundpad.position", "soundpad.list", "soundpad.add", "soundpad.calibrate", "osc", "files", "schedule", "shadermotion"];
 
 /** HH:MM:SS.mmm, as the agent logs server times. */
 function serverTime(ms: number): string {
@@ -1234,15 +1234,14 @@ export class DemoSession {
     const start = this.#clock.now();
     this.#smTimer = setInterval(() => {
       const frame = Math.floor((this.#clock.now() - start) / (1000 / 30));
-      const peers =
+      // like the agent: directors only watch actors whose app has the capability
+      const ids =
         this.state.role === "actor"
-          ? [{ id: "self", legacy: false }]
-          : this.state.peers
-              .filter((p) => p.role === "actor" && !p.self && p.status === "online")
-              .map((p) => ({ id: p.id, legacy: p.caps.includes("legacy") }));
-      peers.forEach((p, i) => {
-        const why = p.legacy ? "v0.3 apps don't decode ShaderMotion" : clip.length ? "" : "No demo clip in web/dev-models/clip.csv";
-        this.#emit({ type: "shadermotion", peerId: p.id, slots: why ? null : clip[(frame + i * 97) % clip.length], problem: why || undefined });
+          ? ["self"]
+          : this.state.peers.filter((p) => p.role === "actor" && p.status === "online" && p.caps.includes("shadermotion")).map((p) => p.id);
+      ids.forEach((id, i) => {
+        const why = clip.length ? undefined : "No demo clip in web/dev-models/clip.csv";
+        this.#emit({ type: "shadermotion", peerId: id, slots: why ? null : clip[(frame + i * 97) % clip.length], problem: why });
       });
     }, 1000 / 30);
   }

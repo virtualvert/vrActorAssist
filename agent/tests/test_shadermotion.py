@@ -1,6 +1,6 @@
 import pytest
 
-from agent.shadermotion import FRAME_BYTES, POW, ROWS, SQUARES, command, decode_frame
+from agent.shadermotion import FRAME_BYTES, POW, ROWS, SQUARES, command, decode_frame, pack, unpack
 
 HALF = (POW - 1) // 2
 
@@ -46,4 +46,14 @@ def test_command_recording_loops_at_its_own_speed(tmp_path):
     video.write_bytes(b"")
     argv = command("ffmpeg", str(video))
     assert argv[argv.index("-i") - 3:argv.index("-i")] == ["-re", "-stream_loop", "-1"]
-    assert "avgblur" in argv[argv.index("-vf") + 1]
+    assert "format=gbrp,avgblur" in argv[argv.index("-vf") + 1]  # blur in RGB, not the video's YUV
+
+
+def test_frames_on_the_relay_round_trip_as_int16():
+    slots = [s / 135 - 1 for s in range(270)]
+    text = pack(slots)
+    assert len(text) == 720  # what the shadermotion.frame model expects
+    assert unpack(text) == pytest.approx(slots, abs=1e-4)
+    assert unpack(pack([1.2, -3.0] + [0.0] * 268))[:2] == [1.0, -1.0]  # decoder overshoot is clamped
+    with pytest.raises(ValueError):
+        unpack("not base64!")
