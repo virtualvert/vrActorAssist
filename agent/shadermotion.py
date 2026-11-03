@@ -25,6 +25,7 @@ import os
 import shutil
 import statistics
 import struct
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -210,8 +211,10 @@ class ShaderMotion:
         while self._wanted():
             argv, problem = await asyncio.to_thread(self._command)
             if argv:
+                # the windowed exe has no console: without CREATE_NO_WINDOW ffmpeg would open one on the actor's screen
                 proc = await asyncio.create_subprocess_exec(*argv, stdin=asyncio.subprocess.DEVNULL,
-                                                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                                                            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                                                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 stderr = asyncio.create_task(proc.stderr.read())  # read as it comes: a full pipe would stall ffmpeg
                 try:
                     await self._read(proc)
