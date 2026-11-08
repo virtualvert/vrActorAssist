@@ -1,9 +1,17 @@
 # vrcActorSync: Desktop Web UI + Local Agent Design
 
-**Date:** 2026-10-17 (revised 2026-10-30)
+**Date:** 2026-10-17 (revised 2026-11-08)
 **Status:** Draft — implementation started on branch `feat/web-ui` (see §20)
-**Version:** 0.14
+**Version:** 0.15
 **Supersedes:** §4 (Tauri migration) of `2026-07-20-vrcActorSync-ssl-tauri-design.md`. The `origin/tauri` branch stays as a source of reusable UI and test code.
+
+### Changes in v0.15
+
+- Camera feeds (§8.6, not built yet): the first build follows `2026-11-08-camera-feed-stream-design.md` (Danny's decisions of 2026-11-08 are in its §11).
+  - Video goes peer to peer from the camera's app (OBS virtual camera → WebRTC), with the signalling over `rtc.*`; the live relay already routes that.
+  - §8.6's options stay as the route to many viewers.
+  - `rtc.*` gains `quality`, `ready` and `ask` (§5.4). Cameras send `obs.record.state` early, for a REC tally (§8.5.3).
+  - Once the relay runs on the VPS, actors may send the viewer side of `rtc.*`, to cameras only (§5.5).
 
 ### Changes in v0.14
 
@@ -337,7 +345,7 @@ Any action message (`soundpad.play`, `soundpad.stop`, `cue.go`, `osc.param`, `ob
 | `osc.*` | osc addon | `param`, `cue.load`, `cue.ack`, `cue.fired`, `params` (discovered avatar parameters) |
 | `cuelist.*` | server storage | `save`, `get`, `list`, `delete` |
 | `obs.*` | obs addon | `profile.apply/status/release`, `record.start/stop/state`, `mark`, `slate`, `status` |
-| `rtc.*` | stream addon | `offer`, `answer`, `ice`, `bye` |
+| `rtc.*` | stream addon | `offer`, `answer`, `ice`, `bye`, `quality`, `ready`, `ask` (camera feeds design, §8.6) |
 
 The server understands only core namespaces and `cuelist.*`. Everything else it routes without reading `data`, applying only the permission table.
 
@@ -363,7 +371,7 @@ Columns are the role of the **sender**.
 | `cuelist.get/list` | ✅ | ✅ | ✅ | ❌ |
 | `obs.profile.apply/release`, `obs.record.start/stop`, `obs.mark`, `obs.slate` | ✅ | ✅ | ❌ | ❌ |
 | `obs.profile.status`, `obs.record.state`, `obs.status` | ❌ | ❌ | ❌ | ✅ |
-| `rtc.*` | ✅ | ✅ | ❌ | ✅ |
+| `rtc.*` | ✅ | ✅ | ❌ (with the VPS relay: `offer`, `ice`, `quality`, `bye` to cameras only) | ✅ |
 
 - The table is data in `server/permissions.py`.
 - Rows the table leaves implicit (built): `file.end` and `file.batch.*` go with `file.offer`; `hello` and `time.*` are open to everyone; types only the relay sends (`welcome`, `presence.*`, …) are open to no one. A type that isn't in the table is rejected with `unknown_type`, so a new addon needs its rows added (§20.1).
@@ -1097,6 +1105,8 @@ Otherwise the check reports what's off, e.g. "capture is 1700×950, scaled to 19
 **Tests:** Appendix C.
 
 ### 8.6 `stream` (Future — P2P Preview)
+
+**First build:** `2026-11-08-camera-feed-stream-design.md` (WebRTC from the camera's app; no relay change). The options below are the earlier plan, kept for many viewers.
 
 **Build now:** reserve `rtc.*`, the `stream.publish` / `stream.view` capabilities, and `welcome.ice_servers`. Nothing else.
 
