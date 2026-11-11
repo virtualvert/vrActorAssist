@@ -3,7 +3,8 @@ on the actor's PC (Windows) while their own UI has the preview open or a directo
 
 ffmpeg's gfxcapture (Windows.Graphics.Capture) scales the window on the GPU to the dense 160×90 grid
 with point sampling, which picks each dense square's centre pixel (a normal 80×45 square is 2×2 of them),
-so only 160×90 pixels leave the GPU. Layer 0, on either grid, is in the 24 left pixel columns: 270 slots
+so only 160×90 pixels leave the GPU. The built app (Windows) brings a capture-only ffmpeg (scripts/build_ffmpeg.sh);
+source runs use one on PATH or in C:\\ffmpeg\\bin. Layer 0, on either grid, is in the 24 left pixel columns: 270 slots
 (humanoid, then the face block), sent to the UI as
 "shadermotion" events (peerId "self"), every frame (about 30 a second), or with the reason there are none.
 
@@ -119,6 +120,13 @@ def _saved_path() -> str:
 
 
 def find_ffmpeg() -> str | None:
+    if getattr(sys, "frozen", False):
+        # build_agent.py bundles the capture-only build from scripts/build_ffmpeg.sh (Windows).
+        # shortcut: a built app's test file mode (VRCAS_SHADERMOTION_SOURCE=<video>) gets it too and can't decode;
+        # skip it for files if built apps ever need that mode.
+        bundled = Path(getattr(sys, "_MEIPASS", "")) / "ffmpeg" / "ffmpeg.exe"
+        if bundled.is_file():
+            return str(bundled)
     dirs = [os.environ.get("PATH", ""), _saved_path(), *map(str, FFMPEG_DIRS)]
     return shutil.which("ffmpeg", path=os.pathsep.join(d for d in dirs if d))
 
@@ -253,7 +261,7 @@ class ShaderMotion:
     def _command(self) -> tuple[list[str] | None, str | None]:
         ffmpeg = find_ffmpeg()
         if not ffmpeg:
-            return None, "ffmpeg isn't installed (Windows: winget install Gyan.FFmpeg)"
+            return None, r"ffmpeg isn't installed: put FFmpeg 8.1 or newer on PATH or in C:\ffmpeg\bin (the built app has its own)"
         source = os.environ.get("VRCAS_SHADERMOTION_SOURCE", "")
         if not source:
             if sys.platform != "win32":

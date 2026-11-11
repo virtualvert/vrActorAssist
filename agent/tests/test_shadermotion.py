@@ -72,6 +72,15 @@ def test_find_ffmpeg_sees_an_install_made_while_the_app_runs(tmp_path, monkeypat
     assert Path(find_ffmpeg()).samefile(exe)
 
 
+def test_find_ffmpeg_prefers_the_build_bundled_in_a_built_app(tmp_path, monkeypatch):
+    bundled = tmp_path / "ffmpeg" / "ffmpeg.exe"
+    bundled.parent.mkdir()
+    bundled.write_bytes(b"")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert find_ffmpeg() == str(bundled)  # even with a full ffmpeg on PATH or in C:\ffmpeg\bin
+
+
 def test_frames_on_the_relay_round_trip_as_int16():
     slots = [s / 135 - 1 for s in range(270)]
     text = pack(slots)

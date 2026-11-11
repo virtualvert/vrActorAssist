@@ -1,0 +1,2 @@
+# LF for shell scripts, so bash (MSYS2, Linux) can run them from a Windows checkout with core.autocrlf
+*.sh text eol=lf
