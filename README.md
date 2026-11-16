@@ -148,13 +148,6 @@ vrActorAssist/
 ├── build_exe.py          # PyInstaller build script
 ├── requirements.txt      # Dependencies
 ├── FEATURES-PLANNED.md   # Planned features
-├── ROADMAP.md            # Future roadmap
-│
-├── client/               # Tauri v2 + Svelte app (replaces both clients)
-│   ├── src/              #   Svelte frontend
-│   └── src-tauri/        #   Rust backend
-│
-├── docs/superpowers/     # Design specs and implementation plans
 │
 ├── legacy/               # TCP socket version (reference)
 │   ├── server.py
@@ -182,19 +175,7 @@ vrActorAssist/
 - Python 3.8+ (if running from source)
 - **OR** use standalone `vrActorClient.exe` (no Python needed)
 
-> **Note:** Actor builds are Windows-only. Soundpad has no Linux equivalent, so Linux actor binaries are not distributed. The source code remains cross-platform for future Pipewire support. See [ROADMAP.md](ROADMAP.md).
-
-## Future
-
-See [ROADMAP.md](ROADMAP.md) for planned features:
-- **Tauri v2 + Svelte migration** — Replacing Python/tkinter clients with a modern desktop app
-- OSC cue editor with audio player
-- Multiple director support
-- Ping compensation/delay
-- OpenVR/OpenXR overlay
-- Web dashboard for server admin
-
----
+> **Note:** Actor builds are Windows-only. Soundpad has no Linux equivalent, so Linux actor binaries are not distributed. The source code remains cross-platform for future Pipewire support.
 
 ## Platform Strategy
 
@@ -202,5 +183,3 @@ See [ROADMAP.md](ROADMAP.md) for planned features:
 |--------|---------|-------|-------|
 | **Director** | ✅ Full feature | ✅ Full feature | Cross-platform, no OS-specific dependencies |
 | **Actor** | ✅ Full feature | ⛔ Build not distributed | Soundpad.exe Windows-only; source still runs on Linux for chat/file receive |
-
-We are migrating both clients from **Python/tkinter** to **Tauri v2 + Svelte** in v0.4.0 for a modern, cross-platform desktop app with a Rust backend. The Python server stays unchanged. See [ROADMAP.md](ROADMAP.md) for details.
